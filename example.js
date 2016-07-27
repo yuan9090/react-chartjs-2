@@ -101,6 +101,66 @@ var _react2 = _interopRequireDefault(_react);
 
 var _reactChartjs2 = require('react-chartjs-2');
 
+function getRandomInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+var getState = function getState() {
+  return {
+    labels: ['Red', 'Green', 'Yellow'],
+    datasets: [{
+      data: [getRandomInt(50, 200), getRandomInt(100, 150), getRandomInt(150, 250)],
+      backgroundColor: ['#CCC', '#36A2EB', '#FFCE56'],
+      hoverBackgroundColor: ['#FF6384', '#36A2EB', '#FFCE56']
+    }]
+  };
+};
+
+exports['default'] = _react2['default'].createClass({
+  displayName: 'DynamicDoughnutExample',
+
+  getInitialState: function getInitialState() {
+    return getState();
+  },
+
+  componentWillMount: function componentWillMount() {
+    var _this = this;
+
+    setInterval(function () {
+      _this.setState(getState());
+    }, 5000);
+  },
+
+  render: function render() {
+    return _react2['default'].createElement(
+      'div',
+      null,
+      _react2['default'].createElement(
+        'h2',
+        null,
+        'Dynamicly refreshed Doughnut Example'
+      ),
+      _react2['default'].createElement(_reactChartjs2.Doughnut, { data: this.state })
+    );
+  }
+});
+module.exports = exports['default'];
+
+},{"react":undefined,"react-chartjs-2":undefined}],4:[function(require,module,exports){
+'use strict';
+
+Object.defineProperty(exports, '__esModule', {
+  value: true
+});
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
+
+var _react = require('react');
+
+var _react2 = _interopRequireDefault(_react);
+
+var _reactChartjs2 = require('react-chartjs-2');
+
 var data = {
   labels: ['January', 'February', 'March', 'April', 'May', 'June', 'July'],
   datasets: [{
@@ -144,7 +204,116 @@ exports['default'] = _react2['default'].createClass({
 });
 module.exports = exports['default'];
 
-},{"react":undefined,"react-chartjs-2":undefined}],4:[function(require,module,exports){
+},{"react":undefined,"react-chartjs-2":undefined}],5:[function(require,module,exports){
+'use strict';
+
+Object.defineProperty(exports, '__esModule', {
+  value: true
+});
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { 'default': obj }; }
+
+var _react = require('react');
+
+var _react2 = _interopRequireDefault(_react);
+
+var _reactChartjs2 = require('react-chartjs-2');
+
+var data = {
+  labels: ['January', 'February', 'March', 'April', 'May', 'June', 'July'],
+  datasets: [{
+    label: 'Sales',
+    type: 'line',
+    data: [51, 65, 40, 49, 60, 37, 40],
+    fill: false,
+    borderColor: '#EC932F',
+    backgroundColor: '#EC932F',
+    pointBorderColor: '#EC932F',
+    pointBackgroundColor: '#EC932F',
+    pointHoverBackgroundColor: '#EC932F',
+    pointHoverBorderColor: '#EC932F',
+    yAxisID: 'y-axis-2'
+  }, {
+    type: 'bar',
+    label: 'Visitor',
+    data: [200, 185, 590, 621, 250, 400, 95],
+    fill: false,
+    backgroundColor: '#71B37C',
+    borderColor: '#71B37C',
+    hoverBackgroundColor: '#71B37C',
+    hoverBorderColor: '#71B37C',
+    yAxisID: 'y-axis-1'
+  }]
+};
+
+var options = {
+  responsive: true,
+  tooltips: {
+    mode: 'label'
+  },
+  elements: {
+    line: {
+      fill: false
+    }
+  },
+  scales: {
+    xAxes: [{
+      display: true,
+      gridLines: {
+        display: false
+      },
+      labels: {
+        show: true
+      }
+    }],
+    yAxes: [{
+      type: 'linear',
+      display: true,
+      position: 'left',
+      id: 'y-axis-1',
+      gridLines: {
+        display: false
+      },
+      labels: {
+        show: true
+      }
+    }, {
+      type: 'linear',
+      display: true,
+      position: 'right',
+      id: 'y-axis-2',
+      gridLines: {
+        display: false
+      },
+      labels: {
+        show: true
+      }
+    }]
+  }
+};
+
+exports['default'] = _react2['default'].createClass({
+  displayName: 'MixExample',
+
+  render: function render() {
+    return _react2['default'].createElement(
+      'div',
+      null,
+      _react2['default'].createElement(
+        'h2',
+        null,
+        'Mixed data Example'
+      ),
+      _react2['default'].createElement(_reactChartjs2.Bar, {
+        data: data,
+        options: options
+      })
+    );
+  }
+});
+module.exports = exports['default'];
+
+},{"react":undefined,"react-chartjs-2":undefined}],6:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, '__esModule', {
@@ -186,7 +355,7 @@ exports['default'] = _react2['default'].createClass({
 });
 module.exports = exports['default'];
 
-},{"react":undefined,"react-chartjs-2":undefined}],5:[function(require,module,exports){
+},{"react":undefined,"react-chartjs-2":undefined}],7:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, '__esModule', {
@@ -228,7 +397,7 @@ exports['default'] = _react2['default'].createClass({
 });
 module.exports = exports['default'];
 
-},{"react":undefined,"react-chartjs-2":undefined}],6:[function(require,module,exports){
+},{"react":undefined,"react-chartjs-2":undefined}],8:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, '__esModule', {
@@ -284,7 +453,7 @@ exports['default'] = _react2['default'].createClass({
 });
 module.exports = exports['default'];
 
-},{"react":undefined,"react-chartjs-2":undefined}],7:[function(require,module,exports){
+},{"react":undefined,"react-chartjs-2":undefined}],9:[function(require,module,exports){
 'use strict';
 
 var _createClass = (function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ('value' in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; })();
@@ -309,6 +478,10 @@ var _componentsDoughnut = require('./components/doughnut');
 
 var _componentsDoughnut2 = _interopRequireDefault(_componentsDoughnut);
 
+var _componentsDynamicDoughnut = require('./components/dynamic-doughnut');
+
+var _componentsDynamicDoughnut2 = _interopRequireDefault(_componentsDynamicDoughnut);
+
 var _componentsPie = require('./components/pie');
 
 var _componentsPie2 = _interopRequireDefault(_componentsPie);
@@ -329,6 +502,10 @@ var _componentsPolar = require('./components/polar');
 
 var _componentsPolar2 = _interopRequireDefault(_componentsPolar);
 
+var _componentsMix = require('./components/mix');
+
+var _componentsMix2 = _interopRequireDefault(_componentsMix);
+
 var App = (function (_React$Component) {
 	_inherits(App, _React$Component);
 
@@ -347,6 +524,8 @@ var App = (function (_React$Component) {
 				_react2['default'].createElement('hr', null),
 				_react2['default'].createElement(_componentsDoughnut2['default'], null),
 				_react2['default'].createElement('hr', null),
+				_react2['default'].createElement(_componentsDynamicDoughnut2['default'], null),
+				_react2['default'].createElement('hr', null),
 				_react2['default'].createElement(_componentsPie2['default'], null),
 				_react2['default'].createElement('hr', null),
 				_react2['default'].createElement(_componentsLine2['default'], null),
@@ -355,7 +534,9 @@ var App = (function (_React$Component) {
 				_react2['default'].createElement('hr', null),
 				_react2['default'].createElement(_componentsRadar2['default'], null),
 				_react2['default'].createElement('hr', null),
-				_react2['default'].createElement(_componentsPolar2['default'], null)
+				_react2['default'].createElement(_componentsPolar2['default'], null),
+				_react2['default'].createElement('hr', null),
+				_react2['default'].createElement(_componentsMix2['default'], null)
 			);
 		}
 	}]);
@@ -365,4 +546,4 @@ var App = (function (_React$Component) {
 
 _reactDom2['default'].render(_react2['default'].createElement(App, null), document.getElementById('app'));
 
-},{"./components/bar":1,"./components/doughnut":2,"./components/line":3,"./components/pie":4,"./components/polar":5,"./components/radar":6,"react":undefined,"react-dom":undefined}]},{},[7]);
+},{"./components/bar":1,"./components/doughnut":2,"./components/dynamic-doughnut":3,"./components/line":4,"./components/mix":5,"./components/pie":6,"./components/polar":7,"./components/radar":8,"react":undefined,"react-dom":undefined}]},{},[9]);

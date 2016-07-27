@@ -1,4 +1,58 @@
-require=(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({"react-chartjs-2":[function(require,module,exports){
+require=(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
+'use strict';
+
+Object.defineProperty(exports, '__esModule', {
+	value: true
+});
+var hasOwnProperty = Object.prototype.hasOwnProperty;
+
+var is = function is(x, y) {
+	// SameValue algorithm
+	if (x === y) {
+		// Steps 1-5, 7-10
+		// Steps 6.b-6.e: +0 != -0
+		return x !== 0 || 1 / x === 1 / y;
+	} else {
+		// Step 6.a: NaN == NaN
+		return x !== x && y !== y;
+	}
+};
+
+var deepEqual = function deepEqual(objA, objB) {
+	if (is(objA, objB)) {
+		return true;
+	}
+
+	if (typeof objA !== 'object' || objA === null || typeof objB !== 'object' || objB === null) {
+		return false;
+	}
+
+	var keysA = Object.keys(objA);
+
+	// Test for A's keys different from B.
+	for (var i = 0; i < keysA.length; i++) {
+		if (!hasOwnProperty.call(objB, keysA[i])) {
+			return false;
+		}
+	}
+
+	for (var propty in objA) {
+		if (objB.hasOwnProperty(propty)) {
+			if (!deepEqual(objA[propty], objB[propty])) {
+				return false;
+			}
+		} else {
+			return false;
+		}
+	}
+
+	return true;
+};
+
+exports['default'] = deepEqual;
+module.exports = exports['default'];
+
+},{}],"react-chartjs-2":[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, '__esModule', {
@@ -28,9 +82,9 @@ var _chartJs = require('chart.js');
 
 var _chartJs2 = _interopRequireDefault(_chartJs);
 
-var _uid = require('uid');
+var _utilsDeepEqual = require('./utils/deepEqual');
 
-var _uid2 = _interopRequireDefault(_uid);
+var _utilsDeepEqual2 = _interopRequireDefault(_utilsDeepEqual);
 
 var ChartComponent = _react2['default'].createClass({
 
@@ -55,13 +109,12 @@ var ChartComponent = _react2['default'].createClass({
 			type: 'doughnut',
 			height: 200,
 			width: 200,
-			redraw: true
+			redraw: false
 		};
 	},
 
 	componentWillMount: function componentWillMount() {
 		this.chart_instance = undefined;
-		this.chart_uid = (0, _uid2['default'])(10);
 	},
 
 	componentDidMount: function componentDidMount() {
@@ -72,25 +125,59 @@ var ChartComponent = _react2['default'].createClass({
 		if (this.props.redraw) {
 			this.chart_instance.destroy();
 			this.renderChart();
+		} else {
+			this.updateChart();
 		}
 	},
 
-	shouldComponentUpdate: function shouldComponentUpdate(nextProps) {
-		return this.props !== nextProps;
+	_objectWithoutProperties: function _objectWithoutProperties(obj, keys) {
+		var target = {};
+		for (var i in obj) {
+			if (keys.indexOf(i) >= 0) continue;
+			if (!Object.prototype.hasOwnProperty.call(obj, i)) continue;
+			target[i] = obj[i];
+		}
+		return target;
+	},
+
+	shouldComponentUpdate: function shouldComponentUpdate(nextProps, nextState) {
+		var compareNext = this._objectWithoutProperties(nextProps, ['id', 'width', 'height']);
+		var compareNow = this._objectWithoutProperties(this.props, ['id', 'width', 'height']);
+		return !(0, _utilsDeepEqual2['default'])(compareNext, compareNow, { strict: true });
 	},
 
 	componentWillUnmount: function componentWillUnmount() {
 		this.chart_instance.destroy();
 	},
 
-	renderChart: function renderChart() {
+	updateChart: function updateChart() {
+		var _this = this;
+
 		var _props = this.props;
 		var data = _props.data;
 		var options = _props.options;
-		var legend = _props.legend;
-		var type = _props.type;
 
-		var node = _reactDom2['default'].findDOMNode(this.refs[this.getRefKey()]);
+		if (!this.chart_instance) return;
+
+		if (options) {
+			_chartJs2['default'].helpers.configMerge(this.chart_instance.options, options);
+		}
+
+		data.datasets.forEach(function (dataset, index) {
+			_this.chart_instance.data.datasets[index] = dataset;
+		});
+
+		this.chart_instance.update();
+	},
+
+	renderChart: function renderChart() {
+		var _props2 = this.props;
+		var data = _props2.data;
+		var options = _props2.options;
+		var legend = _props2.legend;
+		var type = _props2.type;
+
+		var node = _reactDom2['default'].findDOMNode(this);
 
 		this.chart_instance = new _chartJs2['default'](node, {
 			type: type,
@@ -99,20 +186,14 @@ var ChartComponent = _react2['default'].createClass({
 		});
 	},
 
-	getRefKey: function getRefKey() {
-		return 'chart-' + this.chart_uid;
-	},
-
 	render: function render() {
-		var _props2 = this.props;
-		var height = _props2.height;
-		var width = _props2.width;
+		var _props3 = this.props;
+		var height = _props3.height;
+		var width = _props3.width;
 
 		return _react2['default'].createElement('canvas', {
 			height: height,
-			width: width,
-			ref: this.getRefKey(),
-			key: this.chart_uid
+			width: width
 		});
 	}
 });
@@ -143,4 +224,4 @@ function Polar(props) {
 	return _react2['default'].createElement(ChartComponent, _extends({}, props, { type: 'polarArea' }));
 }
 
-},{"chart.js":undefined,"react":undefined,"react-dom":undefined,"uid":undefined}]},{},[]);
+},{"./utils/deepEqual":1,"chart.js":undefined,"react":undefined,"react-dom":undefined}]},{},[]);
