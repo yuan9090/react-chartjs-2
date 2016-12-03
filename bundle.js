@@ -31,10 +31,15 @@ var deepEqual = function deepEqual(objA, objB) {
 	}
 
 	var keysA = Object.keys(objA);
+	var keysB = Object.keys(objB);
+	var allKeys = keysA.concat(keysB);
 
-	// Test for A's keys different from B.
-	for (var i = 0; i < keysA.length; i++) {
-		if (!hasOwnProperty.call(objB, keysA[i])) {
+	// Verify both objects have all the keys
+	for (var i = 0; i < allKeys.length; i++) {
+		if (!hasOwnProperty.call(objB, allKeys[i])) {
+			return false;
+		}
+		if (!hasOwnProperty.call(objA, allKeys[i])) {
 			return false;
 		}
 	}
@@ -60,7 +65,7 @@ exports.default = deepEqual;
 Object.defineProperty(exports, "__esModule", {
 	value: true
 });
-exports.Polar = exports.Radar = exports.HorizontalBar = exports.Bar = exports.Line = exports.Pie = exports.Doughnut = undefined;
+exports.Chart = exports.defaults = exports.Bubble = exports.Polar = exports.Radar = exports.HorizontalBar = exports.Bar = exports.Line = exports.Pie = exports.Doughnut = undefined;
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
 
@@ -96,12 +101,15 @@ var ChartComponent = _react2.default.createClass({
 
 	propTypes: {
 		data: _react.PropTypes.object.isRequired,
+		getDatasetAtEvent: _react.PropTypes.func,
+		getElementAtEvent: _react.PropTypes.func,
+		getElementsAtEvent: _react.PropTypes.func,
 		height: _react.PropTypes.number,
 		legend: _react.PropTypes.object,
 		onElementsClick: _react.PropTypes.func,
 		options: _react.PropTypes.object,
 		redraw: _react.PropTypes.bool,
-		type: _react.PropTypes.oneOf(['doughnut', 'pie', 'line', 'bar', 'horizontalBar', 'radar', 'polarArea']),
+		type: _react.PropTypes.oneOf(['doughnut', 'pie', 'line', 'bar', 'horizontalBar', 'radar', 'polarArea', 'bubble']),
 		width: _react.PropTypes.number
 	},
 
@@ -144,6 +152,7 @@ var ChartComponent = _react2.default.createClass({
 		var ignoredProperties = ['id', 'width', 'height', 'onElementsClick'];
 		var compareNext = this._objectWithoutProperties(nextProps, ignoredProperties);
 		var compareNow = this._objectWithoutProperties(this.props, ignoredProperties);
+
 		return !(0, _deepEqual2.default)(compareNext, compareNow, { strict: true });
 	},
 	componentWillUnmount: function componentWillUnmount() {
@@ -160,6 +169,21 @@ var ChartComponent = _react2.default.createClass({
 		if (options) {
 			this.chart_instance.options = _chart2.default.helpers.configMerge(this.chart_instance.options, options);
 		}
+
+		var currentData = this.chart_instance.config.data.datasets;
+		var nextData = data.datasets;
+
+		nextData.forEach(function (dataset, sid) {
+			if (currentData[sid] && currentData[sid].data) {
+				currentData[sid].data.splice(nextData[sid].data.length);
+				dataset.data.forEach(function (point, pid) {
+					currentData[sid].data[pid] = nextData[sid].data[pid];
+				});
+			} else {
+				currentData[sid] = nextData[sid];
+			}
+		});
+		delete data.datasets;
 
 		this.chart_instance.config.data = _extends({}, this.chart_instance.config.data, data);
 
@@ -180,25 +204,32 @@ var ChartComponent = _react2.default.createClass({
 			options: options
 		});
 	},
-	handleOnClick: function handleOnClick(evt) {
-		var elems = this.chart_instance.getElementsAtEvent(evt);
-		if (elems.length) {
-			var onElementsClick = this.props.onElementsClick;
+	handleOnClick: function handleOnClick(event) {
+		var instance = this.chart_instance;
 
-			onElementsClick(elems);
-		}
+		var _props3 = this.props;
+		var getDatasetAtEvent = _props3.getDatasetAtEvent;
+		var getElementAtEvent = _props3.getElementAtEvent;
+		var getElementsAtEvent = _props3.getElementsAtEvent;
+		var onElementsClick = _props3.onElementsClick;
+
+
+		getDatasetAtEvent && getDatasetAtEvent(instance.getDatasetAtEvent(event), event);
+		getElementAtEvent && getElementAtEvent(instance.getElementAtEvent(event), event);
+		getElementsAtEvent && getElementsAtEvent(instance.getElementsAtEvent(event), event);
+		onElementsClick && onElementsClick(instance.getElementsAtEvent(event), event); // Backward compatibility
 	},
 	render: function render() {
-		var _props3 = this.props;
-		var height = _props3.height;
-		var width = _props3.width;
-		var onElementsClick = _props3.onElementsClick;
+		var _props4 = this.props;
+		var height = _props4.height;
+		var width = _props4.width;
+		var onElementsClick = _props4.onElementsClick;
 
 
 		return _react2.default.createElement('canvas', {
 			height: height,
 			width: width,
-			onClick: typeof onElementsClick === 'function' ? this.handleOnClick : null
+			onClick: this.handleOnClick
 		});
 	}
 });
@@ -386,5 +417,34 @@ var Polar = exports.Polar = function (_React$Component7) {
 
 	return Polar;
 }(_react2.default.Component);
+
+var Bubble = exports.Bubble = function (_React$Component8) {
+	_inherits(Bubble, _React$Component8);
+
+	function Bubble() {
+		_classCallCheck(this, Bubble);
+
+		return _possibleConstructorReturn(this, (Bubble.__proto__ || Object.getPrototypeOf(Bubble)).apply(this, arguments));
+	}
+
+	_createClass(Bubble, [{
+		key: 'render',
+		value: function render() {
+			var _this16 = this;
+
+			return _react2.default.createElement(ChartComponent, _extends({}, this.props, {
+				ref: function ref(_ref8) {
+					return _this16.chart_instance = _ref8 && _ref8.chart_instance;
+				},
+				type: 'bubble'
+			}));
+		}
+	}]);
+
+	return Bubble;
+}(_react2.default.Component);
+
+var defaults = exports.defaults = _chart2.default.defaults;
+exports.Chart = _chart2.default;
 
 },{"./utils/deepEqual":1,"chart.js":undefined,"react":undefined,"react-dom":undefined}]},{},[]);
