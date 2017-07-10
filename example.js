@@ -111,6 +111,94 @@ exports.default = _react2.default.createClass({
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
+	value: true
+});
+
+var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
+
+var _react = require('react');
+
+var _react2 = _interopRequireDefault(_react);
+
+var _reactChartjs = require('react-chartjs-2');
+
+var _rcolor = require('rcolor');
+
+var _rcolor2 = _interopRequireDefault(_rcolor);
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+var initialState = {
+	labels: ['January', 'February', 'March', 'April', 'May', 'June', 'July'],
+	datasets: [{
+		label: 'My First dataset',
+		backgroundColor: 'rgba(255,99,132,0.2)',
+		borderColor: 'rgba(255,99,132,1)',
+		borderWidth: 1,
+		hoverBackgroundColor: 'rgba(255,99,132,0.4)',
+		hoverBorderColor: 'rgba(255,99,132,1)',
+		data: [65, 59, 80, 81, 56, 55, 40]
+	}]
+};
+
+var Graph = _react2.default.createClass({
+	displayName: 'Graph',
+	componentWillMount: function componentWillMount() {
+		this.setState(initialState);
+	},
+	componentDidMount: function componentDidMount() {
+
+		var _this = this;
+
+		setInterval(function () {
+			var oldDataSet = _this.state.datasets[0];
+			var newData = [];
+
+			for (var x = 0; x < _this.state.labels.length; x++) {
+				newData.push(Math.floor(Math.random() * 100));
+			}
+
+			var newDataSet = _extends({}, oldDataSet);
+
+			newDataSet.data = newData;
+			newDataSet.backgroundColor = (0, _rcolor2.default)();
+			newDataSet.borderColor = (0, _rcolor2.default)();
+			newDataSet.hoverBackgroundColor = (0, _rcolor2.default)();
+			newDataSet.hoverBorderColor = (0, _rcolor2.default)();
+
+			var newState = _extends({}, initialState, {
+				datasets: [newDataSet]
+			});
+
+			_this.setState(newState);
+		}, 5000);
+	},
+	render: function render() {
+		return _react2.default.createElement(_reactChartjs.Bar, { data: this.state });
+	}
+});
+
+exports.default = _react2.default.createClass({
+	displayName: 'Crazy Random Graph',
+
+	render: function render() {
+		return _react2.default.createElement(
+			'div',
+			null,
+			_react2.default.createElement(
+				'h2',
+				null,
+				'You can even make crazy graphs like this!'
+			),
+			_react2.default.createElement(Graph, null)
+		);
+	}
+});
+
+},{"rcolor":15,"react":undefined,"react-chartjs-2":undefined}],4:[function(require,module,exports){
+'use strict';
+
+Object.defineProperty(exports, "__esModule", {
 		value: true
 });
 
@@ -148,7 +236,7 @@ exports.default = _react2.default.createClass({
 		}
 });
 
-},{"react":undefined,"react-chartjs-2":undefined}],4:[function(require,module,exports){
+},{"react":undefined,"react-chartjs-2":undefined}],5:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -205,7 +293,7 @@ exports.default = _react2.default.createClass({
   }
 });
 
-},{"react":undefined,"react-chartjs-2":undefined}],5:[function(require,module,exports){
+},{"react":undefined,"react-chartjs-2":undefined}],6:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -250,7 +338,7 @@ exports.default = _react2.default.createClass({
   }
 });
 
-},{"react":undefined,"react-chartjs-2":undefined}],6:[function(require,module,exports){
+},{"react":undefined,"react-chartjs-2":undefined}],7:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -307,7 +395,7 @@ exports.default = _react2.default.createClass({
   }
 });
 
-},{"react":undefined,"react-chartjs-2":undefined}],7:[function(require,module,exports){
+},{"react":undefined,"react-chartjs-2":undefined}],8:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -395,6 +483,13 @@ var options = {
   }
 };
 
+var plugins = [{
+  afterDraw: function afterDraw(chartInstance, easing) {
+    var ctx = chartInstance.chart.ctx;
+    ctx.fillText("This text drawn by a plugin", 100, 100);
+  }
+}];
+
 exports.default = _react2.default.createClass({
   displayName: 'MixExample',
 
@@ -409,13 +504,14 @@ exports.default = _react2.default.createClass({
       ),
       _react2.default.createElement(_reactChartjs.Bar, {
         data: data,
-        options: options
+        options: options,
+        plugins: plugins
       })
     );
   }
 });
 
-},{"react":undefined,"react-chartjs-2":undefined}],8:[function(require,module,exports){
+},{"react":undefined,"react-chartjs-2":undefined}],9:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -456,7 +552,7 @@ exports.default = _react2.default.createClass({
 		}
 });
 
-},{"react":undefined,"react-chartjs-2":undefined}],9:[function(require,module,exports){
+},{"react":undefined,"react-chartjs-2":undefined}],10:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -497,7 +593,7 @@ exports.default = _react2.default.createClass({
   }
 });
 
-},{"react":undefined,"react-chartjs-2":undefined}],10:[function(require,module,exports){
+},{"react":undefined,"react-chartjs-2":undefined}],11:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -552,12 +648,14 @@ exports.default = _react2.default.createClass({
   }
 });
 
-},{"react":undefined,"react-chartjs-2":undefined}],11:[function(require,module,exports){
+},{"react":undefined,"react-chartjs-2":undefined}],12:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
+
+var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
 
 var _react = require('react');
 
@@ -602,17 +700,22 @@ var Graph = _react2.default.createClass({
     var _this = this;
 
     setInterval(function () {
-      var oldDataSet = _this.state;
+      var oldDataSet = _this.state.datasets[0];
       var newData = [];
 
       for (var x = 0; x < _this.state.labels.length; x++) {
         newData.push(Math.floor(Math.random() * 100));
       }
 
-      var newDataSet = Object.assign({}, oldDataSet);
+      var newDataSet = _extends({}, oldDataSet);
+
       newDataSet.data = newData;
 
-      _this.setState({ datasets: [newDataSet] });
+      var newState = _extends({}, initialState, {
+        datasets: [newDataSet]
+      });
+
+      _this.setState(newState);
     }, 5000);
   },
   render: function render() {
@@ -637,7 +740,58 @@ exports.default = _react2.default.createClass({
   }
 });
 
-},{"react":undefined,"react-chartjs-2":undefined}],12:[function(require,module,exports){
+},{"react":undefined,"react-chartjs-2":undefined}],13:[function(require,module,exports){
+'use strict';
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+
+var _react = require('react');
+
+var _react2 = _interopRequireDefault(_react);
+
+var _reactChartjs = require('react-chartjs-2');
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+var data = {
+  labels: ['Scatter'],
+  datasets: [{
+    label: 'My First dataset',
+    fill: false,
+    backgroundColor: 'rgba(75,192,192,0.4)',
+    pointBorderColor: 'rgba(75,192,192,1)',
+    pointBackgroundColor: '#fff',
+    pointBorderWidth: 1,
+    pointHoverRadius: 5,
+    pointHoverBackgroundColor: 'rgba(75,192,192,1)',
+    pointHoverBorderColor: 'rgba(220,220,220,1)',
+    pointHoverBorderWidth: 2,
+    pointRadius: 1,
+    pointHitRadius: 10,
+    data: [{ x: 65, y: 75 }, { x: 59, y: 49 }, { x: 80, y: 90 }, { x: 81, y: 29 }, { x: 56, y: 36 }, { x: 55, y: 25 }, { x: 40, y: 18 }]
+  }]
+};
+
+exports.default = _react2.default.createClass({
+  displayName: 'ScatterExample',
+
+  render: function render() {
+    return _react2.default.createElement(
+      'div',
+      null,
+      _react2.default.createElement(
+        'h2',
+        null,
+        'Scatter Example'
+      ),
+      _react2.default.createElement(_reactChartjs.Scatter, { data: data })
+    );
+  }
+});
+
+},{"react":undefined,"react-chartjs-2":undefined}],14:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -686,6 +840,10 @@ var _bubble = require('./components/bubble');
 
 var _bubble2 = _interopRequireDefault(_bubble);
 
+var _scatter = require('./components/scatter');
+
+var _scatter2 = _interopRequireDefault(_scatter);
+
 var _mix = require('./components/mix');
 
 var _mix2 = _interopRequireDefault(_mix);
@@ -693,6 +851,10 @@ var _mix2 = _interopRequireDefault(_mix);
 var _randomizedLine = require('./components/randomizedLine');
 
 var _randomizedLine2 = _interopRequireDefault(_randomizedLine);
+
+var _crazyLine = require('./components/crazyLine');
+
+var _crazyLine2 = _interopRequireDefault(_crazyLine);
 
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
@@ -736,9 +898,13 @@ var App = function (_React$Component) {
 				_react2.default.createElement('hr', null),
 				_react2.default.createElement(_bubble2.default, null),
 				_react2.default.createElement('hr', null),
+				_react2.default.createElement(_scatter2.default, null),
+				_react2.default.createElement('hr', null),
 				_react2.default.createElement(_mix2.default, null),
 				_react2.default.createElement('hr', null),
-				_react2.default.createElement(_randomizedLine2.default, null)
+				_react2.default.createElement(_randomizedLine2.default, null),
+				_react2.default.createElement('hr', null),
+				_react2.default.createElement(_crazyLine2.default, null)
 			);
 		}
 	}]);
@@ -748,4 +914,175 @@ var App = function (_React$Component) {
 
 _reactDom2.default.render(_react2.default.createElement(App, null), document.getElementById('app'));
 
-},{"./components/bar":1,"./components/bubble":2,"./components/doughnut":3,"./components/dynamic-doughnut":4,"./components/horizontalBar":5,"./components/line":6,"./components/mix":7,"./components/pie":8,"./components/polar":9,"./components/radar":10,"./components/randomizedLine":11,"react":undefined,"react-dom":undefined}]},{},[12]);
+},{"./components/bar":1,"./components/bubble":2,"./components/crazyLine":3,"./components/doughnut":4,"./components/dynamic-doughnut":5,"./components/horizontalBar":6,"./components/line":7,"./components/mix":8,"./components/pie":9,"./components/polar":10,"./components/radar":11,"./components/randomizedLine":12,"./components/scatter":13,"react":undefined,"react-dom":undefined}],15:[function(require,module,exports){
+module.exports =
+/******/ (function(modules) { // webpackBootstrap
+/******/ 	// The module cache
+/******/ 	var installedModules = {};
+
+/******/ 	// The require function
+/******/ 	function __webpack_require__(moduleId) {
+
+/******/ 		// Check if module is in cache
+/******/ 		if(installedModules[moduleId])
+/******/ 			return installedModules[moduleId].exports;
+
+/******/ 		// Create a new module (and put it into the cache)
+/******/ 		var module = installedModules[moduleId] = {
+/******/ 			i: moduleId,
+/******/ 			l: false,
+/******/ 			exports: {}
+/******/ 		};
+
+/******/ 		// Execute the module function
+/******/ 		modules[moduleId].call(module.exports, module, module.exports, __webpack_require__);
+
+/******/ 		// Flag the module as loaded
+/******/ 		module.l = true;
+
+/******/ 		// Return the exports of the module
+/******/ 		return module.exports;
+/******/ 	}
+
+
+/******/ 	// expose the modules object (__webpack_modules__)
+/******/ 	__webpack_require__.m = modules;
+
+/******/ 	// expose the module cache
+/******/ 	__webpack_require__.c = installedModules;
+
+/******/ 	// identity function for calling harmony imports with the correct context
+/******/ 	__webpack_require__.i = function(value) { return value; };
+
+/******/ 	// define getter function for harmony exports
+/******/ 	__webpack_require__.d = function(exports, name, getter) {
+/******/ 		if(!__webpack_require__.o(exports, name)) {
+/******/ 			Object.defineProperty(exports, name, {
+/******/ 				configurable: false,
+/******/ 				enumerable: true,
+/******/ 				get: getter
+/******/ 			});
+/******/ 		}
+/******/ 	};
+
+/******/ 	// getDefaultExport function for compatibility with non-harmony modules
+/******/ 	__webpack_require__.n = function(module) {
+/******/ 		var getter = module && module.__esModule ?
+/******/ 			function getDefault() { return module['default']; } :
+/******/ 			function getModuleExports() { return module; };
+/******/ 		__webpack_require__.d(getter, 'a', getter);
+/******/ 		return getter;
+/******/ 	};
+
+/******/ 	// Object.prototype.hasOwnProperty.call
+/******/ 	__webpack_require__.o = function(object, property) { return Object.prototype.hasOwnProperty.call(object, property); };
+
+/******/ 	// __webpack_public_path__
+/******/ 	__webpack_require__.p = "";
+
+/******/ 	// Load entry module and return exports
+/******/ 	return __webpack_require__(__webpack_require__.s = 3);
+/******/ })
+/************************************************************************/
+/******/ ([
+/* 0 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+module.exports = function (h, s, v) {
+  var hi = Math.floor(h * 6);
+  var f = h * 6 - hi;
+  var p = v * (1 - s);
+  var q = v * (1 - f * s);
+  var t = v * (1 - (1 - f) * s);
+  var r = 255;
+  var g = 255;
+  var b = 255;
+
+  switch (hi) {
+    case 0:
+      r = v;g = t;b = p;break;
+    case 1:
+      r = q;g = v;b = p;break;
+    case 2:
+      r = p;g = v;b = t;break;
+    case 3:
+      r = p;g = q;b = v;break;
+    case 4:
+      r = t;g = p;b = v;break;
+    case 5:
+      r = v;g = p;b = q;break;
+  }
+  return [Math.floor(r * 255), Math.floor(g * 255), Math.floor(b * 255)];
+};
+
+/***/ }),
+/* 1 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var padHex = __webpack_require__(2);
+
+module.exports = function (rgb) {
+  var parts = rgb.map(function (val) {
+    return padHex(val.toString(16));
+  }).join('');
+
+  return '#' + parts;
+};
+
+/***/ }),
+/* 2 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var hexWidth = 2;
+
+module.exports = function (str) {
+  if (str.length > hexWidth) return str;
+  return new Array(hexWidth - str.length + 1).join('0') + str;
+};
+
+/***/ }),
+/* 3 */
+/***/ (function(module, exports, __webpack_require__) {
+
+"use strict";
+
+
+var hsvToRgb = __webpack_require__(0);
+var rgbToHex = __webpack_require__(1);
+var goldenRatio = 0.618033988749895;
+
+function getRgb() {
+  var inputs = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
+  var hue = inputs.hue,
+      saturation = inputs.saturation,
+      value = inputs.value;
+
+  if (!hue) hue = Math.random();
+  hue += goldenRatio;
+  hue %= 1;
+
+  if (typeof saturation !== 'number') saturation = 0.5;
+  if (typeof value !== 'number') value = 0.95;
+
+  return hsvToRgb(hue, saturation, value);
+}
+
+function getHex(opts, inputs) {
+  var rgb = getRgb(opts, inputs);
+  return rgbToHex(rgb);
+}
+
+module.exports = getHex;
+
+/***/ })
+/******/ ]);
+},{}]},{},[14]);

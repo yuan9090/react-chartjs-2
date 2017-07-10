@@ -1,9 +1,175 @@
 require=(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
+"use strict";
+
+/**
+ * Copyright (c) 2013-present, Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ *
+ * 
+ */
+
+function makeEmptyFunction(arg) {
+  return function () {
+    return arg;
+  };
+}
+
+/**
+ * This function accepts and discards inputs; it has no side effects. This is
+ * primarily useful idiomatically for overridable function endpoints which
+ * always need to be callable, since JS lacks a null-call idiom ala Cocoa.
+ */
+var emptyFunction = function emptyFunction() {};
+
+emptyFunction.thatReturns = makeEmptyFunction;
+emptyFunction.thatReturnsFalse = makeEmptyFunction(false);
+emptyFunction.thatReturnsTrue = makeEmptyFunction(true);
+emptyFunction.thatReturnsNull = makeEmptyFunction(null);
+emptyFunction.thatReturnsThis = function () {
+  return this;
+};
+emptyFunction.thatReturnsArgument = function (arg) {
+  return arg;
+};
+
+module.exports = emptyFunction;
+},{}],2:[function(require,module,exports){
+(function (process){
+/**
+ * Copyright (c) 2013-present, Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ *
+ */
+
+'use strict';
+
+/**
+ * Use invariant() to assert state which your program assumes to be true.
+ *
+ * Provide sprintf-style format (only %s is supported) and arguments
+ * to provide information about what broke and what you were
+ * expecting.
+ *
+ * The invariant message will be stripped in production, but the invariant
+ * will remain to ensure logic does not differ in production.
+ */
+
+var validateFormat = function validateFormat(format) {};
+
+if (process.env.NODE_ENV !== 'production') {
+  validateFormat = function validateFormat(format) {
+    if (format === undefined) {
+      throw new Error('invariant requires an error message argument');
+    }
+  };
+}
+
+function invariant(condition, format, a, b, c, d, e, f) {
+  validateFormat(format);
+
+  if (!condition) {
+    var error;
+    if (format === undefined) {
+      error = new Error('Minified exception occurred; use the non-minified dev environment ' + 'for the full error message and additional helpful warnings.');
+    } else {
+      var args = [a, b, c, d, e, f];
+      var argIndex = 0;
+      error = new Error(format.replace(/%s/g, function () {
+        return args[argIndex++];
+      }));
+      error.name = 'Invariant Violation';
+    }
+
+    error.framesToPop = 1; // we don't care about invariant's own frame
+    throw error;
+  }
+}
+
+module.exports = invariant;
+}).call(this,require('_process'))
+},{"_process":5}],3:[function(require,module,exports){
+(function (process){
+/**
+ * Copyright 2014-2015, Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ *
+ */
+
+'use strict';
+
+var emptyFunction = require('./emptyFunction');
+
+/**
+ * Similar to invariant but only logs a warning if the condition is not met.
+ * This can be used to log issues in development environments in critical
+ * paths. Removing the logging code for production environments will keep the
+ * same logic and follow the same code paths.
+ */
+
+var warning = emptyFunction;
+
+if (process.env.NODE_ENV !== 'production') {
+  (function () {
+    var printWarning = function printWarning(format) {
+      for (var _len = arguments.length, args = Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++) {
+        args[_key - 1] = arguments[_key];
+      }
+
+      var argIndex = 0;
+      var message = 'Warning: ' + format.replace(/%s/g, function () {
+        return args[argIndex++];
+      });
+      if (typeof console !== 'undefined') {
+        console.error(message);
+      }
+      try {
+        // --- Welcome to debugging React ---
+        // This error was thrown as a convenience so that you can use this stack
+        // to find the callsite that caused this warning to fire.
+        throw new Error(message);
+      } catch (x) {}
+    };
+
+    warning = function warning(condition, format) {
+      if (format === undefined) {
+        throw new Error('`warning(condition, format, ...args)` requires a warning ' + 'message argument');
+      }
+
+      if (format.indexOf('Failed Composite propType: ') === 0) {
+        return; // Ignore CompositeComponent proptype check.
+      }
+
+      if (!condition) {
+        for (var _len2 = arguments.length, args = Array(_len2 > 2 ? _len2 - 2 : 0), _key2 = 2; _key2 < _len2; _key2++) {
+          args[_key2 - 2] = arguments[_key2];
+        }
+
+        printWarning.apply(undefined, [format].concat(args));
+      }
+    };
+  })();
+}
+
+module.exports = warning;
+}).call(this,require('_process'))
+},{"./emptyFunction":1,"_process":5}],4:[function(require,module,exports){
 (function (global){
 /**
- * lodash (Custom Build) <https://lodash.com/>
+ * Lodash (Custom Build) <https://lodash.com/>
  * Build: `lodash modularize exports="npm" -o ./`
- * Copyright jQuery Foundation and other contributors <https://jquery.org/>
+ * Copyright JS Foundation and other contributors <https://js.foundation/>
  * Released under MIT license <https://lodash.com/license>
  * Based on Underscore.js 1.8.3 <http://underscorejs.org/LICENSE>
  * Copyright Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors
@@ -15,9 +181,9 @@ var LARGE_ARRAY_SIZE = 200;
 /** Used to stand-in for `undefined` hash values. */
 var HASH_UNDEFINED = '__lodash_hash_undefined__';
 
-/** Used to compose bitmasks for comparison styles. */
-var UNORDERED_COMPARE_FLAG = 1,
-    PARTIAL_COMPARE_FLAG = 2;
+/** Used to compose bitmasks for value comparisons. */
+var COMPARE_PARTIAL_FLAG = 1,
+    COMPARE_UNORDERED_FLAG = 2;
 
 /** Used as references for various `Number` constants. */
 var MAX_SAFE_INTEGER = 9007199254740991;
@@ -25,6 +191,7 @@ var MAX_SAFE_INTEGER = 9007199254740991;
 /** `Object#toString` result references. */
 var argsTag = '[object Arguments]',
     arrayTag = '[object Array]',
+    asyncTag = '[object AsyncFunction]',
     boolTag = '[object Boolean]',
     dateTag = '[object Date]',
     errorTag = '[object Error]',
@@ -32,12 +199,15 @@ var argsTag = '[object Arguments]',
     genTag = '[object GeneratorFunction]',
     mapTag = '[object Map]',
     numberTag = '[object Number]',
+    nullTag = '[object Null]',
     objectTag = '[object Object]',
     promiseTag = '[object Promise]',
+    proxyTag = '[object Proxy]',
     regexpTag = '[object RegExp]',
     setTag = '[object Set]',
     stringTag = '[object String]',
     symbolTag = '[object Symbol]',
+    undefinedTag = '[object Undefined]',
     weakMapTag = '[object WeakMap]';
 
 var arrayBufferTag = '[object ArrayBuffer]',
@@ -104,12 +274,55 @@ var freeProcess = moduleExports && freeGlobal.process;
 /** Used to access faster Node.js helpers. */
 var nodeUtil = (function() {
   try {
-    return freeProcess && freeProcess.binding('util');
+    return freeProcess && freeProcess.binding && freeProcess.binding('util');
   } catch (e) {}
 }());
 
 /* Node.js helper references. */
 var nodeIsTypedArray = nodeUtil && nodeUtil.isTypedArray;
+
+/**
+ * A specialized version of `_.filter` for arrays without support for
+ * iteratee shorthands.
+ *
+ * @private
+ * @param {Array} [array] The array to iterate over.
+ * @param {Function} predicate The function invoked per iteration.
+ * @returns {Array} Returns the new filtered array.
+ */
+function arrayFilter(array, predicate) {
+  var index = -1,
+      length = array == null ? 0 : array.length,
+      resIndex = 0,
+      result = [];
+
+  while (++index < length) {
+    var value = array[index];
+    if (predicate(value, index, array)) {
+      result[resIndex++] = value;
+    }
+  }
+  return result;
+}
+
+/**
+ * Appends the elements of `values` to `array`.
+ *
+ * @private
+ * @param {Array} array The array to modify.
+ * @param {Array} values The values to append.
+ * @returns {Array} Returns `array`.
+ */
+function arrayPush(array, values) {
+  var index = -1,
+      length = values.length,
+      offset = array.length;
+
+  while (++index < length) {
+    array[offset + index] = values[index];
+  }
+  return array;
+}
 
 /**
  * A specialized version of `_.some` for arrays without support for iteratee
@@ -123,7 +336,7 @@ var nodeIsTypedArray = nodeUtil && nodeUtil.isTypedArray;
  */
 function arraySome(array, predicate) {
   var index = -1,
-      length = array ? array.length : 0;
+      length = array == null ? 0 : array.length;
 
   while (++index < length) {
     if (predicate(array[index], index, array)) {
@@ -166,6 +379,18 @@ function baseUnary(func) {
 }
 
 /**
+ * Checks if a `cache` value for `key` exists.
+ *
+ * @private
+ * @param {Object} cache The cache to query.
+ * @param {string} key The key of the entry to check.
+ * @returns {boolean} Returns `true` if an entry for `key` exists, else `false`.
+ */
+function cacheHas(cache, key) {
+  return cache.has(key);
+}
+
+/**
  * Gets the value at `key` of `object`.
  *
  * @private
@@ -175,25 +400,6 @@ function baseUnary(func) {
  */
 function getValue(object, key) {
   return object == null ? undefined : object[key];
-}
-
-/**
- * Checks if `value` is a host object in IE < 9.
- *
- * @private
- * @param {*} value The value to check.
- * @returns {boolean} Returns `true` if `value` is a host object, else `false`.
- */
-function isHostObject(value) {
-  // Many host objects are `Object` objects that can coerce to strings
-  // despite having improperly defined `toString` methods.
-  var result = false;
-  if (value != null && typeof value.toString != 'function') {
-    try {
-      result = !!(value + '');
-    } catch (e) {}
-  }
-  return result;
 }
 
 /**
@@ -252,24 +458,24 @@ var arrayProto = Array.prototype,
 /** Used to detect overreaching core-js shims. */
 var coreJsData = root['__core-js_shared__'];
 
-/** Used to detect methods masquerading as native. */
-var maskSrcKey = (function() {
-  var uid = /[^.]+$/.exec(coreJsData && coreJsData.keys && coreJsData.keys.IE_PROTO || '');
-  return uid ? ('Symbol(src)_1.' + uid) : '';
-}());
-
 /** Used to resolve the decompiled source of functions. */
 var funcToString = funcProto.toString;
 
 /** Used to check objects for own properties. */
 var hasOwnProperty = objectProto.hasOwnProperty;
 
+/** Used to detect methods masquerading as native. */
+var maskSrcKey = (function() {
+  var uid = /[^.]+$/.exec(coreJsData && coreJsData.keys && coreJsData.keys.IE_PROTO || '');
+  return uid ? ('Symbol(src)_1.' + uid) : '';
+}());
+
 /**
  * Used to resolve the
  * [`toStringTag`](http://ecma-international.org/ecma-262/7.0/#sec-object.prototype.tostring)
  * of values.
  */
-var objectToString = objectProto.toString;
+var nativeObjectToString = objectProto.toString;
 
 /** Used to detect if a method is native. */
 var reIsNative = RegExp('^' +
@@ -278,13 +484,17 @@ var reIsNative = RegExp('^' +
 );
 
 /** Built-in value references. */
-var Symbol = root.Symbol,
+var Buffer = moduleExports ? root.Buffer : undefined,
+    Symbol = root.Symbol,
     Uint8Array = root.Uint8Array,
     propertyIsEnumerable = objectProto.propertyIsEnumerable,
-    splice = arrayProto.splice;
+    splice = arrayProto.splice,
+    symToStringTag = Symbol ? Symbol.toStringTag : undefined;
 
 /* Built-in method references for those with the same name as other `lodash` methods. */
-var nativeKeys = overArg(Object.keys, Object);
+var nativeGetSymbols = Object.getOwnPropertySymbols,
+    nativeIsBuffer = Buffer ? Buffer.isBuffer : undefined,
+    nativeKeys = overArg(Object.keys, Object);
 
 /* Built-in method references that are verified to be native. */
 var DataView = getNative(root, 'DataView'),
@@ -314,7 +524,7 @@ var symbolProto = Symbol ? Symbol.prototype : undefined,
  */
 function Hash(entries) {
   var index = -1,
-      length = entries ? entries.length : 0;
+      length = entries == null ? 0 : entries.length;
 
   this.clear();
   while (++index < length) {
@@ -332,6 +542,7 @@ function Hash(entries) {
  */
 function hashClear() {
   this.__data__ = nativeCreate ? nativeCreate(null) : {};
+  this.size = 0;
 }
 
 /**
@@ -345,7 +556,9 @@ function hashClear() {
  * @returns {boolean} Returns `true` if the entry was removed, else `false`.
  */
 function hashDelete(key) {
-  return this.has(key) && delete this.__data__[key];
+  var result = this.has(key) && delete this.__data__[key];
+  this.size -= result ? 1 : 0;
+  return result;
 }
 
 /**
@@ -377,7 +590,7 @@ function hashGet(key) {
  */
 function hashHas(key) {
   var data = this.__data__;
-  return nativeCreate ? data[key] !== undefined : hasOwnProperty.call(data, key);
+  return nativeCreate ? (data[key] !== undefined) : hasOwnProperty.call(data, key);
 }
 
 /**
@@ -392,6 +605,7 @@ function hashHas(key) {
  */
 function hashSet(key, value) {
   var data = this.__data__;
+  this.size += this.has(key) ? 0 : 1;
   data[key] = (nativeCreate && value === undefined) ? HASH_UNDEFINED : value;
   return this;
 }
@@ -412,7 +626,7 @@ Hash.prototype.set = hashSet;
  */
 function ListCache(entries) {
   var index = -1,
-      length = entries ? entries.length : 0;
+      length = entries == null ? 0 : entries.length;
 
   this.clear();
   while (++index < length) {
@@ -430,6 +644,7 @@ function ListCache(entries) {
  */
 function listCacheClear() {
   this.__data__ = [];
+  this.size = 0;
 }
 
 /**
@@ -454,6 +669,7 @@ function listCacheDelete(key) {
   } else {
     splice.call(data, index, 1);
   }
+  --this.size;
   return true;
 }
 
@@ -501,6 +717,7 @@ function listCacheSet(key, value) {
       index = assocIndexOf(data, key);
 
   if (index < 0) {
+    ++this.size;
     data.push([key, value]);
   } else {
     data[index][1] = value;
@@ -524,7 +741,7 @@ ListCache.prototype.set = listCacheSet;
  */
 function MapCache(entries) {
   var index = -1,
-      length = entries ? entries.length : 0;
+      length = entries == null ? 0 : entries.length;
 
   this.clear();
   while (++index < length) {
@@ -541,6 +758,7 @@ function MapCache(entries) {
  * @memberOf MapCache
  */
 function mapCacheClear() {
+  this.size = 0;
   this.__data__ = {
     'hash': new Hash,
     'map': new (Map || ListCache),
@@ -558,7 +776,9 @@ function mapCacheClear() {
  * @returns {boolean} Returns `true` if the entry was removed, else `false`.
  */
 function mapCacheDelete(key) {
-  return getMapData(this, key)['delete'](key);
+  var result = getMapData(this, key)['delete'](key);
+  this.size -= result ? 1 : 0;
+  return result;
 }
 
 /**
@@ -598,7 +818,11 @@ function mapCacheHas(key) {
  * @returns {Object} Returns the map cache instance.
  */
 function mapCacheSet(key, value) {
-  getMapData(this, key).set(key, value);
+  var data = getMapData(this, key),
+      size = data.size;
+
+  data.set(key, value);
+  this.size += data.size == size ? 0 : 1;
   return this;
 }
 
@@ -619,7 +843,7 @@ MapCache.prototype.set = mapCacheSet;
  */
 function SetCache(values) {
   var index = -1,
-      length = values ? values.length : 0;
+      length = values == null ? 0 : values.length;
 
   this.__data__ = new MapCache;
   while (++index < length) {
@@ -667,7 +891,8 @@ SetCache.prototype.has = setCacheHas;
  * @param {Array} [entries] The key-value pairs to cache.
  */
 function Stack(entries) {
-  this.__data__ = new ListCache(entries);
+  var data = this.__data__ = new ListCache(entries);
+  this.size = data.size;
 }
 
 /**
@@ -679,6 +904,7 @@ function Stack(entries) {
  */
 function stackClear() {
   this.__data__ = new ListCache;
+  this.size = 0;
 }
 
 /**
@@ -691,7 +917,11 @@ function stackClear() {
  * @returns {boolean} Returns `true` if the entry was removed, else `false`.
  */
 function stackDelete(key) {
-  return this.__data__['delete'](key);
+  var data = this.__data__,
+      result = data['delete'](key);
+
+  this.size = data.size;
+  return result;
 }
 
 /**
@@ -731,16 +961,18 @@ function stackHas(key) {
  * @returns {Object} Returns the stack cache instance.
  */
 function stackSet(key, value) {
-  var cache = this.__data__;
-  if (cache instanceof ListCache) {
-    var pairs = cache.__data__;
+  var data = this.__data__;
+  if (data instanceof ListCache) {
+    var pairs = data.__data__;
     if (!Map || (pairs.length < LARGE_ARRAY_SIZE - 1)) {
       pairs.push([key, value]);
+      this.size = ++data.size;
       return this;
     }
-    cache = this.__data__ = new MapCache(pairs);
+    data = this.__data__ = new MapCache(pairs);
   }
-  cache.set(key, value);
+  data.set(key, value);
+  this.size = data.size;
   return this;
 }
 
@@ -760,18 +992,26 @@ Stack.prototype.set = stackSet;
  * @returns {Array} Returns the array of property names.
  */
 function arrayLikeKeys(value, inherited) {
-  // Safari 8.1 makes `arguments.callee` enumerable in strict mode.
-  // Safari 9 makes `arguments.length` enumerable in strict mode.
-  var result = (isArray(value) || isArguments(value))
-    ? baseTimes(value.length, String)
-    : [];
-
-  var length = result.length,
-      skipIndexes = !!length;
+  var isArr = isArray(value),
+      isArg = !isArr && isArguments(value),
+      isBuff = !isArr && !isArg && isBuffer(value),
+      isType = !isArr && !isArg && !isBuff && isTypedArray(value),
+      skipIndexes = isArr || isArg || isBuff || isType,
+      result = skipIndexes ? baseTimes(value.length, String) : [],
+      length = result.length;
 
   for (var key in value) {
     if ((inherited || hasOwnProperty.call(value, key)) &&
-        !(skipIndexes && (key == 'length' || isIndex(key, length)))) {
+        !(skipIndexes && (
+           // Safari 9 has enumerable `arguments.length` in strict mode.
+           key == 'length' ||
+           // Node.js 0.10 has enumerable non-index properties on buffers.
+           (isBuff && (key == 'offset' || key == 'parent')) ||
+           // PhantomJS 2 has enumerable non-index properties on typed arrays.
+           (isType && (key == 'buffer' || key == 'byteLength' || key == 'byteOffset')) ||
+           // Skip index properties.
+           isIndex(key, length)
+        ))) {
       result.push(key);
     }
   }
@@ -797,14 +1037,46 @@ function assocIndexOf(array, key) {
 }
 
 /**
- * The base implementation of `getTag`.
+ * The base implementation of `getAllKeys` and `getAllKeysIn` which uses
+ * `keysFunc` and `symbolsFunc` to get the enumerable property names and
+ * symbols of `object`.
+ *
+ * @private
+ * @param {Object} object The object to query.
+ * @param {Function} keysFunc The function to get the keys of `object`.
+ * @param {Function} symbolsFunc The function to get the symbols of `object`.
+ * @returns {Array} Returns the array of property names and symbols.
+ */
+function baseGetAllKeys(object, keysFunc, symbolsFunc) {
+  var result = keysFunc(object);
+  return isArray(object) ? result : arrayPush(result, symbolsFunc(object));
+}
+
+/**
+ * The base implementation of `getTag` without fallbacks for buggy environments.
  *
  * @private
  * @param {*} value The value to query.
  * @returns {string} Returns the `toStringTag`.
  */
 function baseGetTag(value) {
-  return objectToString.call(value);
+  if (value == null) {
+    return value === undefined ? undefinedTag : nullTag;
+  }
+  return (symToStringTag && symToStringTag in Object(value))
+    ? getRawTag(value)
+    : objectToString(value);
+}
+
+/**
+ * The base implementation of `_.isArguments`.
+ *
+ * @private
+ * @param {*} value The value to check.
+ * @returns {boolean} Returns `true` if `value` is an `arguments` object,
+ */
+function baseIsArguments(value) {
+  return isObjectLike(value) && baseGetTag(value) == argsTag;
 }
 
 /**
@@ -814,22 +1086,21 @@ function baseGetTag(value) {
  * @private
  * @param {*} value The value to compare.
  * @param {*} other The other value to compare.
+ * @param {boolean} bitmask The bitmask flags.
+ *  1 - Unordered comparison
+ *  2 - Partial comparison
  * @param {Function} [customizer] The function to customize comparisons.
- * @param {boolean} [bitmask] The bitmask of comparison flags.
- *  The bitmask may be composed of the following flags:
- *     1 - Unordered comparison
- *     2 - Partial comparison
  * @param {Object} [stack] Tracks traversed `value` and `other` objects.
  * @returns {boolean} Returns `true` if the values are equivalent, else `false`.
  */
-function baseIsEqual(value, other, customizer, bitmask, stack) {
+function baseIsEqual(value, other, bitmask, customizer, stack) {
   if (value === other) {
     return true;
   }
-  if (value == null || other == null || (!isObject(value) && !isObjectLike(other))) {
+  if (value == null || other == null || (!isObjectLike(value) && !isObjectLike(other))) {
     return value !== value && other !== other;
   }
-  return baseIsEqualDeep(value, other, baseIsEqual, customizer, bitmask, stack);
+  return baseIsEqualDeep(value, other, bitmask, customizer, baseIsEqual, stack);
 }
 
 /**
@@ -840,38 +1111,39 @@ function baseIsEqual(value, other, customizer, bitmask, stack) {
  * @private
  * @param {Object} object The object to compare.
  * @param {Object} other The other object to compare.
+ * @param {number} bitmask The bitmask flags. See `baseIsEqual` for more details.
+ * @param {Function} customizer The function to customize comparisons.
  * @param {Function} equalFunc The function to determine equivalents of values.
- * @param {Function} [customizer] The function to customize comparisons.
- * @param {number} [bitmask] The bitmask of comparison flags. See `baseIsEqual`
- *  for more details.
  * @param {Object} [stack] Tracks traversed `object` and `other` objects.
  * @returns {boolean} Returns `true` if the objects are equivalent, else `false`.
  */
-function baseIsEqualDeep(object, other, equalFunc, customizer, bitmask, stack) {
+function baseIsEqualDeep(object, other, bitmask, customizer, equalFunc, stack) {
   var objIsArr = isArray(object),
       othIsArr = isArray(other),
-      objTag = arrayTag,
-      othTag = arrayTag;
+      objTag = objIsArr ? arrayTag : getTag(object),
+      othTag = othIsArr ? arrayTag : getTag(other);
 
-  if (!objIsArr) {
-    objTag = getTag(object);
-    objTag = objTag == argsTag ? objectTag : objTag;
-  }
-  if (!othIsArr) {
-    othTag = getTag(other);
-    othTag = othTag == argsTag ? objectTag : othTag;
-  }
-  var objIsObj = objTag == objectTag && !isHostObject(object),
-      othIsObj = othTag == objectTag && !isHostObject(other),
+  objTag = objTag == argsTag ? objectTag : objTag;
+  othTag = othTag == argsTag ? objectTag : othTag;
+
+  var objIsObj = objTag == objectTag,
+      othIsObj = othTag == objectTag,
       isSameTag = objTag == othTag;
 
+  if (isSameTag && isBuffer(object)) {
+    if (!isBuffer(other)) {
+      return false;
+    }
+    objIsArr = true;
+    objIsObj = false;
+  }
   if (isSameTag && !objIsObj) {
     stack || (stack = new Stack);
     return (objIsArr || isTypedArray(object))
-      ? equalArrays(object, other, equalFunc, customizer, bitmask, stack)
-      : equalByTag(object, other, objTag, equalFunc, customizer, bitmask, stack);
+      ? equalArrays(object, other, bitmask, customizer, equalFunc, stack)
+      : equalByTag(object, other, objTag, bitmask, customizer, equalFunc, stack);
   }
-  if (!(bitmask & PARTIAL_COMPARE_FLAG)) {
+  if (!(bitmask & COMPARE_PARTIAL_FLAG)) {
     var objIsWrapped = objIsObj && hasOwnProperty.call(object, '__wrapped__'),
         othIsWrapped = othIsObj && hasOwnProperty.call(other, '__wrapped__');
 
@@ -880,14 +1152,14 @@ function baseIsEqualDeep(object, other, equalFunc, customizer, bitmask, stack) {
           othUnwrapped = othIsWrapped ? other.value() : other;
 
       stack || (stack = new Stack);
-      return equalFunc(objUnwrapped, othUnwrapped, customizer, bitmask, stack);
+      return equalFunc(objUnwrapped, othUnwrapped, bitmask, customizer, stack);
     }
   }
   if (!isSameTag) {
     return false;
   }
   stack || (stack = new Stack);
-  return equalObjects(object, other, equalFunc, customizer, bitmask, stack);
+  return equalObjects(object, other, bitmask, customizer, equalFunc, stack);
 }
 
 /**
@@ -902,7 +1174,7 @@ function baseIsNative(value) {
   if (!isObject(value) || isMasked(value)) {
     return false;
   }
-  var pattern = (isFunction(value) || isHostObject(value)) ? reIsNative : reIsHostCtor;
+  var pattern = isFunction(value) ? reIsNative : reIsHostCtor;
   return pattern.test(toSource(value));
 }
 
@@ -915,7 +1187,7 @@ function baseIsNative(value) {
  */
 function baseIsTypedArray(value) {
   return isObjectLike(value) &&
-    isLength(value.length) && !!typedArrayTags[objectToString.call(value)];
+    isLength(value.length) && !!typedArrayTags[baseGetTag(value)];
 }
 
 /**
@@ -945,15 +1217,14 @@ function baseKeys(object) {
  * @private
  * @param {Array} array The array to compare.
  * @param {Array} other The other array to compare.
- * @param {Function} equalFunc The function to determine equivalents of values.
+ * @param {number} bitmask The bitmask flags. See `baseIsEqual` for more details.
  * @param {Function} customizer The function to customize comparisons.
- * @param {number} bitmask The bitmask of comparison flags. See `baseIsEqual`
- *  for more details.
+ * @param {Function} equalFunc The function to determine equivalents of values.
  * @param {Object} stack Tracks traversed `array` and `other` objects.
  * @returns {boolean} Returns `true` if the arrays are equivalent, else `false`.
  */
-function equalArrays(array, other, equalFunc, customizer, bitmask, stack) {
-  var isPartial = bitmask & PARTIAL_COMPARE_FLAG,
+function equalArrays(array, other, bitmask, customizer, equalFunc, stack) {
+  var isPartial = bitmask & COMPARE_PARTIAL_FLAG,
       arrLength = array.length,
       othLength = other.length;
 
@@ -967,7 +1238,7 @@ function equalArrays(array, other, equalFunc, customizer, bitmask, stack) {
   }
   var index = -1,
       result = true,
-      seen = (bitmask & UNORDERED_COMPARE_FLAG) ? new SetCache : undefined;
+      seen = (bitmask & COMPARE_UNORDERED_FLAG) ? new SetCache : undefined;
 
   stack.set(array, other);
   stack.set(other, array);
@@ -992,9 +1263,9 @@ function equalArrays(array, other, equalFunc, customizer, bitmask, stack) {
     // Recursively compare arrays (susceptible to call stack limits).
     if (seen) {
       if (!arraySome(other, function(othValue, othIndex) {
-            if (!seen.has(othIndex) &&
-                (arrValue === othValue || equalFunc(arrValue, othValue, customizer, bitmask, stack))) {
-              return seen.add(othIndex);
+            if (!cacheHas(seen, othIndex) &&
+                (arrValue === othValue || equalFunc(arrValue, othValue, bitmask, customizer, stack))) {
+              return seen.push(othIndex);
             }
           })) {
         result = false;
@@ -1002,7 +1273,7 @@ function equalArrays(array, other, equalFunc, customizer, bitmask, stack) {
       }
     } else if (!(
           arrValue === othValue ||
-            equalFunc(arrValue, othValue, customizer, bitmask, stack)
+            equalFunc(arrValue, othValue, bitmask, customizer, stack)
         )) {
       result = false;
       break;
@@ -1024,14 +1295,13 @@ function equalArrays(array, other, equalFunc, customizer, bitmask, stack) {
  * @param {Object} object The object to compare.
  * @param {Object} other The other object to compare.
  * @param {string} tag The `toStringTag` of the objects to compare.
- * @param {Function} equalFunc The function to determine equivalents of values.
+ * @param {number} bitmask The bitmask flags. See `baseIsEqual` for more details.
  * @param {Function} customizer The function to customize comparisons.
- * @param {number} bitmask The bitmask of comparison flags. See `baseIsEqual`
- *  for more details.
+ * @param {Function} equalFunc The function to determine equivalents of values.
  * @param {Object} stack Tracks traversed `object` and `other` objects.
  * @returns {boolean} Returns `true` if the objects are equivalent, else `false`.
  */
-function equalByTag(object, other, tag, equalFunc, customizer, bitmask, stack) {
+function equalByTag(object, other, tag, bitmask, customizer, equalFunc, stack) {
   switch (tag) {
     case dataViewTag:
       if ((object.byteLength != other.byteLength) ||
@@ -1069,7 +1339,7 @@ function equalByTag(object, other, tag, equalFunc, customizer, bitmask, stack) {
       var convert = mapToArray;
 
     case setTag:
-      var isPartial = bitmask & PARTIAL_COMPARE_FLAG;
+      var isPartial = bitmask & COMPARE_PARTIAL_FLAG;
       convert || (convert = setToArray);
 
       if (object.size != other.size && !isPartial) {
@@ -1080,11 +1350,11 @@ function equalByTag(object, other, tag, equalFunc, customizer, bitmask, stack) {
       if (stacked) {
         return stacked == other;
       }
-      bitmask |= UNORDERED_COMPARE_FLAG;
+      bitmask |= COMPARE_UNORDERED_FLAG;
 
       // Recursively compare objects (susceptible to call stack limits).
       stack.set(object, other);
-      var result = equalArrays(convert(object), convert(other), equalFunc, customizer, bitmask, stack);
+      var result = equalArrays(convert(object), convert(other), bitmask, customizer, equalFunc, stack);
       stack['delete'](object);
       return result;
 
@@ -1103,18 +1373,17 @@ function equalByTag(object, other, tag, equalFunc, customizer, bitmask, stack) {
  * @private
  * @param {Object} object The object to compare.
  * @param {Object} other The other object to compare.
- * @param {Function} equalFunc The function to determine equivalents of values.
+ * @param {number} bitmask The bitmask flags. See `baseIsEqual` for more details.
  * @param {Function} customizer The function to customize comparisons.
- * @param {number} bitmask The bitmask of comparison flags. See `baseIsEqual`
- *  for more details.
+ * @param {Function} equalFunc The function to determine equivalents of values.
  * @param {Object} stack Tracks traversed `object` and `other` objects.
  * @returns {boolean} Returns `true` if the objects are equivalent, else `false`.
  */
-function equalObjects(object, other, equalFunc, customizer, bitmask, stack) {
-  var isPartial = bitmask & PARTIAL_COMPARE_FLAG,
-      objProps = keys(object),
+function equalObjects(object, other, bitmask, customizer, equalFunc, stack) {
+  var isPartial = bitmask & COMPARE_PARTIAL_FLAG,
+      objProps = getAllKeys(object),
       objLength = objProps.length,
-      othProps = keys(other),
+      othProps = getAllKeys(other),
       othLength = othProps.length;
 
   if (objLength != othLength && !isPartial) {
@@ -1149,7 +1418,7 @@ function equalObjects(object, other, equalFunc, customizer, bitmask, stack) {
     }
     // Recursively compare objects (susceptible to call stack limits).
     if (!(compared === undefined
-          ? (objValue === othValue || equalFunc(objValue, othValue, customizer, bitmask, stack))
+          ? (objValue === othValue || equalFunc(objValue, othValue, bitmask, customizer, stack))
           : compared
         )) {
       result = false;
@@ -1172,6 +1441,17 @@ function equalObjects(object, other, equalFunc, customizer, bitmask, stack) {
   stack['delete'](object);
   stack['delete'](other);
   return result;
+}
+
+/**
+ * Creates an array of own enumerable property names and symbols of `object`.
+ *
+ * @private
+ * @param {Object} object The object to query.
+ * @returns {Array} Returns the array of property names and symbols.
+ */
+function getAllKeys(object) {
+  return baseGetAllKeys(object, keys, getSymbols);
 }
 
 /**
@@ -1203,6 +1483,50 @@ function getNative(object, key) {
 }
 
 /**
+ * A specialized version of `baseGetTag` which ignores `Symbol.toStringTag` values.
+ *
+ * @private
+ * @param {*} value The value to query.
+ * @returns {string} Returns the raw `toStringTag`.
+ */
+function getRawTag(value) {
+  var isOwn = hasOwnProperty.call(value, symToStringTag),
+      tag = value[symToStringTag];
+
+  try {
+    value[symToStringTag] = undefined;
+    var unmasked = true;
+  } catch (e) {}
+
+  var result = nativeObjectToString.call(value);
+  if (unmasked) {
+    if (isOwn) {
+      value[symToStringTag] = tag;
+    } else {
+      delete value[symToStringTag];
+    }
+  }
+  return result;
+}
+
+/**
+ * Creates an array of the own enumerable symbols of `object`.
+ *
+ * @private
+ * @param {Object} object The object to query.
+ * @returns {Array} Returns the array of symbols.
+ */
+var getSymbols = !nativeGetSymbols ? stubArray : function(object) {
+  if (object == null) {
+    return [];
+  }
+  object = Object(object);
+  return arrayFilter(nativeGetSymbols(object), function(symbol) {
+    return propertyIsEnumerable.call(object, symbol);
+  });
+};
+
+/**
  * Gets the `toStringTag` of `value`.
  *
  * @private
@@ -1211,17 +1535,16 @@ function getNative(object, key) {
  */
 var getTag = baseGetTag;
 
-// Fallback for data views, maps, sets, and weak maps in IE 11,
-// for data views in Edge < 14, and promises in Node.js.
+// Fallback for data views, maps, sets, and weak maps in IE 11 and promises in Node.js < 6.
 if ((DataView && getTag(new DataView(new ArrayBuffer(1))) != dataViewTag) ||
     (Map && getTag(new Map) != mapTag) ||
     (Promise && getTag(Promise.resolve()) != promiseTag) ||
     (Set && getTag(new Set) != setTag) ||
     (WeakMap && getTag(new WeakMap) != weakMapTag)) {
   getTag = function(value) {
-    var result = objectToString.call(value),
+    var result = baseGetTag(value),
         Ctor = result == objectTag ? value.constructor : undefined,
-        ctorString = Ctor ? toSource(Ctor) : undefined;
+        ctorString = Ctor ? toSource(Ctor) : '';
 
     if (ctorString) {
       switch (ctorString) {
@@ -1291,10 +1614,21 @@ function isPrototype(value) {
 }
 
 /**
+ * Converts `value` to a string using `Object.prototype.toString`.
+ *
+ * @private
+ * @param {*} value The value to convert.
+ * @returns {string} Returns the converted string.
+ */
+function objectToString(value) {
+  return nativeObjectToString.call(value);
+}
+
+/**
  * Converts `func` to its source code.
  *
  * @private
- * @param {Function} func The function to process.
+ * @param {Function} func The function to convert.
  * @returns {string} Returns the source code.
  */
 function toSource(func) {
@@ -1363,11 +1697,10 @@ function eq(value, other) {
  * _.isArguments([1, 2, 3]);
  * // => false
  */
-function isArguments(value) {
-  // Safari 8.1 makes `arguments.callee` enumerable in strict mode.
-  return isArrayLikeObject(value) && hasOwnProperty.call(value, 'callee') &&
-    (!propertyIsEnumerable.call(value, 'callee') || objectToString.call(value) == argsTag);
-}
+var isArguments = baseIsArguments(function() { return arguments; }()) ? baseIsArguments : function(value) {
+  return isObjectLike(value) && hasOwnProperty.call(value, 'callee') &&
+    !propertyIsEnumerable.call(value, 'callee');
+};
 
 /**
  * Checks if `value` is classified as an `Array` object.
@@ -1424,33 +1757,23 @@ function isArrayLike(value) {
 }
 
 /**
- * This method is like `_.isArrayLike` except that it also checks if `value`
- * is an object.
+ * Checks if `value` is a buffer.
  *
  * @static
  * @memberOf _
- * @since 4.0.0
+ * @since 4.3.0
  * @category Lang
  * @param {*} value The value to check.
- * @returns {boolean} Returns `true` if `value` is an array-like object,
- *  else `false`.
+ * @returns {boolean} Returns `true` if `value` is a buffer, else `false`.
  * @example
  *
- * _.isArrayLikeObject([1, 2, 3]);
+ * _.isBuffer(new Buffer(2));
  * // => true
  *
- * _.isArrayLikeObject(document.body.children);
- * // => true
- *
- * _.isArrayLikeObject('abc');
- * // => false
- *
- * _.isArrayLikeObject(_.noop);
+ * _.isBuffer(new Uint8Array(2));
  * // => false
  */
-function isArrayLikeObject(value) {
-  return isObjectLike(value) && isArrayLike(value);
-}
+var isBuffer = nativeIsBuffer || stubFalse;
 
 /**
  * Performs a deep comparison between two values to determine if they are
@@ -1460,7 +1783,7 @@ function isArrayLikeObject(value) {
  * date objects, error objects, maps, numbers, `Object` objects, regexes,
  * sets, strings, symbols, and typed arrays. `Object` objects are compared
  * by their own, not inherited, enumerable properties. Functions and DOM
- * nodes are **not** supported.
+ * nodes are compared by strict equality, i.e. `===`.
  *
  * @static
  * @memberOf _
@@ -1502,10 +1825,13 @@ function isEqual(value, other) {
  * // => false
  */
 function isFunction(value) {
+  if (!isObject(value)) {
+    return false;
+  }
   // The use of `Object#toString` avoids issues with the `typeof` operator
-  // in Safari 8-9 which returns 'object' for typed array and other constructors.
-  var tag = isObject(value) ? objectToString.call(value) : '';
-  return tag == funcTag || tag == genTag;
+  // in Safari 9 which returns 'object' for typed arrays and other constructors.
+  var tag = baseGetTag(value);
+  return tag == funcTag || tag == genTag || tag == asyncTag || tag == proxyTag;
 }
 
 /**
@@ -1566,7 +1892,7 @@ function isLength(value) {
  */
 function isObject(value) {
   var type = typeof value;
-  return !!value && (type == 'object' || type == 'function');
+  return value != null && (type == 'object' || type == 'function');
 }
 
 /**
@@ -1594,7 +1920,7 @@ function isObject(value) {
  * // => false
  */
 function isObjectLike(value) {
-  return !!value && typeof value == 'object';
+  return value != null && typeof value == 'object';
 }
 
 /**
@@ -1648,16 +1974,933 @@ function keys(object) {
   return isArrayLike(object) ? arrayLikeKeys(object) : baseKeys(object);
 }
 
+/**
+ * This method returns a new empty array.
+ *
+ * @static
+ * @memberOf _
+ * @since 4.13.0
+ * @category Util
+ * @returns {Array} Returns the new empty array.
+ * @example
+ *
+ * var arrays = _.times(2, _.stubArray);
+ *
+ * console.log(arrays);
+ * // => [[], []]
+ *
+ * console.log(arrays[0] === arrays[1]);
+ * // => false
+ */
+function stubArray() {
+  return [];
+}
+
+/**
+ * This method returns `false`.
+ *
+ * @static
+ * @memberOf _
+ * @since 4.13.0
+ * @category Util
+ * @returns {boolean} Returns `false`.
+ * @example
+ *
+ * _.times(2, _.stubFalse);
+ * // => [false, false]
+ */
+function stubFalse() {
+  return false;
+}
+
 module.exports = isEqual;
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
+},{}],5:[function(require,module,exports){
+// shim for using process in browser
+var process = module.exports = {};
+
+// cached from whatever global is present so that test runners that stub it
+// don't break things.  But we need to wrap it in a try catch in case it is
+// wrapped in strict mode code which doesn't define any globals.  It's inside a
+// function because try/catches deoptimize in certain engines.
+
+var cachedSetTimeout;
+var cachedClearTimeout;
+
+function defaultSetTimout() {
+    throw new Error('setTimeout has not been defined');
+}
+function defaultClearTimeout () {
+    throw new Error('clearTimeout has not been defined');
+}
+(function () {
+    try {
+        if (typeof setTimeout === 'function') {
+            cachedSetTimeout = setTimeout;
+        } else {
+            cachedSetTimeout = defaultSetTimout;
+        }
+    } catch (e) {
+        cachedSetTimeout = defaultSetTimout;
+    }
+    try {
+        if (typeof clearTimeout === 'function') {
+            cachedClearTimeout = clearTimeout;
+        } else {
+            cachedClearTimeout = defaultClearTimeout;
+        }
+    } catch (e) {
+        cachedClearTimeout = defaultClearTimeout;
+    }
+} ())
+function runTimeout(fun) {
+    if (cachedSetTimeout === setTimeout) {
+        //normal enviroments in sane situations
+        return setTimeout(fun, 0);
+    }
+    // if setTimeout wasn't available but was latter defined
+    if ((cachedSetTimeout === defaultSetTimout || !cachedSetTimeout) && setTimeout) {
+        cachedSetTimeout = setTimeout;
+        return setTimeout(fun, 0);
+    }
+    try {
+        // when when somebody has screwed with setTimeout but no I.E. maddness
+        return cachedSetTimeout(fun, 0);
+    } catch(e){
+        try {
+            // When we are in I.E. but the script has been evaled so I.E. doesn't trust the global object when called normally
+            return cachedSetTimeout.call(null, fun, 0);
+        } catch(e){
+            // same as above but when it's a version of I.E. that must have the global object for 'this', hopfully our context correct otherwise it will throw a global error
+            return cachedSetTimeout.call(this, fun, 0);
+        }
+    }
+
+
+}
+function runClearTimeout(marker) {
+    if (cachedClearTimeout === clearTimeout) {
+        //normal enviroments in sane situations
+        return clearTimeout(marker);
+    }
+    // if clearTimeout wasn't available but was latter defined
+    if ((cachedClearTimeout === defaultClearTimeout || !cachedClearTimeout) && clearTimeout) {
+        cachedClearTimeout = clearTimeout;
+        return clearTimeout(marker);
+    }
+    try {
+        // when when somebody has screwed with setTimeout but no I.E. maddness
+        return cachedClearTimeout(marker);
+    } catch (e){
+        try {
+            // When we are in I.E. but the script has been evaled so I.E. doesn't  trust the global object when called normally
+            return cachedClearTimeout.call(null, marker);
+        } catch (e){
+            // same as above but when it's a version of I.E. that must have the global object for 'this', hopfully our context correct otherwise it will throw a global error.
+            // Some versions of I.E. have different rules for clearTimeout vs setTimeout
+            return cachedClearTimeout.call(this, marker);
+        }
+    }
+
+
+
+}
+var queue = [];
+var draining = false;
+var currentQueue;
+var queueIndex = -1;
+
+function cleanUpNextTick() {
+    if (!draining || !currentQueue) {
+        return;
+    }
+    draining = false;
+    if (currentQueue.length) {
+        queue = currentQueue.concat(queue);
+    } else {
+        queueIndex = -1;
+    }
+    if (queue.length) {
+        drainQueue();
+    }
+}
+
+function drainQueue() {
+    if (draining) {
+        return;
+    }
+    var timeout = runTimeout(cleanUpNextTick);
+    draining = true;
+
+    var len = queue.length;
+    while(len) {
+        currentQueue = queue;
+        queue = [];
+        while (++queueIndex < len) {
+            if (currentQueue) {
+                currentQueue[queueIndex].run();
+            }
+        }
+        queueIndex = -1;
+        len = queue.length;
+    }
+    currentQueue = null;
+    draining = false;
+    runClearTimeout(timeout);
+}
+
+process.nextTick = function (fun) {
+    var args = new Array(arguments.length - 1);
+    if (arguments.length > 1) {
+        for (var i = 1; i < arguments.length; i++) {
+            args[i - 1] = arguments[i];
+        }
+    }
+    queue.push(new Item(fun, args));
+    if (queue.length === 1 && !draining) {
+        runTimeout(drainQueue);
+    }
+};
+
+// v8 likes predictible objects
+function Item(fun, array) {
+    this.fun = fun;
+    this.array = array;
+}
+Item.prototype.run = function () {
+    this.fun.apply(null, this.array);
+};
+process.title = 'browser';
+process.browser = true;
+process.env = {};
+process.argv = [];
+process.version = ''; // empty string to avoid regexp issues
+process.versions = {};
+
+function noop() {}
+
+process.on = noop;
+process.addListener = noop;
+process.once = noop;
+process.off = noop;
+process.removeListener = noop;
+process.removeAllListeners = noop;
+process.emit = noop;
+process.prependListener = noop;
+process.prependOnceListener = noop;
+
+process.listeners = function (name) { return [] }
+
+process.binding = function (name) {
+    throw new Error('process.binding is not supported');
+};
+
+process.cwd = function () { return '/' };
+process.chdir = function (dir) {
+    throw new Error('process.chdir is not supported');
+};
+process.umask = function() { return 0; };
+
+},{}],6:[function(require,module,exports){
+(function (process){
+/**
+ * Copyright 2013-present, Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ */
+
+'use strict';
+
+if (process.env.NODE_ENV !== 'production') {
+  var invariant = require('fbjs/lib/invariant');
+  var warning = require('fbjs/lib/warning');
+  var ReactPropTypesSecret = require('./lib/ReactPropTypesSecret');
+  var loggedTypeFailures = {};
+}
+
+/**
+ * Assert that the values match with the type specs.
+ * Error messages are memorized and will only be shown once.
+ *
+ * @param {object} typeSpecs Map of name to a ReactPropType
+ * @param {object} values Runtime values that need to be type-checked
+ * @param {string} location e.g. "prop", "context", "child context"
+ * @param {string} componentName Name of the component for error messages.
+ * @param {?Function} getStack Returns the component stack.
+ * @private
+ */
+function checkPropTypes(typeSpecs, values, location, componentName, getStack) {
+  if (process.env.NODE_ENV !== 'production') {
+    for (var typeSpecName in typeSpecs) {
+      if (typeSpecs.hasOwnProperty(typeSpecName)) {
+        var error;
+        // Prop type validation may throw. In case they do, we don't want to
+        // fail the render phase where it didn't fail before. So we log it.
+        // After these have been cleaned up, we'll let them throw.
+        try {
+          // This is intentionally an invariant that gets caught. It's the same
+          // behavior as without this statement except with a better message.
+          invariant(typeof typeSpecs[typeSpecName] === 'function', '%s: %s type `%s` is invalid; it must be a function, usually from ' + 'React.PropTypes.', componentName || 'React class', location, typeSpecName);
+          error = typeSpecs[typeSpecName](values, typeSpecName, componentName, location, null, ReactPropTypesSecret);
+        } catch (ex) {
+          error = ex;
+        }
+        warning(!error || error instanceof Error, '%s: type specification of %s `%s` is invalid; the type checker ' + 'function must return `null` or an `Error` but returned a %s. ' + 'You may have forgotten to pass an argument to the type checker ' + 'creator (arrayOf, instanceOf, objectOf, oneOf, oneOfType, and ' + 'shape all require an argument).', componentName || 'React class', location, typeSpecName, typeof error);
+        if (error instanceof Error && !(error.message in loggedTypeFailures)) {
+          // Only monitor this failure once because there tends to be a lot of the
+          // same error.
+          loggedTypeFailures[error.message] = true;
+
+          var stack = getStack ? getStack() : '';
+
+          warning(false, 'Failed %s type: %s%s', location, error.message, stack != null ? stack : '');
+        }
+      }
+    }
+  }
+}
+
+module.exports = checkPropTypes;
+
+}).call(this,require('_process'))
+},{"./lib/ReactPropTypesSecret":10,"_process":5,"fbjs/lib/invariant":2,"fbjs/lib/warning":3}],7:[function(require,module,exports){
+/**
+ * Copyright 2013-present, Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ */
+
+'use strict';
+
+var emptyFunction = require('fbjs/lib/emptyFunction');
+var invariant = require('fbjs/lib/invariant');
+var ReactPropTypesSecret = require('./lib/ReactPropTypesSecret');
+
+module.exports = function() {
+  function shim(props, propName, componentName, location, propFullName, secret) {
+    if (secret === ReactPropTypesSecret) {
+      // It is still safe when called from React.
+      return;
+    }
+    invariant(
+      false,
+      'Calling PropTypes validators directly is not supported by the `prop-types` package. ' +
+      'Use PropTypes.checkPropTypes() to call them. ' +
+      'Read more at http://fb.me/use-check-prop-types'
+    );
+  };
+  shim.isRequired = shim;
+  function getShim() {
+    return shim;
+  };
+  // Important!
+  // Keep this list in sync with production version in `./factoryWithTypeCheckers.js`.
+  var ReactPropTypes = {
+    array: shim,
+    bool: shim,
+    func: shim,
+    number: shim,
+    object: shim,
+    string: shim,
+    symbol: shim,
+
+    any: shim,
+    arrayOf: getShim,
+    element: shim,
+    instanceOf: getShim,
+    node: shim,
+    objectOf: getShim,
+    oneOf: getShim,
+    oneOfType: getShim,
+    shape: getShim
+  };
+
+  ReactPropTypes.checkPropTypes = emptyFunction;
+  ReactPropTypes.PropTypes = ReactPropTypes;
+
+  return ReactPropTypes;
+};
+
+},{"./lib/ReactPropTypesSecret":10,"fbjs/lib/emptyFunction":1,"fbjs/lib/invariant":2}],8:[function(require,module,exports){
+(function (process){
+/**
+ * Copyright 2013-present, Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ */
+
+'use strict';
+
+var emptyFunction = require('fbjs/lib/emptyFunction');
+var invariant = require('fbjs/lib/invariant');
+var warning = require('fbjs/lib/warning');
+
+var ReactPropTypesSecret = require('./lib/ReactPropTypesSecret');
+var checkPropTypes = require('./checkPropTypes');
+
+module.exports = function(isValidElement, throwOnDirectAccess) {
+  /* global Symbol */
+  var ITERATOR_SYMBOL = typeof Symbol === 'function' && Symbol.iterator;
+  var FAUX_ITERATOR_SYMBOL = '@@iterator'; // Before Symbol spec.
+
+  /**
+   * Returns the iterator method function contained on the iterable object.
+   *
+   * Be sure to invoke the function with the iterable as context:
+   *
+   *     var iteratorFn = getIteratorFn(myIterable);
+   *     if (iteratorFn) {
+   *       var iterator = iteratorFn.call(myIterable);
+   *       ...
+   *     }
+   *
+   * @param {?object} maybeIterable
+   * @return {?function}
+   */
+  function getIteratorFn(maybeIterable) {
+    var iteratorFn = maybeIterable && (ITERATOR_SYMBOL && maybeIterable[ITERATOR_SYMBOL] || maybeIterable[FAUX_ITERATOR_SYMBOL]);
+    if (typeof iteratorFn === 'function') {
+      return iteratorFn;
+    }
+  }
+
+  /**
+   * Collection of methods that allow declaration and validation of props that are
+   * supplied to React components. Example usage:
+   *
+   *   var Props = require('ReactPropTypes');
+   *   var MyArticle = React.createClass({
+   *     propTypes: {
+   *       // An optional string prop named "description".
+   *       description: Props.string,
+   *
+   *       // A required enum prop named "category".
+   *       category: Props.oneOf(['News','Photos']).isRequired,
+   *
+   *       // A prop named "dialog" that requires an instance of Dialog.
+   *       dialog: Props.instanceOf(Dialog).isRequired
+   *     },
+   *     render: function() { ... }
+   *   });
+   *
+   * A more formal specification of how these methods are used:
+   *
+   *   type := array|bool|func|object|number|string|oneOf([...])|instanceOf(...)
+   *   decl := ReactPropTypes.{type}(.isRequired)?
+   *
+   * Each and every declaration produces a function with the same signature. This
+   * allows the creation of custom validation functions. For example:
+   *
+   *  var MyLink = React.createClass({
+   *    propTypes: {
+   *      // An optional string or URI prop named "href".
+   *      href: function(props, propName, componentName) {
+   *        var propValue = props[propName];
+   *        if (propValue != null && typeof propValue !== 'string' &&
+   *            !(propValue instanceof URI)) {
+   *          return new Error(
+   *            'Expected a string or an URI for ' + propName + ' in ' +
+   *            componentName
+   *          );
+   *        }
+   *      }
+   *    },
+   *    render: function() {...}
+   *  });
+   *
+   * @internal
+   */
+
+  var ANONYMOUS = '<<anonymous>>';
+
+  // Important!
+  // Keep this list in sync with production version in `./factoryWithThrowingShims.js`.
+  var ReactPropTypes = {
+    array: createPrimitiveTypeChecker('array'),
+    bool: createPrimitiveTypeChecker('boolean'),
+    func: createPrimitiveTypeChecker('function'),
+    number: createPrimitiveTypeChecker('number'),
+    object: createPrimitiveTypeChecker('object'),
+    string: createPrimitiveTypeChecker('string'),
+    symbol: createPrimitiveTypeChecker('symbol'),
+
+    any: createAnyTypeChecker(),
+    arrayOf: createArrayOfTypeChecker,
+    element: createElementTypeChecker(),
+    instanceOf: createInstanceTypeChecker,
+    node: createNodeChecker(),
+    objectOf: createObjectOfTypeChecker,
+    oneOf: createEnumTypeChecker,
+    oneOfType: createUnionTypeChecker,
+    shape: createShapeTypeChecker
+  };
+
+  /**
+   * inlined Object.is polyfill to avoid requiring consumers ship their own
+   * https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/is
+   */
+  /*eslint-disable no-self-compare*/
+  function is(x, y) {
+    // SameValue algorithm
+    if (x === y) {
+      // Steps 1-5, 7-10
+      // Steps 6.b-6.e: +0 != -0
+      return x !== 0 || 1 / x === 1 / y;
+    } else {
+      // Step 6.a: NaN == NaN
+      return x !== x && y !== y;
+    }
+  }
+  /*eslint-enable no-self-compare*/
+
+  /**
+   * We use an Error-like object for backward compatibility as people may call
+   * PropTypes directly and inspect their output. However, we don't use real
+   * Errors anymore. We don't inspect their stack anyway, and creating them
+   * is prohibitively expensive if they are created too often, such as what
+   * happens in oneOfType() for any type before the one that matched.
+   */
+  function PropTypeError(message) {
+    this.message = message;
+    this.stack = '';
+  }
+  // Make `instanceof Error` still work for returned errors.
+  PropTypeError.prototype = Error.prototype;
+
+  function createChainableTypeChecker(validate) {
+    if (process.env.NODE_ENV !== 'production') {
+      var manualPropTypeCallCache = {};
+      var manualPropTypeWarningCount = 0;
+    }
+    function checkType(isRequired, props, propName, componentName, location, propFullName, secret) {
+      componentName = componentName || ANONYMOUS;
+      propFullName = propFullName || propName;
+
+      if (secret !== ReactPropTypesSecret) {
+        if (throwOnDirectAccess) {
+          // New behavior only for users of `prop-types` package
+          invariant(
+            false,
+            'Calling PropTypes validators directly is not supported by the `prop-types` package. ' +
+            'Use `PropTypes.checkPropTypes()` to call them. ' +
+            'Read more at http://fb.me/use-check-prop-types'
+          );
+        } else if (process.env.NODE_ENV !== 'production' && typeof console !== 'undefined') {
+          // Old behavior for people using React.PropTypes
+          var cacheKey = componentName + ':' + propName;
+          if (
+            !manualPropTypeCallCache[cacheKey] &&
+            // Avoid spamming the console because they are often not actionable except for lib authors
+            manualPropTypeWarningCount < 3
+          ) {
+            warning(
+              false,
+              'You are manually calling a React.PropTypes validation ' +
+              'function for the `%s` prop on `%s`. This is deprecated ' +
+              'and will throw in the standalone `prop-types` package. ' +
+              'You may be seeing this warning due to a third-party PropTypes ' +
+              'library. See https://fb.me/react-warning-dont-call-proptypes ' + 'for details.',
+              propFullName,
+              componentName
+            );
+            manualPropTypeCallCache[cacheKey] = true;
+            manualPropTypeWarningCount++;
+          }
+        }
+      }
+      if (props[propName] == null) {
+        if (isRequired) {
+          if (props[propName] === null) {
+            return new PropTypeError('The ' + location + ' `' + propFullName + '` is marked as required ' + ('in `' + componentName + '`, but its value is `null`.'));
+          }
+          return new PropTypeError('The ' + location + ' `' + propFullName + '` is marked as required in ' + ('`' + componentName + '`, but its value is `undefined`.'));
+        }
+        return null;
+      } else {
+        return validate(props, propName, componentName, location, propFullName);
+      }
+    }
+
+    var chainedCheckType = checkType.bind(null, false);
+    chainedCheckType.isRequired = checkType.bind(null, true);
+
+    return chainedCheckType;
+  }
+
+  function createPrimitiveTypeChecker(expectedType) {
+    function validate(props, propName, componentName, location, propFullName, secret) {
+      var propValue = props[propName];
+      var propType = getPropType(propValue);
+      if (propType !== expectedType) {
+        // `propValue` being instance of, say, date/regexp, pass the 'object'
+        // check, but we can offer a more precise error message here rather than
+        // 'of type `object`'.
+        var preciseType = getPreciseType(propValue);
+
+        return new PropTypeError('Invalid ' + location + ' `' + propFullName + '` of type ' + ('`' + preciseType + '` supplied to `' + componentName + '`, expected ') + ('`' + expectedType + '`.'));
+      }
+      return null;
+    }
+    return createChainableTypeChecker(validate);
+  }
+
+  function createAnyTypeChecker() {
+    return createChainableTypeChecker(emptyFunction.thatReturnsNull);
+  }
+
+  function createArrayOfTypeChecker(typeChecker) {
+    function validate(props, propName, componentName, location, propFullName) {
+      if (typeof typeChecker !== 'function') {
+        return new PropTypeError('Property `' + propFullName + '` of component `' + componentName + '` has invalid PropType notation inside arrayOf.');
+      }
+      var propValue = props[propName];
+      if (!Array.isArray(propValue)) {
+        var propType = getPropType(propValue);
+        return new PropTypeError('Invalid ' + location + ' `' + propFullName + '` of type ' + ('`' + propType + '` supplied to `' + componentName + '`, expected an array.'));
+      }
+      for (var i = 0; i < propValue.length; i++) {
+        var error = typeChecker(propValue, i, componentName, location, propFullName + '[' + i + ']', ReactPropTypesSecret);
+        if (error instanceof Error) {
+          return error;
+        }
+      }
+      return null;
+    }
+    return createChainableTypeChecker(validate);
+  }
+
+  function createElementTypeChecker() {
+    function validate(props, propName, componentName, location, propFullName) {
+      var propValue = props[propName];
+      if (!isValidElement(propValue)) {
+        var propType = getPropType(propValue);
+        return new PropTypeError('Invalid ' + location + ' `' + propFullName + '` of type ' + ('`' + propType + '` supplied to `' + componentName + '`, expected a single ReactElement.'));
+      }
+      return null;
+    }
+    return createChainableTypeChecker(validate);
+  }
+
+  function createInstanceTypeChecker(expectedClass) {
+    function validate(props, propName, componentName, location, propFullName) {
+      if (!(props[propName] instanceof expectedClass)) {
+        var expectedClassName = expectedClass.name || ANONYMOUS;
+        var actualClassName = getClassName(props[propName]);
+        return new PropTypeError('Invalid ' + location + ' `' + propFullName + '` of type ' + ('`' + actualClassName + '` supplied to `' + componentName + '`, expected ') + ('instance of `' + expectedClassName + '`.'));
+      }
+      return null;
+    }
+    return createChainableTypeChecker(validate);
+  }
+
+  function createEnumTypeChecker(expectedValues) {
+    if (!Array.isArray(expectedValues)) {
+      process.env.NODE_ENV !== 'production' ? warning(false, 'Invalid argument supplied to oneOf, expected an instance of array.') : void 0;
+      return emptyFunction.thatReturnsNull;
+    }
+
+    function validate(props, propName, componentName, location, propFullName) {
+      var propValue = props[propName];
+      for (var i = 0; i < expectedValues.length; i++) {
+        if (is(propValue, expectedValues[i])) {
+          return null;
+        }
+      }
+
+      var valuesString = JSON.stringify(expectedValues);
+      return new PropTypeError('Invalid ' + location + ' `' + propFullName + '` of value `' + propValue + '` ' + ('supplied to `' + componentName + '`, expected one of ' + valuesString + '.'));
+    }
+    return createChainableTypeChecker(validate);
+  }
+
+  function createObjectOfTypeChecker(typeChecker) {
+    function validate(props, propName, componentName, location, propFullName) {
+      if (typeof typeChecker !== 'function') {
+        return new PropTypeError('Property `' + propFullName + '` of component `' + componentName + '` has invalid PropType notation inside objectOf.');
+      }
+      var propValue = props[propName];
+      var propType = getPropType(propValue);
+      if (propType !== 'object') {
+        return new PropTypeError('Invalid ' + location + ' `' + propFullName + '` of type ' + ('`' + propType + '` supplied to `' + componentName + '`, expected an object.'));
+      }
+      for (var key in propValue) {
+        if (propValue.hasOwnProperty(key)) {
+          var error = typeChecker(propValue, key, componentName, location, propFullName + '.' + key, ReactPropTypesSecret);
+          if (error instanceof Error) {
+            return error;
+          }
+        }
+      }
+      return null;
+    }
+    return createChainableTypeChecker(validate);
+  }
+
+  function createUnionTypeChecker(arrayOfTypeCheckers) {
+    if (!Array.isArray(arrayOfTypeCheckers)) {
+      process.env.NODE_ENV !== 'production' ? warning(false, 'Invalid argument supplied to oneOfType, expected an instance of array.') : void 0;
+      return emptyFunction.thatReturnsNull;
+    }
+
+    for (var i = 0; i < arrayOfTypeCheckers.length; i++) {
+      var checker = arrayOfTypeCheckers[i];
+      if (typeof checker !== 'function') {
+        warning(
+          false,
+          'Invalid argument supplid to oneOfType. Expected an array of check functions, but ' +
+          'received %s at index %s.',
+          getPostfixForTypeWarning(checker),
+          i
+        );
+        return emptyFunction.thatReturnsNull;
+      }
+    }
+
+    function validate(props, propName, componentName, location, propFullName) {
+      for (var i = 0; i < arrayOfTypeCheckers.length; i++) {
+        var checker = arrayOfTypeCheckers[i];
+        if (checker(props, propName, componentName, location, propFullName, ReactPropTypesSecret) == null) {
+          return null;
+        }
+      }
+
+      return new PropTypeError('Invalid ' + location + ' `' + propFullName + '` supplied to ' + ('`' + componentName + '`.'));
+    }
+    return createChainableTypeChecker(validate);
+  }
+
+  function createNodeChecker() {
+    function validate(props, propName, componentName, location, propFullName) {
+      if (!isNode(props[propName])) {
+        return new PropTypeError('Invalid ' + location + ' `' + propFullName + '` supplied to ' + ('`' + componentName + '`, expected a ReactNode.'));
+      }
+      return null;
+    }
+    return createChainableTypeChecker(validate);
+  }
+
+  function createShapeTypeChecker(shapeTypes) {
+    function validate(props, propName, componentName, location, propFullName) {
+      var propValue = props[propName];
+      var propType = getPropType(propValue);
+      if (propType !== 'object') {
+        return new PropTypeError('Invalid ' + location + ' `' + propFullName + '` of type `' + propType + '` ' + ('supplied to `' + componentName + '`, expected `object`.'));
+      }
+      for (var key in shapeTypes) {
+        var checker = shapeTypes[key];
+        if (!checker) {
+          continue;
+        }
+        var error = checker(propValue, key, componentName, location, propFullName + '.' + key, ReactPropTypesSecret);
+        if (error) {
+          return error;
+        }
+      }
+      return null;
+    }
+    return createChainableTypeChecker(validate);
+  }
+
+  function isNode(propValue) {
+    switch (typeof propValue) {
+      case 'number':
+      case 'string':
+      case 'undefined':
+        return true;
+      case 'boolean':
+        return !propValue;
+      case 'object':
+        if (Array.isArray(propValue)) {
+          return propValue.every(isNode);
+        }
+        if (propValue === null || isValidElement(propValue)) {
+          return true;
+        }
+
+        var iteratorFn = getIteratorFn(propValue);
+        if (iteratorFn) {
+          var iterator = iteratorFn.call(propValue);
+          var step;
+          if (iteratorFn !== propValue.entries) {
+            while (!(step = iterator.next()).done) {
+              if (!isNode(step.value)) {
+                return false;
+              }
+            }
+          } else {
+            // Iterator will provide entry [k,v] tuples rather than values.
+            while (!(step = iterator.next()).done) {
+              var entry = step.value;
+              if (entry) {
+                if (!isNode(entry[1])) {
+                  return false;
+                }
+              }
+            }
+          }
+        } else {
+          return false;
+        }
+
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  function isSymbol(propType, propValue) {
+    // Native Symbol.
+    if (propType === 'symbol') {
+      return true;
+    }
+
+    // 19.4.3.5 Symbol.prototype[@@toStringTag] === 'Symbol'
+    if (propValue['@@toStringTag'] === 'Symbol') {
+      return true;
+    }
+
+    // Fallback for non-spec compliant Symbols which are polyfilled.
+    if (typeof Symbol === 'function' && propValue instanceof Symbol) {
+      return true;
+    }
+
+    return false;
+  }
+
+  // Equivalent of `typeof` but with special handling for array and regexp.
+  function getPropType(propValue) {
+    var propType = typeof propValue;
+    if (Array.isArray(propValue)) {
+      return 'array';
+    }
+    if (propValue instanceof RegExp) {
+      // Old webkits (at least until Android 4.0) return 'function' rather than
+      // 'object' for typeof a RegExp. We'll normalize this here so that /bla/
+      // passes PropTypes.object.
+      return 'object';
+    }
+    if (isSymbol(propType, propValue)) {
+      return 'symbol';
+    }
+    return propType;
+  }
+
+  // This handles more types than `getPropType`. Only used for error messages.
+  // See `createPrimitiveTypeChecker`.
+  function getPreciseType(propValue) {
+    if (typeof propValue === 'undefined' || propValue === null) {
+      return '' + propValue;
+    }
+    var propType = getPropType(propValue);
+    if (propType === 'object') {
+      if (propValue instanceof Date) {
+        return 'date';
+      } else if (propValue instanceof RegExp) {
+        return 'regexp';
+      }
+    }
+    return propType;
+  }
+
+  // Returns a string that is postfixed to a warning about an invalid type.
+  // For example, "undefined" or "of type array"
+  function getPostfixForTypeWarning(value) {
+    var type = getPreciseType(value);
+    switch (type) {
+      case 'array':
+      case 'object':
+        return 'an ' + type;
+      case 'boolean':
+      case 'date':
+      case 'regexp':
+        return 'a ' + type;
+      default:
+        return type;
+    }
+  }
+
+  // Returns class name of the object, if any.
+  function getClassName(propValue) {
+    if (!propValue.constructor || !propValue.constructor.name) {
+      return ANONYMOUS;
+    }
+    return propValue.constructor.name;
+  }
+
+  ReactPropTypes.checkPropTypes = checkPropTypes;
+  ReactPropTypes.PropTypes = ReactPropTypes;
+
+  return ReactPropTypes;
+};
+
+}).call(this,require('_process'))
+},{"./checkPropTypes":6,"./lib/ReactPropTypesSecret":10,"_process":5,"fbjs/lib/emptyFunction":1,"fbjs/lib/invariant":2,"fbjs/lib/warning":3}],9:[function(require,module,exports){
+(function (process){
+/**
+ * Copyright 2013-present, Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ */
+
+if (process.env.NODE_ENV !== 'production') {
+  var REACT_ELEMENT_TYPE = (typeof Symbol === 'function' &&
+    Symbol.for &&
+    Symbol.for('react.element')) ||
+    0xeac7;
+
+  var isValidElement = function(object) {
+    return typeof object === 'object' &&
+      object !== null &&
+      object.$$typeof === REACT_ELEMENT_TYPE;
+  };
+
+  // By explicitly using `prop-types` you are opting into new development behavior.
+  // http://fb.me/prop-types-in-prod
+  var throwOnDirectAccess = true;
+  module.exports = require('./factoryWithTypeCheckers')(isValidElement, throwOnDirectAccess);
+} else {
+  // By explicitly using `prop-types` you are opting into new production behavior.
+  // http://fb.me/prop-types-in-prod
+  module.exports = require('./factoryWithThrowingShims')();
+}
+
+}).call(this,require('_process'))
+},{"./factoryWithThrowingShims":7,"./factoryWithTypeCheckers":8,"_process":5}],10:[function(require,module,exports){
+/**
+ * Copyright 2013-present, Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ */
+
+'use strict';
+
+var ReactPropTypesSecret = 'SECRET_DO_NOT_PASS_THIS_OR_YOU_WILL_BE_FIRED';
+
+module.exports = ReactPropTypesSecret;
+
 },{}],"react-chartjs-2":[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
   value: true
 });
-exports.Chart = exports.defaults = exports.Bubble = exports.Polar = exports.Radar = exports.HorizontalBar = exports.Bar = exports.Line = exports.Pie = exports.Doughnut = undefined;
+exports.Chart = exports.defaults = exports.Scatter = exports.Bubble = exports.Polar = exports.Radar = exports.HorizontalBar = exports.Bar = exports.Line = exports.Pie = exports.Doughnut = undefined;
 
 var _extends = Object.assign || function (target) { for (var i = 1; i < arguments.length; i++) { var source = arguments[i]; for (var key in source) { if (Object.prototype.hasOwnProperty.call(source, key)) { target[key] = source[key]; } } } return target; };
 
@@ -1666,6 +2909,10 @@ var _createClass = function () { function defineProperties(target, props) { for 
 var _react = require('react');
 
 var _react2 = _interopRequireDefault(_react);
+
+var _propTypes = require('prop-types');
+
+var _propTypes2 = _interopRequireDefault(_propTypes);
 
 var _reactDom = require('react-dom');
 
@@ -1748,6 +2995,7 @@ var ChartComponent = function (_React$Component) {
           redraw = _props.redraw,
           type = _props.type,
           options = _props.options,
+          plugins = _props.plugins,
           legend = _props.legend,
           height = _props.height,
           width = _props.width;
@@ -1773,12 +3021,30 @@ var ChartComponent = function (_React$Component) {
         return true;
       }
 
-      return !(0, _lodash2.default)(this.shadowDataProp, nextProps.data);
+      var nextData = this.transformDataProp(nextProps);
+
+      if (!(0, _lodash2.default)(this.shadowDataProp, nextData)) {
+        return true;
+      }
+
+      return !(0, _lodash2.default)(plugins, nextProps.plugins);
     }
   }, {
     key: 'componentWillUnmount',
     value: function componentWillUnmount() {
       this.chart_instance.destroy();
+    }
+  }, {
+    key: 'transformDataProp',
+    value: function transformDataProp(props) {
+      var data = props.data;
+
+      if (typeof data == 'function') {
+        var node = _reactDom2.default.findDOMNode(this);
+        return data(node);
+      } else {
+        return data;
+      }
     }
 
     // Chart.js directly mutates the data.dataset objects by adding _meta proprerty
@@ -1789,28 +3055,29 @@ var ChartComponent = function (_React$Component) {
   }, {
     key: 'memoizeDataProps',
     value: function memoizeDataProps() {
-      var data = this.props.data;
-
-
-      if (!data) {
+      if (!this.props.data) {
         return;
       }
 
+      var data = this.transformDataProp(this.props);
+
       this.shadowDataProp = _extends({}, data, {
         datasets: data.datasets && data.datasets.map(function (set) {
-          return Object.assign({}, set);
+          return _extends({}, set);
         })
       });
+
+      return data;
     }
   }, {
     key: 'updateChart',
     value: function updateChart() {
-      var _props2 = this.props,
-          data = _props2.data,
-          options = _props2.options;
+      var _this2 = this;
+
+      var options = this.props.options;
 
 
-      this.memoizeDataProps();
+      var data = this.memoizeDataProps(this.props);
 
       if (!this.chart_instance) return;
 
@@ -1823,23 +3090,47 @@ var ChartComponent = function (_React$Component) {
       var currentDatasets = this.chart_instance.config.data && this.chart_instance.config.data.datasets || [];
       var nextDatasets = data.datasets || [];
 
-      nextDatasets.forEach(function (dataset, sid) {
-        if (currentDatasets[sid] && currentDatasets[sid].data) {
-          currentDatasets[sid].data.splice(nextDatasets[sid].data.length);
+      // use the key provider to work out which series have been added/removed/changed
+      var currentDatasetKeys = currentDatasets.map(this.props.datasetKeyProvider);
+      var nextDatasetKeys = nextDatasets.map(this.props.datasetKeyProvider);
+      var newDatasets = nextDatasets.filter(function (d) {
+        return currentDatasetKeys.indexOf(_this2.props.datasetKeyProvider(d)) === -1;
+      });
 
-          dataset.data.forEach(function (point, pid) {
-            currentDatasets[sid].data[pid] = nextDatasets[sid].data[pid];
-          });
+      // process the updates (via a reverse for loop so we can safely splice deleted datasets out of the array
 
-          var _data = dataset.data,
-              otherProps = _objectWithoutProperties(dataset, ['data']);
-
-          currentDatasets[sid] = _extends({
-            data: currentDatasets[sid].data
-          }, currentDatasets[sid], otherProps);
+      var _loop = function _loop(idx) {
+        var currentDatasetKey = _this2.props.datasetKeyProvider(currentDatasets[idx]);
+        if (nextDatasetKeys.indexOf(currentDatasetKey) === -1) {
+          // deleted series
+          currentDatasets.splice(idx, 1);
         } else {
-          currentDatasets[sid] = nextDatasets[sid];
+          var retainedDataset = nextDatasets.find(function (d) {
+            return _this2.props.datasetKeyProvider(d) === currentDatasetKey;
+          });
+          if (retainedDataset) {
+            // update it in place if it is a retained dataset
+            currentDatasets[idx].data.splice(retainedDataset.data.length);
+            retainedDataset.data.forEach(function (point, pid) {
+              currentDatasets[idx].data[pid] = retainedDataset.data[pid];
+            });
+
+            var _data = retainedDataset.data,
+                otherProps = _objectWithoutProperties(retainedDataset, ['data']);
+
+            currentDatasets[idx] = _extends({
+              data: currentDatasets[idx].data
+            }, currentDatasets[idx], otherProps);
+          }
         }
+      };
+
+      for (var idx = currentDatasets.length - 1; idx >= 0; idx -= 1) {
+        _loop(idx);
+      }
+      // finally add any new series
+      newDatasets.forEach(function (d) {
+        return currentDatasets.push(d);
       });
 
       var datasets = data.datasets,
@@ -1852,30 +3143,30 @@ var ChartComponent = function (_React$Component) {
   }, {
     key: 'renderChart',
     value: function renderChart() {
-      var _props3 = this.props,
-          data = _props3.data,
-          options = _props3.options,
-          legend = _props3.legend,
-          type = _props3.type,
-          redraw = _props3.redraw;
+      var _props2 = this.props,
+          options = _props2.options,
+          legend = _props2.legend,
+          type = _props2.type,
+          redraw = _props2.redraw,
+          plugins = _props2.plugins;
 
       var node = _reactDom2.default.findDOMNode(this);
-
-      this.memoizeDataProps();
+      var data = this.memoizeDataProps();
 
       this.chart_instance = new _chart2.default(node, {
         type: type,
         data: data,
-        options: options
+        options: options,
+        plugins: plugins
       });
     }
   }, {
     key: 'render',
     value: function render() {
-      var _props4 = this.props,
-          height = _props4.height,
-          width = _props4.width,
-          onElementsClick = _props4.onElementsClick;
+      var _props3 = this.props,
+          height = _props3.height,
+          width = _props3.width,
+          onElementsClick = _props3.onElementsClick;
 
 
       return _react2.default.createElement('canvas', {
@@ -1889,18 +3180,30 @@ var ChartComponent = function (_React$Component) {
   return ChartComponent;
 }(_react2.default.Component);
 
+ChartComponent.getLabelAsKey = function (d) {
+  return d.label;
+};
+
 ChartComponent.propTypes = {
-  data: _react.PropTypes.object.isRequired,
-  getDatasetAtEvent: _react.PropTypes.func,
-  getElementAtEvent: _react.PropTypes.func,
-  getElementsAtEvent: _react.PropTypes.func,
-  height: _react.PropTypes.number,
-  legend: _react.PropTypes.object,
-  onElementsClick: _react.PropTypes.func,
-  options: _react.PropTypes.object,
-  redraw: _react.PropTypes.bool,
-  type: _react.PropTypes.oneOf(['doughnut', 'pie', 'line', 'bar', 'horizontalBar', 'radar', 'polarArea', 'bubble']),
-  width: _react.PropTypes.number
+  data: _propTypes2.default.oneOfType([_propTypes2.default.object, _propTypes2.default.func]).isRequired,
+  getDatasetAtEvent: _propTypes2.default.func,
+  getElementAtEvent: _propTypes2.default.func,
+  getElementsAtEvent: _propTypes2.default.func,
+  height: _propTypes2.default.number,
+  legend: _propTypes2.default.object,
+  onElementsClick: _propTypes2.default.func,
+  options: _propTypes2.default.object,
+  plugins: _propTypes2.default.arrayOf(_propTypes2.default.object),
+  redraw: _propTypes2.default.bool,
+  type: function type(props, propName, componentName) {
+    if (!Object.keys(_chart2.default.controllers).find(function (chartType) {
+      return chartType === props[propName];
+    })) {
+      return new Error('Invalid chart type `' + props[propName] + '` supplied to' + ' `' + componentName + '`.');
+    }
+  },
+  width: _propTypes2.default.number,
+  datasetKeyProvider: _propTypes2.default.func
 };
 ChartComponent.defaultProps = {
   legend: {
@@ -1911,7 +3214,8 @@ ChartComponent.defaultProps = {
   height: 150,
   width: 300,
   redraw: false,
-  options: {}
+  options: {},
+  datasetKeyProvider: ChartComponent.getLabelAsKey
 };
 exports.default = ChartComponent;
 
@@ -1927,11 +3231,11 @@ var Doughnut = exports.Doughnut = function (_React$Component2) {
   _createClass(Doughnut, [{
     key: 'render',
     value: function render() {
-      var _this3 = this;
+      var _this4 = this;
 
       return _react2.default.createElement(ChartComponent, _extends({}, this.props, {
         ref: function ref(_ref2) {
-          return _this3.chart_instance = _ref2 && _ref2.chart_instance;
+          return _this4.chart_instance = _ref2 && _ref2.chart_instance;
         },
         type: 'doughnut'
       }));
@@ -1953,11 +3257,11 @@ var Pie = exports.Pie = function (_React$Component3) {
   _createClass(Pie, [{
     key: 'render',
     value: function render() {
-      var _this5 = this;
+      var _this6 = this;
 
       return _react2.default.createElement(ChartComponent, _extends({}, this.props, {
         ref: function ref(_ref3) {
-          return _this5.chart_instance = _ref3 && _ref3.chart_instance;
+          return _this6.chart_instance = _ref3 && _ref3.chart_instance;
         },
         type: 'pie'
       }));
@@ -1979,11 +3283,11 @@ var Line = exports.Line = function (_React$Component4) {
   _createClass(Line, [{
     key: 'render',
     value: function render() {
-      var _this7 = this;
+      var _this8 = this;
 
       return _react2.default.createElement(ChartComponent, _extends({}, this.props, {
         ref: function ref(_ref4) {
-          return _this7.chart_instance = _ref4 && _ref4.chart_instance;
+          return _this8.chart_instance = _ref4 && _ref4.chart_instance;
         },
         type: 'line'
       }));
@@ -2005,11 +3309,11 @@ var Bar = exports.Bar = function (_React$Component5) {
   _createClass(Bar, [{
     key: 'render',
     value: function render() {
-      var _this9 = this;
+      var _this10 = this;
 
       return _react2.default.createElement(ChartComponent, _extends({}, this.props, {
         ref: function ref(_ref5) {
-          return _this9.chart_instance = _ref5 && _ref5.chart_instance;
+          return _this10.chart_instance = _ref5 && _ref5.chart_instance;
         },
         type: 'bar'
       }));
@@ -2031,11 +3335,11 @@ var HorizontalBar = exports.HorizontalBar = function (_React$Component6) {
   _createClass(HorizontalBar, [{
     key: 'render',
     value: function render() {
-      var _this11 = this;
+      var _this12 = this;
 
       return _react2.default.createElement(ChartComponent, _extends({}, this.props, {
         ref: function ref(_ref6) {
-          return _this11.chart_instance = _ref6 && _ref6.chart_instance;
+          return _this12.chart_instance = _ref6 && _ref6.chart_instance;
         },
         type: 'horizontalBar'
       }));
@@ -2057,11 +3361,11 @@ var Radar = exports.Radar = function (_React$Component7) {
   _createClass(Radar, [{
     key: 'render',
     value: function render() {
-      var _this13 = this;
+      var _this14 = this;
 
       return _react2.default.createElement(ChartComponent, _extends({}, this.props, {
         ref: function ref(_ref7) {
-          return _this13.chart_instance = _ref7 && _ref7.chart_instance;
+          return _this14.chart_instance = _ref7 && _ref7.chart_instance;
         },
         type: 'radar'
       }));
@@ -2083,11 +3387,11 @@ var Polar = exports.Polar = function (_React$Component8) {
   _createClass(Polar, [{
     key: 'render',
     value: function render() {
-      var _this15 = this;
+      var _this16 = this;
 
       return _react2.default.createElement(ChartComponent, _extends({}, this.props, {
         ref: function ref(_ref8) {
-          return _this15.chart_instance = _ref8 && _ref8.chart_instance;
+          return _this16.chart_instance = _ref8 && _ref8.chart_instance;
         },
         type: 'polarArea'
       }));
@@ -2109,11 +3413,11 @@ var Bubble = exports.Bubble = function (_React$Component9) {
   _createClass(Bubble, [{
     key: 'render',
     value: function render() {
-      var _this17 = this;
+      var _this18 = this;
 
       return _react2.default.createElement(ChartComponent, _extends({}, this.props, {
         ref: function ref(_ref9) {
-          return _this17.chart_instance = _ref9 && _ref9.chart_instance;
+          return _this18.chart_instance = _ref9 && _ref9.chart_instance;
         },
         type: 'bubble'
       }));
@@ -2123,7 +3427,33 @@ var Bubble = exports.Bubble = function (_React$Component9) {
   return Bubble;
 }(_react2.default.Component);
 
+var Scatter = exports.Scatter = function (_React$Component10) {
+  _inherits(Scatter, _React$Component10);
+
+  function Scatter() {
+    _classCallCheck(this, Scatter);
+
+    return _possibleConstructorReturn(this, (Scatter.__proto__ || Object.getPrototypeOf(Scatter)).apply(this, arguments));
+  }
+
+  _createClass(Scatter, [{
+    key: 'render',
+    value: function render() {
+      var _this20 = this;
+
+      return _react2.default.createElement(ChartComponent, _extends({}, this.props, {
+        ref: function ref(_ref10) {
+          return _this20.chart_instance = _ref10 && _ref10.chart_instance;
+        },
+        type: 'scatter'
+      }));
+    }
+  }]);
+
+  return Scatter;
+}(_react2.default.Component);
+
 var defaults = exports.defaults = _chart2.default.defaults;
 exports.Chart = _chart2.default;
 
-},{"chart.js":undefined,"lodash.isequal":1,"react":undefined,"react-dom":undefined}]},{},[]);
+},{"chart.js":undefined,"lodash.isequal":4,"prop-types":9,"react":undefined,"react-dom":undefined}]},{},[]);

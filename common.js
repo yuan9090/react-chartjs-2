@@ -68,7 +68,6 @@ module.exports = function(Chart) {
 module.exports = function(Chart) {
 
 	Chart.Radar = function(context, config) {
-		config.options = Chart.helpers.configMerge({aspectRatio: 1}, config.options);
 		config.type = 'radar';
 
 		return new Chart(context, config);
@@ -160,230 +159,265 @@ module.exports = function(Chart) {
 
 		dataElementType: Chart.elements.Rectangle,
 
-		initialize: function(chart, datasetIndex) {
-			Chart.DatasetController.prototype.initialize.call(this, chart, datasetIndex);
-
-			// Use this to indicate that this is a bar dataset.
-			this.getMeta().bar = true;
-		},
-
-		// Get the number of datasets that display bars. We use this to correctly calculate the bar width
-		getBarCount: function() {
+		initialize: function() {
 			var me = this;
-			var barCount = 0;
-			helpers.each(me.chart.data.datasets, function(dataset, datasetIndex) {
-				var meta = me.chart.getDatasetMeta(datasetIndex);
-				if (meta.bar && me.chart.isDatasetVisible(datasetIndex)) {
-					++barCount;
-				}
-			}, me);
-			return barCount;
+			var meta;
+
+			Chart.DatasetController.prototype.initialize.apply(me, arguments);
+
+			meta = me.getMeta();
+			meta.stack = me.getDataset().stack;
+			meta.bar = true;
 		},
 
 		update: function(reset) {
 			var me = this;
-			helpers.each(me.getMeta().data, function(rectangle, index) {
-				me.updateElement(rectangle, index, reset);
-			}, me);
+			var elements = me.getMeta().data;
+			var i, ilen;
+
+			me._ruler = me.getRuler();
+
+			for (i = 0, ilen = elements.length; i < ilen; ++i) {
+				me.updateElement(elements[i], i, reset);
+			}
 		},
 
 		updateElement: function(rectangle, index, reset) {
 			var me = this;
+			var chart = me.chart;
 			var meta = me.getMeta();
-			var xScale = me.getScaleForId(meta.xAxisID);
-			var yScale = me.getScaleForId(meta.yAxisID);
-			var scaleBase = yScale.getBasePixel();
-			var rectangleElementOptions = me.chart.options.elements.rectangle;
-			var custom = rectangle.custom || {};
 			var dataset = me.getDataset();
+			var custom = rectangle.custom || {};
+			var rectangleOptions = chart.options.elements.rectangle;
 
-			helpers.extend(rectangle, {
-				// Utility
-				_xScale: xScale,
-				_yScale: yScale,
-				_datasetIndex: me.index,
-				_index: index,
+			rectangle._xScale = me.getScaleForId(meta.xAxisID);
+			rectangle._yScale = me.getScaleForId(meta.yAxisID);
+			rectangle._datasetIndex = me.index;
+			rectangle._index = index;
 
-				// Desired view properties
-				_model: {
-					x: me.calculateBarX(index, me.index),
-					y: reset ? scaleBase : me.calculateBarY(index, me.index),
+			rectangle._model = {
+				datasetLabel: dataset.label,
+				label: chart.data.labels[index],
+				borderSkipped: custom.borderSkipped ? custom.borderSkipped : rectangleOptions.borderSkipped,
+				backgroundColor: custom.backgroundColor ? custom.backgroundColor : helpers.getValueAtIndexOrDefault(dataset.backgroundColor, index, rectangleOptions.backgroundColor),
+				borderColor: custom.borderColor ? custom.borderColor : helpers.getValueAtIndexOrDefault(dataset.borderColor, index, rectangleOptions.borderColor),
+				borderWidth: custom.borderWidth ? custom.borderWidth : helpers.getValueAtIndexOrDefault(dataset.borderWidth, index, rectangleOptions.borderWidth)
+			};
 
-					// Tooltip
-					label: me.chart.data.labels[index],
-					datasetLabel: dataset.label,
+			me.updateElementGeometry(rectangle, index, reset);
 
-					// Appearance
-					base: reset ? scaleBase : me.calculateBarBase(me.index, index),
-					width: me.calculateBarWidth(index),
-					backgroundColor: custom.backgroundColor ? custom.backgroundColor : helpers.getValueAtIndexOrDefault(dataset.backgroundColor, index, rectangleElementOptions.backgroundColor),
-					borderSkipped: custom.borderSkipped ? custom.borderSkipped : rectangleElementOptions.borderSkipped,
-					borderColor: custom.borderColor ? custom.borderColor : helpers.getValueAtIndexOrDefault(dataset.borderColor, index, rectangleElementOptions.borderColor),
-					borderWidth: custom.borderWidth ? custom.borderWidth : helpers.getValueAtIndexOrDefault(dataset.borderWidth, index, rectangleElementOptions.borderWidth)
-				}
-			});
 			rectangle.pivot();
 		},
 
-		calculateBarBase: function(datasetIndex, index) {
+		/**
+		 * @private
+		 */
+		updateElementGeometry: function(rectangle, index, reset) {
 			var me = this;
-			var meta = me.getMeta();
-			var yScale = me.getScaleForId(meta.yAxisID);
-			var base = 0;
+			var model = rectangle._model;
+			var vscale = me.getValueScale();
+			var base = vscale.getBasePixel();
+			var horizontal = vscale.isHorizontal();
+			var ruler = me._ruler || me.getRuler();
+			var vpixels = me.calculateBarValuePixels(me.index, index);
+			var ipixels = me.calculateBarIndexPixels(me.index, index, ruler);
 
-			if (yScale.options.stacked) {
-				var chart = me.chart;
-				var datasets = chart.data.datasets;
-				var value = Number(datasets[datasetIndex].data[index]);
-
-				for (var i = 0; i < datasetIndex; i++) {
-					var currentDs = datasets[i];
-					var currentDsMeta = chart.getDatasetMeta(i);
-					if (currentDsMeta.bar && currentDsMeta.yAxisID === yScale.id && chart.isDatasetVisible(i)) {
-						var currentVal = Number(currentDs.data[index]);
-						base += value < 0 ? Math.min(currentVal, 0) : Math.max(currentVal, 0);
-					}
-				}
-
-				return yScale.getPixelForValue(base);
-			}
-
-			return yScale.getBasePixel();
+			model.horizontal = horizontal;
+			model.base = reset? base : vpixels.base;
+			model.x = horizontal? reset? base : vpixels.head : ipixels.center;
+			model.y = horizontal? ipixels.center : reset? base : vpixels.head;
+			model.height = horizontal? ipixels.size : undefined;
+			model.width = horizontal? undefined : ipixels.size;
 		},
 
-		getRuler: function(index) {
+		/**
+		 * @private
+		 */
+		getValueScaleId: function() {
+			return this.getMeta().yAxisID;
+		},
+
+		/**
+		 * @private
+		 */
+		getIndexScaleId: function() {
+			return this.getMeta().xAxisID;
+		},
+
+		/**
+		 * @private
+		 */
+		getValueScale: function() {
+			return this.getScaleForId(this.getValueScaleId());
+		},
+
+		/**
+		 * @private
+		 */
+		getIndexScale: function() {
+			return this.getScaleForId(this.getIndexScaleId());
+		},
+
+		/**
+		 * Returns the effective number of stacks based on groups and bar visibility.
+		 * @private
+		 */
+		getStackCount: function(last) {
 			var me = this;
-			var meta = me.getMeta();
-			var xScale = me.getScaleForId(meta.xAxisID);
-			var datasetCount = me.getBarCount();
+			var chart = me.chart;
+			var scale = me.getIndexScale();
+			var stacked = scale.options.stacked;
+			var ilen = last === undefined? chart.data.datasets.length : last + 1;
+			var stacks = [];
+			var i, meta;
 
-			var tickWidth;
-
-			if (xScale.options.type === 'category') {
-				tickWidth = xScale.getPixelForTick(index + 1) - xScale.getPixelForTick(index);
-			} else {
-				// Average width
-				tickWidth = xScale.width / xScale.ticks.length;
-			}
-			var categoryWidth = tickWidth * xScale.options.categoryPercentage;
-			var categorySpacing = (tickWidth - (tickWidth * xScale.options.categoryPercentage)) / 2;
-			var fullBarWidth = categoryWidth / datasetCount;
-
-			if (xScale.ticks.length !== me.chart.data.labels.length) {
-				var perc = xScale.ticks.length / me.chart.data.labels.length;
-				fullBarWidth = fullBarWidth * perc;
+			for (i = 0; i < ilen; ++i) {
+				meta = chart.getDatasetMeta(i);
+				if (meta.bar && chart.isDatasetVisible(i) &&
+					(stacked === false ||
+					(stacked === true && stacks.indexOf(meta.stack) === -1) ||
+					(stacked === undefined && (meta.stack === undefined || stacks.indexOf(meta.stack) === -1)))) {
+					stacks.push(meta.stack);
+				}
 			}
 
-			var barWidth = fullBarWidth * xScale.options.barPercentage;
-			var barSpacing = fullBarWidth - (fullBarWidth * xScale.options.barPercentage);
+			return stacks.length;
+		},
+
+		/**
+		 * Returns the stack index for the given dataset based on groups and bar visibility.
+		 * @private
+		 */
+		getStackIndex: function(datasetIndex) {
+			return this.getStackCount(datasetIndex) - 1;
+		},
+
+		/**
+		 * @private
+		 */
+		getRuler: function() {
+			var me = this;
+			var scale = me.getIndexScale();
+			var options = scale.options;
+			var stackCount = me.getStackCount();
+			var fullSize = scale.isHorizontal()? scale.width : scale.height;
+			var tickSize = fullSize / scale.ticks.length;
+			var categorySize = tickSize * options.categoryPercentage;
+			var fullBarSize = categorySize / stackCount;
+			var barSize = fullBarSize * options.barPercentage;
+
+			barSize = Math.min(
+				helpers.getValueOrDefault(options.barThickness, barSize),
+				helpers.getValueOrDefault(options.maxBarThickness, Infinity));
 
 			return {
-				datasetCount: datasetCount,
-				tickWidth: tickWidth,
-				categoryWidth: categoryWidth,
-				categorySpacing: categorySpacing,
-				fullBarWidth: fullBarWidth,
-				barWidth: barWidth,
-				barSpacing: barSpacing
+				stackCount: stackCount,
+				tickSize: tickSize,
+				categorySize: categorySize,
+				categorySpacing: tickSize - categorySize,
+				fullBarSize: fullBarSize,
+				barSize: barSize,
+				barSpacing: fullBarSize - barSize,
+				scale: scale
 			};
 		},
 
-		calculateBarWidth: function(index) {
-			var xScale = this.getScaleForId(this.getMeta().xAxisID);
-			if (xScale.options.barThickness) {
-				return xScale.options.barThickness;
-			}
-			var ruler = this.getRuler(index);
-			return xScale.options.stacked ? ruler.categoryWidth : ruler.barWidth;
-		},
-
-		// Get bar index from the given dataset index accounting for the fact that not all bars are visible
-		getBarIndex: function(datasetIndex) {
-			var barIndex = 0;
-			var meta, j;
-
-			for (j = 0; j < datasetIndex; ++j) {
-				meta = this.chart.getDatasetMeta(j);
-				if (meta.bar && this.chart.isDatasetVisible(j)) {
-					++barIndex;
-				}
-			}
-
-			return barIndex;
-		},
-
-		calculateBarX: function(index, datasetIndex) {
+		/**
+		 * Note: pixel values are not clamped to the scale area.
+		 * @private
+		 */
+		calculateBarValuePixels: function(datasetIndex, index) {
 			var me = this;
+			var chart = me.chart;
 			var meta = me.getMeta();
-			var xScale = me.getScaleForId(meta.xAxisID);
-			var barIndex = me.getBarIndex(datasetIndex);
+			var scale = me.getValueScale();
+			var datasets = chart.data.datasets;
+			var value = Number(datasets[datasetIndex].data[index]);
+			var stacked = scale.options.stacked;
+			var stack = meta.stack;
+			var start = 0;
+			var i, imeta, ivalue, base, head, size;
 
-			var ruler = me.getRuler(index);
-			var leftTick = xScale.getPixelForValue(null, index, datasetIndex, me.chart.isCombo);
-			leftTick -= me.chart.isCombo ? (ruler.tickWidth / 2) : 0;
+			if (stacked || (stacked === undefined && stack !== undefined)) {
+				for (i = 0; i < datasetIndex; ++i) {
+					imeta = chart.getDatasetMeta(i);
 
-			if (xScale.options.stacked) {
-				return leftTick + (ruler.categoryWidth / 2) + ruler.categorySpacing;
-			}
+					if (imeta.bar &&
+						imeta.stack === stack &&
+						imeta.controller.getValueScaleId() === scale.id &&
+						chart.isDatasetVisible(i)) {
 
-			return leftTick +
-				(ruler.barWidth / 2) +
-				ruler.categorySpacing +
-				(ruler.barWidth * barIndex) +
-				(ruler.barSpacing / 2) +
-				(ruler.barSpacing * barIndex);
-		},
-
-		calculateBarY: function(index, datasetIndex) {
-			var me = this;
-			var meta = me.getMeta();
-			var yScale = me.getScaleForId(meta.yAxisID);
-			var value = Number(me.getDataset().data[index]);
-
-			if (yScale.options.stacked) {
-
-				var sumPos = 0,
-					sumNeg = 0;
-
-				for (var i = 0; i < datasetIndex; i++) {
-					var ds = me.chart.data.datasets[i];
-					var dsMeta = me.chart.getDatasetMeta(i);
-					if (dsMeta.bar && dsMeta.yAxisID === yScale.id && me.chart.isDatasetVisible(i)) {
-						var stackedVal = Number(ds.data[index]);
-						if (stackedVal < 0) {
-							sumNeg += stackedVal || 0;
-						} else {
-							sumPos += stackedVal || 0;
+						ivalue = Number(datasets[i].data[index]);
+						if ((value < 0 && ivalue < 0) || (value >= 0 && ivalue > 0)) {
+							start += ivalue;
 						}
 					}
 				}
-
-				if (value < 0) {
-					return yScale.getPixelForValue(sumNeg + value);
-				}
-				return yScale.getPixelForValue(sumPos + value);
 			}
 
-			return yScale.getPixelForValue(value);
+			base = scale.getPixelForValue(start);
+			head = scale.getPixelForValue(start + value);
+			size = (head - base) / 2;
+
+			return {
+				size: size,
+				base: base,
+				head: head,
+				center: head + size / 2
+			};
 		},
 
-		draw: function(ease) {
+		/**
+		 * @private
+		 */
+		calculateBarIndexPixels: function(datasetIndex, index, ruler) {
 			var me = this;
-			var easingDecimal = ease || 1;
-			helpers.each(me.getMeta().data, function(rectangle, index) {
-				var d = me.getDataset().data[index];
+			var scale = ruler.scale;
+			var isCombo = me.chart.isCombo;
+			var stackIndex = me.getStackIndex(datasetIndex);
+			var base = scale.getPixelForValue(null, index, datasetIndex, isCombo);
+			var size = ruler.barSize;
+
+			base -= isCombo? ruler.tickSize / 2 : 0;
+			base += ruler.fullBarSize * stackIndex;
+			base += ruler.categorySpacing / 2;
+			base += ruler.barSpacing / 2;
+
+			return {
+				size: size,
+				base: base,
+				head: base + size,
+				center: base + size / 2
+			};
+		},
+
+		draw: function() {
+			var me = this;
+			var chart = me.chart;
+			var elements = me.getMeta().data;
+			var dataset = me.getDataset();
+			var ilen = elements.length;
+			var i = 0;
+			var d;
+
+			helpers.canvas.clipArea(chart.ctx, chart.chartArea);
+
+			for (; i<ilen; ++i) {
+				d = dataset.data[i];
 				if (d !== null && d !== undefined && !isNaN(d)) {
-					rectangle.transition(easingDecimal).draw();
+					elements[i].draw();
 				}
-			}, me);
+			}
+
+			helpers.canvas.unclipArea(chart.ctx);
 		},
 
 		setHoverStyle: function(rectangle) {
 			var dataset = this.chart.data.datasets[rectangle._datasetIndex];
 			var index = rectangle._index;
-
 			var custom = rectangle.custom || {};
 			var model = rectangle._model;
+
 			model.backgroundColor = custom.hoverBackgroundColor ? custom.hoverBackgroundColor : helpers.getValueAtIndexOrDefault(dataset.hoverBackgroundColor, index, helpers.getHoverColor(model.backgroundColor));
 			model.borderColor = custom.hoverBorderColor ? custom.hoverBorderColor : helpers.getValueAtIndexOrDefault(dataset.hoverBorderColor, index, helpers.getHoverColor(model.borderColor));
 			model.borderWidth = custom.hoverBorderWidth ? custom.hoverBorderWidth : helpers.getValueAtIndexOrDefault(dataset.hoverBorderWidth, index, model.borderWidth);
@@ -400,7 +434,6 @@ module.exports = function(Chart) {
 			model.borderColor = custom.borderColor ? custom.borderColor : helpers.getValueAtIndexOrDefault(dataset.borderColor, index, rectangleElementOptions.borderColor);
 			model.borderWidth = custom.borderWidth ? custom.borderWidth : helpers.getValueAtIndexOrDefault(dataset.borderWidth, index, rectangleElementOptions.borderWidth);
 		}
-
 	});
 
 
@@ -460,242 +493,18 @@ module.exports = function(Chart) {
 	};
 
 	Chart.controllers.horizontalBar = Chart.controllers.bar.extend({
-		updateElement: function(rectangle, index, reset) {
-			var me = this;
-			var meta = me.getMeta();
-			var xScale = me.getScaleForId(meta.xAxisID);
-			var yScale = me.getScaleForId(meta.yAxisID);
-			var scaleBase = xScale.getBasePixel();
-			var custom = rectangle.custom || {};
-			var dataset = me.getDataset();
-			var rectangleElementOptions = me.chart.options.elements.rectangle;
-
-			helpers.extend(rectangle, {
-				// Utility
-				_xScale: xScale,
-				_yScale: yScale,
-				_datasetIndex: me.index,
-				_index: index,
-
-				// Desired view properties
-				_model: {
-					x: reset ? scaleBase : me.calculateBarX(index, me.index),
-					y: me.calculateBarY(index, me.index),
-
-					// Tooltip
-					label: me.chart.data.labels[index],
-					datasetLabel: dataset.label,
-
-					// Appearance
-					base: reset ? scaleBase : me.calculateBarBase(me.index, index),
-					height: me.calculateBarHeight(index),
-					backgroundColor: custom.backgroundColor ? custom.backgroundColor : helpers.getValueAtIndexOrDefault(dataset.backgroundColor, index, rectangleElementOptions.backgroundColor),
-					borderSkipped: custom.borderSkipped ? custom.borderSkipped : rectangleElementOptions.borderSkipped,
-					borderColor: custom.borderColor ? custom.borderColor : helpers.getValueAtIndexOrDefault(dataset.borderColor, index, rectangleElementOptions.borderColor),
-					borderWidth: custom.borderWidth ? custom.borderWidth : helpers.getValueAtIndexOrDefault(dataset.borderWidth, index, rectangleElementOptions.borderWidth)
-				},
-
-				draw: function() {
-					var ctx = this._chart.ctx;
-					var vm = this._view;
-
-					var halfHeight = vm.height / 2,
-						topY = vm.y - halfHeight,
-						bottomY = vm.y + halfHeight,
-						right = vm.base - (vm.base - vm.x),
-						halfStroke = vm.borderWidth / 2;
-
-					// Canvas doesn't allow us to stroke inside the width so we can
-					// adjust the sizes to fit if we're setting a stroke on the line
-					if (vm.borderWidth) {
-						topY += halfStroke;
-						bottomY -= halfStroke;
-						right += halfStroke;
-					}
-
-					ctx.beginPath();
-
-					ctx.fillStyle = vm.backgroundColor;
-					ctx.strokeStyle = vm.borderColor;
-					ctx.lineWidth = vm.borderWidth;
-
-					// Corner points, from bottom-left to bottom-right clockwise
-					// | 1 2 |
-					// | 0 3 |
-					var corners = [
-						[vm.base, bottomY],
-						[vm.base, topY],
-						[right, topY],
-						[right, bottomY]
-					];
-
-					// Find first (starting) corner with fallback to 'bottom'
-					var borders = ['bottom', 'left', 'top', 'right'];
-					var startCorner = borders.indexOf(vm.borderSkipped, 0);
-					if (startCorner === -1) {
-						startCorner = 0;
-					}
-
-					function cornerAt(cornerIndex) {
-						return corners[(startCorner + cornerIndex) % 4];
-					}
-
-					// Draw rectangle from 'startCorner'
-					ctx.moveTo.apply(ctx, cornerAt(0));
-					for (var i = 1; i < 4; i++) {
-						ctx.lineTo.apply(ctx, cornerAt(i));
-					}
-
-					ctx.fill();
-					if (vm.borderWidth) {
-						ctx.stroke();
-					}
-				},
-
-				inRange: function(mouseX, mouseY) {
-					var vm = this._view;
-					var inRange = false;
-
-					if (vm) {
-						if (vm.x < vm.base) {
-							inRange = (mouseY >= vm.y - vm.height / 2 && mouseY <= vm.y + vm.height / 2) && (mouseX >= vm.x && mouseX <= vm.base);
-						} else {
-							inRange = (mouseY >= vm.y - vm.height / 2 && mouseY <= vm.y + vm.height / 2) && (mouseX >= vm.base && mouseX <= vm.x);
-						}
-					}
-
-					return inRange;
-				}
-			});
-
-			rectangle.pivot();
+		/**
+		 * @private
+		 */
+		getValueScaleId: function() {
+			return this.getMeta().xAxisID;
 		},
 
-		calculateBarBase: function(datasetIndex, index) {
-			var me = this;
-			var meta = me.getMeta();
-			var xScale = me.getScaleForId(meta.xAxisID);
-			var base = 0;
-
-			if (xScale.options.stacked) {
-				var chart = me.chart;
-				var datasets = chart.data.datasets;
-				var value = Number(datasets[datasetIndex].data[index]);
-
-				for (var i = 0; i < datasetIndex; i++) {
-					var currentDs = datasets[i];
-					var currentDsMeta = chart.getDatasetMeta(i);
-					if (currentDsMeta.bar && currentDsMeta.xAxisID === xScale.id && chart.isDatasetVisible(i)) {
-						var currentVal = Number(currentDs.data[index]);
-						base += value < 0 ? Math.min(currentVal, 0) : Math.max(currentVal, 0);
-					}
-				}
-
-				return xScale.getPixelForValue(base);
-			}
-
-			return xScale.getBasePixel();
-		},
-
-		getRuler: function(index) {
-			var me = this;
-			var meta = me.getMeta();
-			var yScale = me.getScaleForId(meta.yAxisID);
-			var datasetCount = me.getBarCount();
-
-			var tickHeight;
-			if (yScale.options.type === 'category') {
-				tickHeight = yScale.getPixelForTick(index + 1) - yScale.getPixelForTick(index);
-			} else {
-				// Average width
-				tickHeight = yScale.width / yScale.ticks.length;
-			}
-			var categoryHeight = tickHeight * yScale.options.categoryPercentage;
-			var categorySpacing = (tickHeight - (tickHeight * yScale.options.categoryPercentage)) / 2;
-			var fullBarHeight = categoryHeight / datasetCount;
-
-			if (yScale.ticks.length !== me.chart.data.labels.length) {
-				var perc = yScale.ticks.length / me.chart.data.labels.length;
-				fullBarHeight = fullBarHeight * perc;
-			}
-
-			var barHeight = fullBarHeight * yScale.options.barPercentage;
-			var barSpacing = fullBarHeight - (fullBarHeight * yScale.options.barPercentage);
-
-			return {
-				datasetCount: datasetCount,
-				tickHeight: tickHeight,
-				categoryHeight: categoryHeight,
-				categorySpacing: categorySpacing,
-				fullBarHeight: fullBarHeight,
-				barHeight: barHeight,
-				barSpacing: barSpacing
-			};
-		},
-
-		calculateBarHeight: function(index) {
-			var me = this;
-			var yScale = me.getScaleForId(me.getMeta().yAxisID);
-			if (yScale.options.barThickness) {
-				return yScale.options.barThickness;
-			}
-			var ruler = me.getRuler(index);
-			return yScale.options.stacked ? ruler.categoryHeight : ruler.barHeight;
-		},
-
-		calculateBarX: function(index, datasetIndex) {
-			var me = this;
-			var meta = me.getMeta();
-			var xScale = me.getScaleForId(meta.xAxisID);
-			var value = Number(me.getDataset().data[index]);
-
-			if (xScale.options.stacked) {
-
-				var sumPos = 0,
-					sumNeg = 0;
-
-				for (var i = 0; i < datasetIndex; i++) {
-					var ds = me.chart.data.datasets[i];
-					var dsMeta = me.chart.getDatasetMeta(i);
-					if (dsMeta.bar && dsMeta.xAxisID === xScale.id && me.chart.isDatasetVisible(i)) {
-						var stackedVal = Number(ds.data[index]);
-						if (stackedVal < 0) {
-							sumNeg += stackedVal || 0;
-						} else {
-							sumPos += stackedVal || 0;
-						}
-					}
-				}
-
-				if (value < 0) {
-					return xScale.getPixelForValue(sumNeg + value);
-				}
-				return xScale.getPixelForValue(sumPos + value);
-			}
-
-			return xScale.getPixelForValue(value);
-		},
-
-		calculateBarY: function(index, datasetIndex) {
-			var me = this;
-			var meta = me.getMeta();
-			var yScale = me.getScaleForId(meta.yAxisID);
-			var barIndex = me.getBarIndex(datasetIndex);
-
-			var ruler = me.getRuler(index);
-			var topTick = yScale.getPixelForValue(null, index, datasetIndex, me.chart.isCombo);
-			topTick -= me.chart.isCombo ? (ruler.tickHeight / 2) : 0;
-
-			if (yScale.options.stacked) {
-				return topTick + (ruler.categoryHeight / 2) + ruler.categorySpacing;
-			}
-
-			return topTick +
-				(ruler.barHeight / 2) +
-				ruler.categorySpacing +
-				(ruler.barHeight * barIndex) +
-				(ruler.barSpacing / 2) +
-				(ruler.barSpacing * barIndex);
+		/**
+		 * @private
+		 */
+		getIndexScaleId: function() {
+			return this.getMeta().yAxisID;
 		}
 	});
 };
@@ -734,7 +543,7 @@ module.exports = function(Chart) {
 				label: function(tooltipItem, data) {
 					var datasetLabel = data.datasets[tooltipItem.datasetIndex].label || '';
 					var dataPoint = data.datasets[tooltipItem.datasetIndex].data[tooltipItem.index];
-					return datasetLabel + ': (' + dataPoint.x + ', ' + dataPoint.y + ', ' + dataPoint.r + ')';
+					return datasetLabel + ': (' + tooltipItem.xLabel + ', ' + tooltipItem.yLabel + ', ' + dataPoint.r + ')';
 				}
 			}
 		}
@@ -929,7 +738,19 @@ module.exports = function(Chart) {
 					return '';
 				},
 				label: function(tooltipItem, data) {
-					return data.labels[tooltipItem.index] + ': ' + data.datasets[tooltipItem.datasetIndex].data[tooltipItem.index];
+					var dataLabel = data.labels[tooltipItem.index];
+					var value = ': ' + data.datasets[tooltipItem.datasetIndex].data[tooltipItem.index];
+
+					if (helpers.isArray(dataLabel)) {
+						// show value on first line of multiline label
+						// need to clone because we are changing the value
+						dataLabel = dataLabel.slice();
+						dataLabel[0] += value;
+					} else {
+						dataLabel += value;
+					}
+
+					return dataLabel;
 				}
 			}
 		}
@@ -998,7 +819,7 @@ module.exports = function(Chart) {
 
 			chart.borderWidth = me.getMaxBorderWidth(meta.data);
 			chart.outerRadius = Math.max((minSize - chart.borderWidth) / 2, 0);
-			chart.innerRadius = Math.max(cutoutPercentage ? (chart.outerRadius / 100) * (cutoutPercentage) : 1, 0);
+			chart.innerRadius = Math.max(cutoutPercentage ? (chart.outerRadius / 100) * (cutoutPercentage) : 0, 0);
 			chart.radiusLength = (chart.outerRadius - chart.innerRadius) / chart.getVisibleDatasetCount();
 			chart.offsetX = offset.x * chart.outerRadius;
 			chart.offsetY = offset.y * chart.outerRadius;
@@ -1006,7 +827,7 @@ module.exports = function(Chart) {
 			meta.total = me.calculateTotal();
 
 			me.outerRadius = chart.outerRadius - (chart.radiusLength * me.getRingIndex(me.index));
-			me.innerRadius = me.outerRadius - chart.radiusLength;
+			me.innerRadius = Math.max(me.outerRadius - chart.radiusLength, 0);
 
 			helpers.each(meta.data, function(arc, index) {
 				me.updateElement(arc, index, reset);
@@ -1154,19 +975,6 @@ module.exports = function(Chart) {
 
 		dataElementType: Chart.elements.Point,
 
-		addElementAndReset: function(index) {
-			var me = this;
-			var options = me.chart.options;
-			var meta = me.getMeta();
-
-			Chart.DatasetController.prototype.addElementAndReset.call(me, index);
-
-			// Make sure bezier control points are updated
-			if (lineEnabled(me.getDataset(), options) && meta.dataset._model.tension !== 0) {
-				me.updateBezierControlPoints();
-			}
-		},
-
 		update: function(reset) {
 			var me = this;
 			var meta = me.getMeta();
@@ -1198,7 +1006,7 @@ module.exports = function(Chart) {
 					// Appearance
 					// The default behavior of lines is to break at null values, according
 					// to https://github.com/chartjs/Chart.js/issues/2435#issuecomment-216718158
-					// This option gives linse the ability to span gaps
+					// This option gives lines the ability to span gaps
 					spanGaps: dataset.spanGaps ? dataset.spanGaps : options.spanGaps,
 					tension: custom.tension ? custom.tension : helpers.getValueOrDefault(dataset.lineTension, lineElementOptions.tension),
 					backgroundColor: custom.backgroundColor ? custom.backgroundColor : (dataset.backgroundColor || lineElementOptions.backgroundColor),
@@ -1211,10 +1019,6 @@ module.exports = function(Chart) {
 					fill: custom.fill ? custom.fill : (dataset.fill !== undefined ? dataset.fill : lineElementOptions.fill),
 					steppedLine: custom.steppedLine ? custom.steppedLine : helpers.getValueOrDefault(dataset.steppedLine, lineElementOptions.stepped),
 					cubicInterpolationMode: custom.cubicInterpolationMode ? custom.cubicInterpolationMode : helpers.getValueOrDefault(dataset.cubicInterpolationMode, lineElementOptions.cubicInterpolationMode),
-					// Scale
-					scaleTop: scale.top,
-					scaleBottom: scale.bottom,
-					scaleZero: scale.getBasePixel()
 				};
 
 				line.pivot();
@@ -1272,11 +1076,11 @@ module.exports = function(Chart) {
 			var dataset = this.getDataset();
 			var custom = point.custom || {};
 
-			if (custom.borderWidth) {
+			if (!isNaN(custom.borderWidth)) {
 				borderWidth = custom.borderWidth;
-			} else if (dataset.pointBorderWidth) {
+			} else if (!isNaN(dataset.pointBorderWidth)) {
 				borderWidth = helpers.getValueAtIndexOrDefault(dataset.pointBorderWidth, index, borderWidth);
-			} else if (dataset.borderWidth) {
+			} else if (!isNaN(dataset.borderWidth)) {
 				borderWidth = dataset.borderWidth;
 			}
 
@@ -1413,26 +1217,26 @@ module.exports = function(Chart) {
 			}
 		},
 
-		draw: function(ease) {
+		draw: function() {
 			var me = this;
+			var chart = me.chart;
 			var meta = me.getMeta();
 			var points = meta.data || [];
-			var easingDecimal = ease || 1;
-			var i, ilen;
+			var area = chart.chartArea;
+			var ilen = points.length;
+			var i = 0;
 
-			// Transition Point Locations
-			for (i=0, ilen=points.length; i<ilen; ++i) {
-				points[i].transition(easingDecimal);
+			Chart.canvasHelpers.clipArea(chart.ctx, area);
+
+			if (lineEnabled(me.getDataset(), chart.options)) {
+				meta.dataset.draw();
 			}
 
-			// Transition and Draw the line
-			if (lineEnabled(me.getDataset(), me.chart.options)) {
-				meta.dataset.transition(easingDecimal).draw();
-			}
+			Chart.canvasHelpers.unclipArea(chart.ctx);
 
 			// Draw the points
-			for (i=0, ilen=points.length; i<ilen; ++i) {
-				points[i].draw();
+			for (; i<ilen; ++i) {
+				points[i].draw(area);
 			}
 		},
 
@@ -1480,7 +1284,15 @@ module.exports = function(Chart) {
 
 		scale: {
 			type: 'radialLinear',
-			lineArc: true, // so that lines are circular
+			angleLines: {
+				display: false
+			},
+			gridLines: {
+				circular: true
+			},
+			pointLabels: {
+				display: false
+			},
 			ticks: {
 				beginAtZero: true
 			}
@@ -1504,11 +1316,11 @@ module.exports = function(Chart) {
 
 			if (datasets.length) {
 				for (var i = 0; i < datasets[0].data.length; ++i) {
-					text.push('<li><span style="background-color:' + datasets[0].backgroundColor[i] + '">');
+					text.push('<li><span style="background-color:' + datasets[0].backgroundColor[i] + '"></span>');
 					if (labels[i]) {
 						text.push(labels[i]);
 					}
-					text.push('</span></li>');
+					text.push('</li>');
 				}
 			}
 
@@ -1694,6 +1506,7 @@ module.exports = function(Chart) {
 	var helpers = Chart.helpers;
 
 	Chart.defaults.radar = {
+		aspectRatio: 1,
 		scale: {
 			type: 'radialLinear'
 		},
@@ -1711,13 +1524,6 @@ module.exports = function(Chart) {
 		dataElementType: Chart.elements.Point,
 
 		linkScales: helpers.noop,
-
-		addElementAndReset: function(index) {
-			Chart.DatasetController.prototype.addElementAndReset.call(this, index);
-
-			// Make sure bezier control points are updated
-			this.updateBezierControlPoints();
-		},
 
 		update: function(reset) {
 			var me = this;
@@ -1737,6 +1543,7 @@ module.exports = function(Chart) {
 			helpers.extend(meta.dataset, {
 				// Utility
 				_datasetIndex: me.index,
+				_scale: scale,
 				// Data
 				_children: points,
 				_loop: true,
@@ -1752,11 +1559,6 @@ module.exports = function(Chart) {
 					borderDash: custom.borderDash ? custom.borderDash : (dataset.borderDash || lineElementOptions.borderDash),
 					borderDashOffset: custom.borderDashOffset ? custom.borderDashOffset : (dataset.borderDashOffset || lineElementOptions.borderDashOffset),
 					borderJoinStyle: custom.borderJoinStyle ? custom.borderJoinStyle : (dataset.borderJoinStyle || lineElementOptions.borderJoinStyle),
-
-					// Scale
-					scaleTop: scale.top,
-					scaleBottom: scale.bottom,
-					scaleZero: scale.getBasePosition()
 				}
 			});
 
@@ -1766,7 +1568,6 @@ module.exports = function(Chart) {
 			helpers.each(points, function(point, index) {
 				me.updateElement(point, index, reset);
 			}, me);
-
 
 			// Update bezier control points
 			me.updateBezierControlPoints();
@@ -1778,6 +1579,14 @@ module.exports = function(Chart) {
 			var scale = me.chart.scale;
 			var pointElementOptions = me.chart.options.elements.point;
 			var pointPosition = scale.getPointPositionForValue(index, dataset.data[index]);
+
+			// Compatibility: If the properties are defined with only the old name, use those values
+			if ((dataset.radius !== undefined) && (dataset.pointRadius === undefined)) {
+				dataset.pointRadius = dataset.radius;
+			}
+			if ((dataset.hitRadius !== undefined) && (dataset.pointHitRadius === undefined)) {
+				dataset.pointHitRadius = dataset.hitRadius;
+			}
 
 			helpers.extend(point, {
 				// Utility
@@ -1791,7 +1600,7 @@ module.exports = function(Chart) {
 					y: reset ? scale.yCenter : pointPosition.y,
 
 					// Appearance
-					tension: custom.tension ? custom.tension : helpers.getValueOrDefault(dataset.tension, me.chart.options.elements.line.tension),
+					tension: custom.tension ? custom.tension : helpers.getValueOrDefault(dataset.lineTension, me.chart.options.elements.line.tension),
 					radius: custom.radius ? custom.radius : helpers.getValueAtIndexOrDefault(dataset.pointRadius, index, pointElementOptions.radius),
 					backgroundColor: custom.backgroundColor ? custom.backgroundColor : helpers.getValueAtIndexOrDefault(dataset.pointBackgroundColor, index, pointElementOptions.backgroundColor),
 					borderColor: custom.borderColor ? custom.borderColor : helpers.getValueAtIndexOrDefault(dataset.pointBorderColor, index, pointElementOptions.borderColor),
@@ -1799,7 +1608,7 @@ module.exports = function(Chart) {
 					pointStyle: custom.pointStyle ? custom.pointStyle : helpers.getValueAtIndexOrDefault(dataset.pointStyle, index, pointElementOptions.pointStyle),
 
 					// Tooltip
-					hitRadius: custom.hitRadius ? custom.hitRadius : helpers.getValueAtIndexOrDefault(dataset.hitRadius, index, pointElementOptions.hitRadius)
+					hitRadius: custom.hitRadius ? custom.hitRadius : helpers.getValueAtIndexOrDefault(dataset.pointHitRadius, index, pointElementOptions.hitRadius)
 				}
 			});
 
@@ -1830,24 +1639,6 @@ module.exports = function(Chart) {
 			});
 		},
 
-		draw: function(ease) {
-			var meta = this.getMeta();
-			var easingDecimal = ease || 1;
-
-			// Transition Point Locations
-			helpers.each(meta.data, function(point) {
-				point.transition(easingDecimal);
-			});
-
-			// Transition and Draw the line
-			meta.dataset.transition(easingDecimal).draw();
-
-			// Draw the points
-			helpers.each(meta.data, function(point) {
-				point.draw();
-			});
-		},
-
 		setHoverStyle: function(point) {
 			// Point
 			var dataset = this.chart.data.datasets[point._datasetIndex];
@@ -1868,7 +1659,7 @@ module.exports = function(Chart) {
 			var model = point._model;
 			var pointElementOptions = this.chart.options.elements.point;
 
-			model.radius = custom.radius ? custom.radius : helpers.getValueAtIndexOrDefault(dataset.radius, index, pointElementOptions.radius);
+			model.radius = custom.radius ? custom.radius : helpers.getValueAtIndexOrDefault(dataset.pointRadius, index, pointElementOptions.radius);
 			model.backgroundColor = custom.backgroundColor ? custom.backgroundColor : helpers.getValueAtIndexOrDefault(dataset.pointBackgroundColor, index, pointElementOptions.backgroundColor);
 			model.borderColor = custom.borderColor ? custom.borderColor : helpers.getValueAtIndexOrDefault(dataset.pointBorderColor, index, pointElementOptions.borderColor);
 			model.borderWidth = custom.borderWidth ? custom.borderWidth : helpers.getValueAtIndexOrDefault(dataset.pointBorderWidth, index, pointElementOptions.borderWidth);
@@ -1892,13 +1683,14 @@ module.exports = function(Chart) {
 	};
 
 	Chart.Animation = Chart.Element.extend({
-		currentStep: null, // the current animation step
+		chart: null, // the animation associated chart instance
+		currentStep: 0, // the current animation step
 		numSteps: 60, // default number of steps
 		easing: '', // the easing to use for this animation
 		render: null, // render function used by the animation service
 
 		onAnimationProgress: null, // user specified callback to fire on each step of the animation
-		onAnimationComplete: null // user specified callback to fire when the animation finishes
+		onAnimationComplete: null, // user specified callback to fire when the animation finishes
 	});
 
 	Chart.animationService = {
@@ -1906,42 +1698,49 @@ module.exports = function(Chart) {
 		animations: [],
 		dropFrames: 0,
 		request: null,
-		addAnimation: function(chartInstance, animationObject, duration, lazy) {
-			var me = this;
+
+		/**
+		 * @param {Chart} chart - The chart to animate.
+		 * @param {Chart.Animation} animation - The animation that we will animate.
+		 * @param {Number} duration - The animation duration in ms.
+		 * @param {Boolean} lazy - if true, the chart is not marked as animating to enable more responsive interactions
+		 */
+		addAnimation: function(chart, animation, duration, lazy) {
+			var animations = this.animations;
+			var i, ilen;
+
+			animation.chart = chart;
 
 			if (!lazy) {
-				chartInstance.animating = true;
+				chart.animating = true;
 			}
 
-			for (var index = 0; index < me.animations.length; ++index) {
-				if (me.animations[index].chartInstance === chartInstance) {
-					// replacing an in progress animation
-					me.animations[index].animationObject = animationObject;
+			for (i=0, ilen=animations.length; i < ilen; ++i) {
+				if (animations[i].chart === chart) {
+					animations[i] = animation;
 					return;
 				}
 			}
 
-			me.animations.push({
-				chartInstance: chartInstance,
-				animationObject: animationObject
-			});
+			animations.push(animation);
 
 			// If there are no animations queued, manually kickstart a digest, for lack of a better word
-			if (me.animations.length === 1) {
-				me.requestAnimationFrame();
+			if (animations.length === 1) {
+				this.requestAnimationFrame();
 			}
 		},
-		// Cancel the animation for a given chart instance
-		cancelAnimation: function(chartInstance) {
-			var index = helpers.findIndex(this.animations, function(animationWrapper) {
-				return animationWrapper.chartInstance === chartInstance;
+
+		cancelAnimation: function(chart) {
+			var index = helpers.findIndex(this.animations, function(animation) {
+				return animation.chart === chart;
 			});
 
 			if (index !== -1) {
 				this.animations.splice(index, 1);
-				chartInstance.animating = false;
+				chart.animating = false;
 			}
 		},
+
 		requestAnimationFrame: function() {
 			var me = this;
 			if (me.request === null) {
@@ -1954,9 +1753,12 @@ module.exports = function(Chart) {
 				});
 			}
 		},
+
+		/**
+		 * @private
+		 */
 		startDigest: function() {
 			var me = this;
-
 			var startTime = Date.now();
 			var framesToDrop = 0;
 
@@ -1965,48 +1767,74 @@ module.exports = function(Chart) {
 				me.dropFrames = me.dropFrames % 1;
 			}
 
-			var i = 0;
-			while (i < me.animations.length) {
-				if (me.animations[i].animationObject.currentStep === null) {
-					me.animations[i].animationObject.currentStep = 0;
-				}
-
-				me.animations[i].animationObject.currentStep += 1 + framesToDrop;
-
-				if (me.animations[i].animationObject.currentStep > me.animations[i].animationObject.numSteps) {
-					me.animations[i].animationObject.currentStep = me.animations[i].animationObject.numSteps;
-				}
-
-				me.animations[i].animationObject.render(me.animations[i].chartInstance, me.animations[i].animationObject);
-				if (me.animations[i].animationObject.onAnimationProgress && me.animations[i].animationObject.onAnimationProgress.call) {
-					me.animations[i].animationObject.onAnimationProgress.call(me.animations[i].chartInstance, me.animations[i]);
-				}
-
-				if (me.animations[i].animationObject.currentStep === me.animations[i].animationObject.numSteps) {
-					if (me.animations[i].animationObject.onAnimationComplete && me.animations[i].animationObject.onAnimationComplete.call) {
-						me.animations[i].animationObject.onAnimationComplete.call(me.animations[i].chartInstance, me.animations[i]);
-					}
-
-					// executed the last frame. Remove the animation.
-					me.animations[i].chartInstance.animating = false;
-
-					me.animations.splice(i, 1);
-				} else {
-					++i;
-				}
-			}
+			me.advance(1 + framesToDrop);
 
 			var endTime = Date.now();
-			var dropFrames = (endTime - startTime) / me.frameDuration;
 
-			me.dropFrames += dropFrames;
+			me.dropFrames += (endTime - startTime) / me.frameDuration;
 
 			// Do we have more stuff to animate?
 			if (me.animations.length > 0) {
 				me.requestAnimationFrame();
 			}
+		},
+
+		/**
+		 * @private
+		 */
+		advance: function(count) {
+			var animations = this.animations;
+			var animation, chart;
+			var i = 0;
+
+			while (i < animations.length) {
+				animation = animations[i];
+				chart = animation.chart;
+
+				animation.currentStep = (animation.currentStep || 0) + count;
+				animation.currentStep = Math.min(animation.currentStep, animation.numSteps);
+
+				helpers.callback(animation.render, [chart, animation], chart);
+				helpers.callback(animation.onAnimationProgress, [animation], chart);
+
+				if (animation.currentStep >= animation.numSteps) {
+					helpers.callback(animation.onAnimationComplete, [animation], chart);
+					chart.animating = false;
+					animations.splice(i, 1);
+				} else {
+					++i;
+				}
+			}
 		}
 	};
+
+	/**
+	 * Provided for backward compatibility, use Chart.Animation instead
+	 * @prop Chart.Animation#animationObject
+	 * @deprecated since version 2.6.0
+	 * @todo remove at version 3
+	 */
+	Object.defineProperty(Chart.Animation.prototype, 'animationObject', {
+		get: function() {
+			return this;
+		}
+	});
+
+	/**
+	 * Provided for backward compatibility, use Chart.Animation#chart instead
+	 * @prop Chart.Animation#chartInstance
+	 * @deprecated since version 2.6.0
+	 * @todo remove at version 3
+	 */
+	Object.defineProperty(Chart.Animation.prototype, 'chartInstance', {
+		get: function() {
+			return this.chart;
+		},
+		set: function(value) {
+			this.chart = value;
+		}
+	});
+
 };
 
 },{}],15:[function(require,module,exports){
@@ -2022,7 +1850,7 @@ module.exports = function(Chart) {
 		if (typeof pointStyle === 'object') {
 			type = pointStyle.toString();
 			if (type === '[object HTMLImageElement]' || type === '[object HTMLCanvasElement]') {
-				ctx.drawImage(pointStyle, x - pointStyle.width / 2, y - pointStyle.height / 2);
+				ctx.drawImage(pointStyle, x - pointStyle.width / 2, y - pointStyle.height / 2, pointStyle.width, pointStyle.height);
 				return;
 			}
 		}
@@ -2054,6 +1882,14 @@ module.exports = function(Chart) {
 			ctx.beginPath();
 			ctx.fillRect(x - size, y - size, 2 * size, 2 * size);
 			ctx.strokeRect(x - size, y - size, 2 * size, 2 * size);
+			break;
+		case 'rectRounded':
+			var offset = radius / Math.SQRT2;
+			var leftX = x - offset;
+			var topY = y - offset;
+			var sideSize = Math.SQRT2 * radius;
+			Chart.helpers.drawRoundedRectangle(ctx, leftX, topY, sideSize, sideSize, radius / 2);
+			ctx.fill();
 			break;
 		case 'rectRot':
 			size = 1 / Math.SQRT2 * radius;
@@ -2113,6 +1949,44 @@ module.exports = function(Chart) {
 
 		ctx.stroke();
 	};
+
+	helpers.clipArea = function(ctx, clipArea) {
+		ctx.save();
+		ctx.beginPath();
+		ctx.rect(clipArea.left, clipArea.top, clipArea.right - clipArea.left, clipArea.bottom - clipArea.top);
+		ctx.clip();
+	};
+
+	helpers.unclipArea = function(ctx) {
+		ctx.restore();
+	};
+
+	helpers.lineTo = function(ctx, previous, target, flip) {
+		if (target.steppedLine) {
+			if (target.steppedLine === 'after') {
+				ctx.lineTo(previous.x, target.y);
+			} else {
+				ctx.lineTo(target.x, previous.y);
+			}
+			ctx.lineTo(target.x, target.y);
+			return;
+		}
+
+		if (!target.tension) {
+			ctx.lineTo(target.x, target.y);
+			return;
+		}
+
+		ctx.bezierCurveTo(
+			flip? previous.controlPointPreviousX : previous.controlPointNextX,
+			flip? previous.controlPointPreviousY : previous.controlPointNextY,
+			flip? target.controlPointNextX : target.controlPointPreviousX,
+			flip? target.controlPointNextY : target.controlPointPreviousY,
+			target.x,
+			target.y);
+	};
+
+	Chart.helpers.canvas = helpers;
 };
 
 },{}],16:[function(require,module,exports){
@@ -2121,6 +1995,9 @@ module.exports = function(Chart) {
 module.exports = function(Chart) {
 
 	var helpers = Chart.helpers;
+	var plugins = Chart.plugins;
+	var platform = Chart.platform;
+
 	// Create a dictionary of chart types, to allow for extension of existing types
 	Chart.types = {};
 
@@ -2132,105 +2009,185 @@ module.exports = function(Chart) {
 	Chart.controllers = {};
 
 	/**
-	 * @class Chart.Controller
-	 * The main controller of a chart.
+	 * Initializes the given config with global and chart default values.
 	 */
-	Chart.Controller = function(instance) {
+	function initConfig(config) {
+		config = config || {};
 
-		this.chart = instance;
-		this.config = instance.config;
-		this.options = this.config.options = helpers.configMerge(Chart.defaults.global, Chart.defaults[this.config.type], this.config.options || {});
-		this.id = helpers.uid();
+		// Do NOT use configMerge() for the data object because this method merges arrays
+		// and so would change references to labels and datasets, preventing data updates.
+		var data = config.data = config.data || {};
+		data.datasets = data.datasets || [];
+		data.labels = data.labels || [];
 
-		Object.defineProperty(this, 'data', {
-			get: function() {
-				return this.config.data;
-			}
-		});
+		config.options = helpers.configMerge(
+			Chart.defaults.global,
+			Chart.defaults[config.type],
+			config.options || {});
 
-		// Add the chart instance to the global namespace
-		Chart.instances[this.id] = this;
+		return config;
+	}
 
-		if (this.options.responsive) {
-			// Silent resize before chart draws
-			this.resize(true);
+	/**
+	 * Updates the config of the chart
+	 * @param chart {Chart} chart to update the options for
+	 */
+	function updateConfig(chart) {
+		var newOptions = chart.options;
+
+		// Update Scale(s) with options
+		if (newOptions.scale) {
+			chart.scale.options = newOptions.scale;
+		} else if (newOptions.scales) {
+			newOptions.scales.xAxes.concat(newOptions.scales.yAxes).forEach(function(scaleOptions) {
+				chart.scales[scaleOptions.id].options = scaleOptions;
+			});
 		}
 
-		this.initialize();
+		// Tooltip
+		chart.tooltip._options = newOptions.tooltips;
+	}
 
-		return this;
-	};
+	function positionIsHorizontal(position) {
+		return position === 'top' || position === 'bottom';
+	}
 
-	helpers.extend(Chart.Controller.prototype, /** @lends Chart.Controller */ {
+	helpers.extend(Chart.prototype, /** @lends Chart */ {
+		/**
+		 * @private
+		 */
+		construct: function(item, config) {
+			var me = this;
 
+			config = initConfig(config);
+
+			var context = platform.acquireContext(item, config);
+			var canvas = context && context.canvas;
+			var height = canvas && canvas.height;
+			var width = canvas && canvas.width;
+
+			me.id = helpers.uid();
+			me.ctx = context;
+			me.canvas = canvas;
+			me.config = config;
+			me.width = width;
+			me.height = height;
+			me.aspectRatio = height? width / height : null;
+			me.options = config.options;
+			me._bufferedRender = false;
+
+			/**
+			 * Provided for backward compatibility, Chart and Chart.Controller have been merged,
+			 * the "instance" still need to be defined since it might be called from plugins.
+			 * @prop Chart#chart
+			 * @deprecated since version 2.6.0
+			 * @todo remove at version 3
+			 * @private
+			 */
+			me.chart = me;
+			me.controller = me;  // chart.chart.controller #inception
+
+			// Add the chart instance to the global namespace
+			Chart.instances[me.id] = me;
+
+			// Define alias to the config data: `chart.data === chart.config.data`
+			Object.defineProperty(me, 'data', {
+				get: function() {
+					return me.config.data;
+				},
+				set: function(value) {
+					me.config.data = value;
+				}
+			});
+
+			if (!context || !canvas) {
+				// The given item is not a compatible context2d element, let's return before finalizing
+				// the chart initialization but after setting basic chart / controller properties that
+				// can help to figure out that the chart is not valid (e.g chart.canvas !== null);
+				// https://github.com/chartjs/Chart.js/issues/2807
+				console.error("Failed to create chart: can't acquire context from the given item");
+				return;
+			}
+
+			me.initialize();
+			me.update();
+		},
+
+		/**
+		 * @private
+		 */
 		initialize: function() {
 			var me = this;
+
 			// Before init plugin notification
-			Chart.plugins.notify('beforeInit', [me]);
+			plugins.notify(me, 'beforeInit');
+
+			helpers.retinaScale(me);
 
 			me.bindEvents();
 
-			// Make sure controllers are built first so that each dataset is bound to an axis before the scales
-			// are built
+			if (me.options.responsive) {
+				// Initial resize before chart draws (must be silent to preserve initial animations).
+				me.resize(true);
+			}
+
+			// Make sure scales have IDs and are built before we build any controllers.
 			me.ensureScalesHaveIDs();
-			me.buildOrUpdateControllers();
 			me.buildScales();
-			me.updateLayout();
-			me.resetElements();
 			me.initToolTip();
-			me.update();
 
 			// After init plugin notification
-			Chart.plugins.notify('afterInit', [me]);
+			plugins.notify(me, 'afterInit');
 
 			return me;
 		},
 
 		clear: function() {
-			helpers.clear(this.chart);
+			helpers.clear(this);
 			return this;
 		},
 
 		stop: function() {
-			// Stops any current animation loop occuring
+			// Stops any current animation loop occurring
 			Chart.animationService.cancelAnimation(this);
 			return this;
 		},
 
 		resize: function(silent) {
 			var me = this;
-			var chart = me.chart;
-			var canvas = chart.canvas;
-			var newWidth = helpers.getMaximumWidth(canvas);
-			var aspectRatio = chart.aspectRatio;
-			var newHeight = (me.options.maintainAspectRatio && isNaN(aspectRatio) === false && isFinite(aspectRatio) && aspectRatio !== 0) ? newWidth / aspectRatio : helpers.getMaximumHeight(canvas);
+			var options = me.options;
+			var canvas = me.canvas;
+			var aspectRatio = (options.maintainAspectRatio && me.aspectRatio) || null;
 
-			var sizeChanged = chart.width !== newWidth || chart.height !== newHeight;
+			// the canvas render width and height will be casted to integers so make sure that
+			// the canvas display style uses the same integer values to avoid blurring effect.
+			var newWidth = Math.floor(helpers.getMaximumWidth(canvas));
+			var newHeight = Math.floor(aspectRatio? newWidth / aspectRatio : helpers.getMaximumHeight(canvas));
 
-			if (!sizeChanged) {
-				return me;
+			if (me.width === newWidth && me.height === newHeight) {
+				return;
 			}
 
-			canvas.width = chart.width = newWidth;
-			canvas.height = chart.height = newHeight;
+			canvas.width = me.width = newWidth;
+			canvas.height = me.height = newHeight;
+			canvas.style.width = newWidth + 'px';
+			canvas.style.height = newHeight + 'px';
 
-			helpers.retinaScale(chart);
-
-			// Notify any plugins about the resize
-			var newSize = {width: newWidth, height: newHeight};
-			Chart.plugins.notify('resize', [me, newSize]);
-
-			// Notify of resize
-			if (me.options.onResize) {
-				me.options.onResize(me, newSize);
-			}
+			helpers.retinaScale(me);
 
 			if (!silent) {
+				// Notify any plugins about the resize
+				var newSize = {width: newWidth, height: newHeight};
+				plugins.notify(me, 'resize', [newSize]);
+
+				// Notify of resize
+				if (me.options.onResize) {
+					me.options.onResize(me, newSize);
+				}
+
 				me.stop();
 				me.update(me.options.responsiveAnimationDuration);
 			}
-
-			return me;
 		},
 
 		ensureScalesHaveIDs: function() {
@@ -2263,16 +2220,21 @@ module.exports = function(Chart) {
 			if (options.scales) {
 				items = items.concat(
 					(options.scales.xAxes || []).map(function(xAxisOptions) {
-						return {options: xAxisOptions, dtype: 'category'};
+						return {options: xAxisOptions, dtype: 'category', dposition: 'bottom'};
 					}),
 					(options.scales.yAxes || []).map(function(yAxisOptions) {
-						return {options: yAxisOptions, dtype: 'linear'};
+						return {options: yAxisOptions, dtype: 'linear', dposition: 'left'};
 					})
 				);
 			}
 
 			if (options.scale) {
-				items.push({options: options.scale, dtype: 'radialLinear', isDefault: true});
+				items.push({
+					options: options.scale,
+					dtype: 'radialLinear',
+					isDefault: true,
+					dposition: 'chartArea'
+				});
 			}
 
 			helpers.each(items, function(item) {
@@ -2283,10 +2245,14 @@ module.exports = function(Chart) {
 					return;
 				}
 
+				if (positionIsHorizontal(scaleOptions.position) !== positionIsHorizontal(item.dposition)) {
+					scaleOptions.position = item.dposition;
+				}
+
 				var scale = new scaleClass({
 					id: scaleOptions.id,
 					options: scaleOptions,
-					ctx: me.chart.ctx,
+					ctx: me.ctx,
 					chart: me
 				});
 
@@ -2301,10 +2267,6 @@ module.exports = function(Chart) {
 			});
 
 			Chart.scaleService.addScalesToLayout(this);
-		},
-
-		updateLayout: function() {
-			Chart.layoutService.update(this, this.chart.width, this.chart.height);
 		},
 
 		buildOrUpdateControllers: function() {
@@ -2323,7 +2285,12 @@ module.exports = function(Chart) {
 				if (meta.controller) {
 					meta.controller.updateIndex(datasetIndex);
 				} else {
-					meta.controller = new Chart.controllers[meta.type](me, datasetIndex);
+					var ControllerClass = Chart.controllers[meta.type];
+					if (ControllerClass === undefined) {
+						throw new Error('"' + meta.type + '" is not a chart type.');
+					}
+
+					meta.controller = new ControllerClass(me, datasetIndex);
 					newControllers.push(meta.controller);
 				}
 			}, me);
@@ -2340,6 +2307,10 @@ module.exports = function(Chart) {
 			return newControllers;
 		},
 
+		/**
+		 * Reset the elements of all datasets
+		 * @private
+		 */
 		resetElements: function() {
 			var me = this;
 			helpers.each(me.data.datasets, function(dataset, datasetIndex) {
@@ -2347,9 +2318,22 @@ module.exports = function(Chart) {
 			}, me);
 		},
 
+		/**
+		* Resets the chart back to it's state before the initial animation
+		*/
+		reset: function() {
+			this.resetElements();
+			this.tooltip.initialize();
+		},
+
 		update: function(animationDuration, lazy) {
 			var me = this;
-			Chart.plugins.notify('beforeUpdate', [me]);
+
+			updateConfig(me);
+
+			if (plugins.notify(me, 'beforeUpdate') === false) {
+				return;
+			}
 
 			// In case the entire data object changed
 			me.tooltip._data = me.data;
@@ -2362,10 +2346,7 @@ module.exports = function(Chart) {
 				me.getDatasetMeta(datasetIndex).controller.buildOrUpdateElements();
 			}, me);
 
-			Chart.layoutService.update(me, me.chart.width, me.chart.height);
-
-			// Apply changes to the dataets that require the scales to have been calculated i.e BorderColor chages
-			Chart.plugins.notify('afterScaleUpdate', [me]);
+			me.updateLayout();
 
 			// Can only reset the new controllers after the scales have been updated
 			helpers.each(newControllers, function(controller) {
@@ -2375,239 +2356,242 @@ module.exports = function(Chart) {
 			me.updateDatasets();
 
 			// Do this before render so that any plugins that need final scale updates can use it
-			Chart.plugins.notify('afterUpdate', [me]);
+			plugins.notify(me, 'afterUpdate');
 
-			me.render(animationDuration, lazy);
+			if (me._bufferedRender) {
+				me._bufferedRequest = {
+					lazy: lazy,
+					duration: animationDuration
+				};
+			} else {
+				me.render(animationDuration, lazy);
+			}
 		},
 
 		/**
-		 * @method beforeDatasetsUpdate
-		 * @description Called before all datasets are updated. If a plugin returns false,
-		 * the datasets update will be cancelled until another chart update is triggered.
-		 * @param {Object} instance the chart instance being updated.
-		 * @returns {Boolean} false to cancel the datasets update.
-		 * @memberof Chart.PluginBase
-		 * @since version 2.1.5
-		 * @instance
+		 * Updates the chart layout unless a plugin returns `false` to the `beforeLayout`
+		 * hook, in which case, plugins will not be called on `afterLayout`.
+		 * @private
 		 */
+		updateLayout: function() {
+			var me = this;
+
+			if (plugins.notify(me, 'beforeLayout') === false) {
+				return;
+			}
+
+			Chart.layoutService.update(this, this.width, this.height);
+
+			/**
+			 * Provided for backward compatibility, use `afterLayout` instead.
+			 * @method IPlugin#afterScaleUpdate
+			 * @deprecated since version 2.5.0
+			 * @todo remove at version 3
+			 * @private
+			 */
+			plugins.notify(me, 'afterScaleUpdate');
+			plugins.notify(me, 'afterLayout');
+		},
 
 		/**
-		 * @method afterDatasetsUpdate
-		 * @description Called after all datasets have been updated. Note that this
-		 * extension will not be called if the datasets update has been cancelled.
-		 * @param {Object} instance the chart instance being updated.
-		 * @memberof Chart.PluginBase
-		 * @since version 2.1.5
-		 * @instance
-		 */
-
-		/**
-		 * Updates all datasets unless a plugin returns false to the beforeDatasetsUpdate
-		 * extension, in which case no datasets will be updated and the afterDatasetsUpdate
-		 * notification will be skipped.
-		 * @protected
-		 * @instance
+		 * Updates all datasets unless a plugin returns `false` to the `beforeDatasetsUpdate`
+		 * hook, in which case, plugins will not be called on `afterDatasetsUpdate`.
+		 * @private
 		 */
 		updateDatasets: function() {
 			var me = this;
-			var i, ilen;
 
-			if (Chart.plugins.notify('beforeDatasetsUpdate', [me])) {
-				for (i = 0, ilen = me.data.datasets.length; i < ilen; ++i) {
-					me.getDatasetMeta(i).controller.update();
-				}
-
-				Chart.plugins.notify('afterDatasetsUpdate', [me]);
+			if (plugins.notify(me, 'beforeDatasetsUpdate') === false) {
+				return;
 			}
+
+			for (var i = 0, ilen = me.data.datasets.length; i < ilen; ++i) {
+				me.updateDataset(i);
+			}
+
+			plugins.notify(me, 'afterDatasetsUpdate');
+		},
+
+		/**
+		 * Updates dataset at index unless a plugin returns `false` to the `beforeDatasetUpdate`
+		 * hook, in which case, plugins will not be called on `afterDatasetUpdate`.
+		 * @private
+		 */
+		updateDataset: function(index) {
+			var me = this;
+			var meta = me.getDatasetMeta(index);
+			var args = {
+				meta: meta,
+				index: index
+			};
+
+			if (plugins.notify(me, 'beforeDatasetUpdate', [args]) === false) {
+				return;
+			}
+
+			meta.controller.update();
+
+			plugins.notify(me, 'afterDatasetUpdate', [args]);
 		},
 
 		render: function(duration, lazy) {
 			var me = this;
-			Chart.plugins.notify('beforeRender', [me]);
+
+			if (plugins.notify(me, 'beforeRender') === false) {
+				return;
+			}
 
 			var animationOptions = me.options.animation;
+			var onComplete = function(animation) {
+				plugins.notify(me, 'afterRender');
+				helpers.callback(animationOptions && animationOptions.onComplete, [animation], me);
+			};
+
 			if (animationOptions && ((typeof duration !== 'undefined' && duration !== 0) || (typeof duration === 'undefined' && animationOptions.duration !== 0))) {
-				var animation = new Chart.Animation();
-				animation.numSteps = (duration || animationOptions.duration) / 16.66; // 60 fps
-				animation.easing = animationOptions.easing;
+				var animation = new Chart.Animation({
+					numSteps: (duration || animationOptions.duration) / 16.66, // 60 fps
+					easing: animationOptions.easing,
 
-				// render function
-				animation.render = function(chartInstance, animationObject) {
-					var easingFunction = helpers.easingEffects[animationObject.easing];
-					var stepDecimal = animationObject.currentStep / animationObject.numSteps;
-					var easeDecimal = easingFunction(stepDecimal);
+					render: function(chart, animationObject) {
+						var easingFunction = helpers.easingEffects[animationObject.easing];
+						var currentStep = animationObject.currentStep;
+						var stepDecimal = currentStep / animationObject.numSteps;
 
-					chartInstance.draw(easeDecimal, stepDecimal, animationObject.currentStep);
-				};
+						chart.draw(easingFunction(stepDecimal), stepDecimal, currentStep);
+					},
 
-				// user events
-				animation.onAnimationProgress = animationOptions.onProgress;
-				animation.onAnimationComplete = animationOptions.onComplete;
+					onAnimationProgress: animationOptions.onProgress,
+					onAnimationComplete: onComplete
+				});
 
 				Chart.animationService.addAnimation(me, animation, duration, lazy);
 			} else {
 				me.draw();
-				if (animationOptions && animationOptions.onComplete && animationOptions.onComplete.call) {
-					animationOptions.onComplete.call(me);
-				}
+
+				// See https://github.com/chartjs/Chart.js/issues/3781
+				onComplete(new Chart.Animation({numSteps: 0, chart: me}));
 			}
+
 			return me;
 		},
 
-		draw: function(ease) {
+		draw: function(easingValue) {
 			var me = this;
-			var easingDecimal = ease || 1;
+
 			me.clear();
 
-			Chart.plugins.notify('beforeDraw', [me, easingDecimal]);
+			if (easingValue === undefined || easingValue === null) {
+				easingValue = 1;
+			}
+
+			me.transition(easingValue);
+
+			if (plugins.notify(me, 'beforeDraw', [easingValue]) === false) {
+				return;
+			}
 
 			// Draw all the scales
 			helpers.each(me.boxes, function(box) {
 				box.draw(me.chartArea);
 			}, me);
+
 			if (me.scale) {
 				me.scale.draw();
 			}
 
-			Chart.plugins.notify('beforeDatasetsDraw', [me, easingDecimal]);
-
-			// Draw each dataset via its respective controller (reversed to support proper line stacking)
-			helpers.each(me.data.datasets, function(dataset, datasetIndex) {
-				if (me.isDatasetVisible(datasetIndex)) {
-					me.getDatasetMeta(datasetIndex).controller.draw(ease);
-				}
-			}, me, true);
-
-			Chart.plugins.notify('afterDatasetsDraw', [me, easingDecimal]);
+			me.drawDatasets(easingValue);
 
 			// Finally draw the tooltip
-			me.tooltip.transition(easingDecimal).draw();
+			me.tooltip.draw();
 
-			Chart.plugins.notify('afterDraw', [me, easingDecimal]);
+			plugins.notify(me, 'afterDraw', [easingValue]);
+		},
+
+		/**
+		 * @private
+		 */
+		transition: function(easingValue) {
+			var me = this;
+
+			for (var i=0, ilen=(me.data.datasets || []).length; i<ilen; ++i) {
+				if (me.isDatasetVisible(i)) {
+					me.getDatasetMeta(i).controller.transition(easingValue);
+				}
+			}
+
+			me.tooltip.transition(easingValue);
+		},
+
+		/**
+		 * Draws all datasets unless a plugin returns `false` to the `beforeDatasetsDraw`
+		 * hook, in which case, plugins will not be called on `afterDatasetsDraw`.
+		 * @private
+		 */
+		drawDatasets: function(easingValue) {
+			var me = this;
+
+			if (plugins.notify(me, 'beforeDatasetsDraw', [easingValue]) === false) {
+				return;
+			}
+
+			// Draw datasets reversed to support proper line stacking
+			for (var i=(me.data.datasets || []).length - 1; i >= 0; --i) {
+				if (me.isDatasetVisible(i)) {
+					me.drawDataset(i, easingValue);
+				}
+			}
+
+			plugins.notify(me, 'afterDatasetsDraw', [easingValue]);
+		},
+
+		/**
+		 * Draws dataset at index unless a plugin returns `false` to the `beforeDatasetDraw`
+		 * hook, in which case, plugins will not be called on `afterDatasetDraw`.
+		 * @private
+		 */
+		drawDataset: function(index, easingValue) {
+			var me = this;
+			var meta = me.getDatasetMeta(index);
+			var args = {
+				meta: meta,
+				index: index,
+				easingValue: easingValue
+			};
+
+			if (plugins.notify(me, 'beforeDatasetDraw', [args]) === false) {
+				return;
+			}
+
+			meta.controller.draw(easingValue);
+
+			plugins.notify(me, 'afterDatasetDraw', [args]);
 		},
 
 		// Get the single element that was clicked on
 		// @return : An object containing the dataset index and element index of the matching element. Also contains the rectangle that was draw
 		getElementAtEvent: function(e) {
-			var me = this;
-			var eventPosition = helpers.getRelativePosition(e, me.chart);
-			var elementsArray = [];
-
-			helpers.each(me.data.datasets, function(dataset, datasetIndex) {
-				if (me.isDatasetVisible(datasetIndex)) {
-					var meta = me.getDatasetMeta(datasetIndex);
-					helpers.each(meta.data, function(element) {
-						if (element.inRange(eventPosition.x, eventPosition.y)) {
-							elementsArray.push(element);
-							return elementsArray;
-						}
-					});
-				}
-			});
-
-			return elementsArray.slice(0, 1);
+			return Chart.Interaction.modes.single(this, e);
 		},
 
 		getElementsAtEvent: function(e) {
-			var me = this;
-			var eventPosition = helpers.getRelativePosition(e, me.chart);
-			var elementsArray = [];
-
-			var found = function() {
-				if (me.data.datasets) {
-					for (var i = 0; i < me.data.datasets.length; i++) {
-						var meta = me.getDatasetMeta(i);
-						if (me.isDatasetVisible(i)) {
-							for (var j = 0; j < meta.data.length; j++) {
-								if (meta.data[j].inRange(eventPosition.x, eventPosition.y)) {
-									return meta.data[j];
-								}
-							}
-						}
-					}
-				}
-			}.call(me);
-
-			if (!found) {
-				return elementsArray;
-			}
-
-			helpers.each(me.data.datasets, function(dataset, datasetIndex) {
-				if (me.isDatasetVisible(datasetIndex)) {
-					var meta = me.getDatasetMeta(datasetIndex),
-						element = meta.data[found._index];
-					if (element && !element._view.skip) {
-						elementsArray.push(element);
-					}
-				}
-			}, me);
-
-			return elementsArray;
+			return Chart.Interaction.modes.label(this, e, {intersect: true});
 		},
 
 		getElementsAtXAxis: function(e) {
-			var me = this;
-			var eventPosition = helpers.getRelativePosition(e, me.chart);
-			var elementsArray = [];
-
-			var found = function() {
-				if (me.data.datasets) {
-					for (var i = 0; i < me.data.datasets.length; i++) {
-						var meta = me.getDatasetMeta(i);
-						if (me.isDatasetVisible(i)) {
-							for (var j = 0; j < meta.data.length; j++) {
-								if (meta.data[j].inLabelRange(eventPosition.x, eventPosition.y)) {
-									return meta.data[j];
-								}
-							}
-						}
-					}
-				}
-			}.call(me);
-
-			if (!found) {
-				return elementsArray;
-			}
-
-			helpers.each(me.data.datasets, function(dataset, datasetIndex) {
-				if (me.isDatasetVisible(datasetIndex)) {
-					var meta = me.getDatasetMeta(datasetIndex);
-					var index = helpers.findIndex(meta.data, function(it) {
-						return found._model.x === it._model.x;
-					});
-					if (index !== -1 && !meta.data[index]._view.skip) {
-						elementsArray.push(meta.data[index]);
-					}
-				}
-			}, me);
-
-			return elementsArray;
+			return Chart.Interaction.modes['x-axis'](this, e, {intersect: true});
 		},
 
-		getElementsAtEventForMode: function(e, mode) {
-			var me = this;
-			switch (mode) {
-			case 'single':
-				return me.getElementAtEvent(e);
-			case 'label':
-				return me.getElementsAtEvent(e);
-			case 'dataset':
-				return me.getDatasetAtEvent(e);
-			case 'x-axis':
-				return me.getElementsAtXAxis(e);
-			default:
-				return e;
+		getElementsAtEventForMode: function(e, mode, options) {
+			var method = Chart.Interaction.modes[mode];
+			if (typeof method === 'function') {
+				return method(this, e, options);
 			}
+
+			return [];
 		},
 
 		getDatasetAtEvent: function(e) {
-			var elementsArray = this.getElementAtEvent(e);
-
-			if (elementsArray.length > 0) {
-				elementsArray = this.getDatasetMeta(elementsArray[0]._datasetIndex).data;
-			}
-
-			return elementsArray;
+			return Chart.Interaction.modes.dataset(this, e, {intersect: true});
 		},
 
 		getDatasetMeta: function(datasetIndex) {
@@ -2657,68 +2641,96 @@ module.exports = function(Chart) {
 
 		destroy: function() {
 			var me = this;
+			var canvas = me.canvas;
+			var meta, i, ilen;
+
 			me.stop();
-			me.clear();
-			helpers.unbindEvents(me, me.events);
-			helpers.removeResizeListener(me.chart.canvas.parentNode);
 
-			// Reset canvas height/width attributes
-			var canvas = me.chart.canvas;
-			canvas.width = me.chart.width;
-			canvas.height = me.chart.height;
-
-			// if we scaled the canvas in response to a devicePixelRatio !== 1, we need to undo that transform here
-			if (me.chart.originalDevicePixelRatio !== undefined) {
-				me.chart.ctx.scale(1 / me.chart.originalDevicePixelRatio, 1 / me.chart.originalDevicePixelRatio);
+			// dataset controllers need to cleanup associated data
+			for (i = 0, ilen = me.data.datasets.length; i < ilen; ++i) {
+				meta = me.getDatasetMeta(i);
+				if (meta.controller) {
+					meta.controller.destroy();
+					meta.controller = null;
+				}
 			}
 
-			// Reset to the old style since it may have been changed by the device pixel ratio changes
-			canvas.style.width = me.chart.originalCanvasStyleWidth;
-			canvas.style.height = me.chart.originalCanvasStyleHeight;
+			if (canvas) {
+				me.unbindEvents();
+				helpers.clear(me);
+				platform.releaseContext(me.ctx);
+				me.canvas = null;
+				me.ctx = null;
+			}
 
-			Chart.plugins.notify('destroy', [me]);
+			plugins.notify(me, 'destroy');
 
 			delete Chart.instances[me.id];
 		},
 
 		toBase64Image: function() {
-			return this.chart.canvas.toDataURL.apply(this.chart.canvas, arguments);
+			return this.canvas.toDataURL.apply(this.canvas, arguments);
 		},
 
 		initToolTip: function() {
 			var me = this;
 			me.tooltip = new Chart.Tooltip({
-				_chart: me.chart,
-				_chartInstance: me,
+				_chart: me,
+				_chartInstance: me,            // deprecated, backward compatibility
 				_data: me.data,
 				_options: me.options.tooltips
 			}, me);
+			me.tooltip.initialize();
 		},
 
+		/**
+		 * @private
+		 */
 		bindEvents: function() {
 			var me = this;
-			helpers.bindEvents(me, me.options.events, function(evt) {
-				me.eventHandler(evt);
+			var listeners = me._listeners = {};
+			var listener = function() {
+				me.eventHandler.apply(me, arguments);
+			};
+
+			helpers.each(me.options.events, function(type) {
+				platform.addEventListener(me, type, listener);
+				listeners[type] = listener;
+			});
+
+			// Responsiveness is currently based on the use of an iframe, however this method causes
+			// performance issues and could be troublesome when used with ad blockers. So make sure
+			// that the user is still able to create a chart without iframe when responsive is false.
+			// See https://github.com/chartjs/Chart.js/issues/2210
+			if (me.options.responsive) {
+				listener = function() {
+					me.resize();
+				};
+
+				platform.addEventListener(me, 'resize', listener);
+				listeners.resize = listener;
+			}
+		},
+
+		/**
+		 * @private
+		 */
+		unbindEvents: function() {
+			var me = this;
+			var listeners = me._listeners;
+			if (!listeners) {
+				return;
+			}
+
+			delete me._listeners;
+			helpers.each(listeners, function(listener, type) {
+				platform.removeEventListener(me, type, listener);
 			});
 		},
 
 		updateHoverStyle: function(elements, mode, enabled) {
 			var method = enabled? 'setHoverStyle' : 'removeHoverStyle';
 			var element, i, ilen;
-
-			switch (mode) {
-			case 'single':
-				elements = [elements[0]];
-				break;
-			case 'label':
-			case 'dataset':
-			case 'x-axis':
-				// elements = elements;
-				break;
-			default:
-				// unsupported mode
-				return;
-			}
 
 			for (i=0, ilen=elements.length; i<ilen; ++i) {
 				element = elements[i];
@@ -2728,37 +2740,76 @@ module.exports = function(Chart) {
 			}
 		},
 
+		/**
+		 * @private
+		 */
 		eventHandler: function(e) {
 			var me = this;
 			var tooltip = me.tooltip;
+
+			if (plugins.notify(me, 'beforeEvent', [e]) === false) {
+				return;
+			}
+
+			// Buffer any update calls so that renders do not occur
+			me._bufferedRender = true;
+			me._bufferedRequest = null;
+
+			var changed = me.handleEvent(e);
+			changed |= tooltip && tooltip.handleEvent(e);
+
+			plugins.notify(me, 'afterEvent', [e]);
+
+			var bufferedRequest = me._bufferedRequest;
+			if (bufferedRequest) {
+				// If we have an update that was triggered, we need to do a normal render
+				me.render(bufferedRequest.duration, bufferedRequest.lazy);
+			} else if (changed && !me.animating) {
+				// If entering, leaving, or changing elements, animate the change via pivot
+				me.stop();
+
+				// We only need to render at this point. Updating will cause scales to be
+				// recomputed generating flicker & using more memory than necessary.
+				me.render(me.options.hover.animationDuration, true);
+			}
+
+			me._bufferedRender = false;
+			me._bufferedRequest = null;
+
+			return me;
+		},
+
+		/**
+		 * Handle an event
+		 * @private
+		 * @param {IEvent} event the event to handle
+		 * @return {Boolean} true if the chart needs to re-render
+		 */
+		handleEvent: function(e) {
+			var me = this;
 			var options = me.options || {};
 			var hoverOptions = options.hover;
-			var tooltipsOptions = options.tooltips;
+			var changed = false;
 
 			me.lastActive = me.lastActive || [];
-			me.lastTooltipActive = me.lastTooltipActive || [];
 
 			// Find Active Elements for hover and tooltips
 			if (e.type === 'mouseout') {
 				me.active = [];
-				me.tooltipActive = [];
 			} else {
-				me.active = me.getElementsAtEventForMode(e, hoverOptions.mode);
-				me.tooltipActive = me.getElementsAtEventForMode(e, tooltipsOptions.mode);
+				me.active = me.getElementsAtEventForMode(e, hoverOptions.mode, hoverOptions);
 			}
 
 			// On Hover hook
 			if (hoverOptions.onHover) {
-				hoverOptions.onHover.call(me, me.active);
-			}
-
-			if (me.legend && me.legend.handleEvent) {
-				me.legend.handleEvent(e);
+				// Need to call with native event here to not break backwards compatibility
+				hoverOptions.onHover.call(me, e.native, me.active);
 			}
 
 			if (e.type === 'mouseup' || e.type === 'click') {
 				if (options.onClick) {
-					options.onClick.call(me, e, me.active);
+					// Use e.native here for backwards compatibility
+					options.onClick.call(me, e.native, me.active);
 				}
 			}
 
@@ -2772,39 +2823,23 @@ module.exports = function(Chart) {
 				me.updateHoverStyle(me.active, hoverOptions.mode, true);
 			}
 
-			// Built in Tooltips
-			if (tooltipsOptions.enabled || tooltipsOptions.custom) {
-				tooltip.initialize();
-				tooltip._active = me.tooltipActive;
-				tooltip.update(true);
-			}
-
-			// Hover animations
-			tooltip.pivot();
-
-			if (!me.animating) {
-				// If entering, leaving, or changing elements, animate the change via pivot
-				if (!helpers.arrayEquals(me.active, me.lastActive) ||
-					!helpers.arrayEquals(me.tooltipActive, me.lastTooltipActive)) {
-
-					me.stop();
-
-					if (tooltipsOptions.enabled || tooltipsOptions.custom) {
-						tooltip.update(true);
-					}
-
-					// We only need to render at this point. Updating will cause scales to be
-					// recomputed generating flicker & using more memory than necessary.
-					me.render(hoverOptions.animationDuration, true);
-				}
-			}
+			changed = !helpers.arrayEquals(me.active, me.lastActive);
 
 			// Remember Last Actives
 			me.lastActive = me.active;
-			me.lastTooltipActive = me.tooltipActive;
-			return me;
+
+			return changed;
 		}
 	});
+
+	/**
+	 * Provided for backward compatibility, use Chart instead.
+	 * @class Chart.Controller
+	 * @deprecated since version 2.6.0
+	 * @todo remove at version 3
+	 * @private
+	 */
+	Chart.Controller = Chart;
 };
 
 },{}],17:[function(require,module,exports){
@@ -2813,7 +2848,77 @@ module.exports = function(Chart) {
 module.exports = function(Chart) {
 
 	var helpers = Chart.helpers;
-	var noop = helpers.noop;
+
+	var arrayEvents = ['push', 'pop', 'shift', 'splice', 'unshift'];
+
+	/**
+	 * Hooks the array methods that add or remove values ('push', pop', 'shift', 'splice',
+	 * 'unshift') and notify the listener AFTER the array has been altered. Listeners are
+	 * called on the 'onData*' callbacks (e.g. onDataPush, etc.) with same arguments.
+	 */
+	function listenArrayEvents(array, listener) {
+		if (array._chartjs) {
+			array._chartjs.listeners.push(listener);
+			return;
+		}
+
+		Object.defineProperty(array, '_chartjs', {
+			configurable: true,
+			enumerable: false,
+			value: {
+				listeners: [listener]
+			}
+		});
+
+		arrayEvents.forEach(function(key) {
+			var method = 'onData' + key.charAt(0).toUpperCase() + key.slice(1);
+			var base = array[key];
+
+			Object.defineProperty(array, key, {
+				configurable: true,
+				enumerable: false,
+				value: function() {
+					var args = Array.prototype.slice.call(arguments);
+					var res = base.apply(this, args);
+
+					helpers.each(array._chartjs.listeners, function(object) {
+						if (typeof object[method] === 'function') {
+							object[method].apply(object, args);
+						}
+					});
+
+					return res;
+				}
+			});
+		});
+	}
+
+	/**
+	 * Removes the given array event listener and cleanup extra attached properties (such as
+	 * the _chartjs stub and overridden methods) if array doesn't have any more listeners.
+	 */
+	function unlistenArrayEvents(array, listener) {
+		var stub = array._chartjs;
+		if (!stub) {
+			return;
+		}
+
+		var listeners = stub.listeners;
+		var index = listeners.indexOf(listener);
+		if (index !== -1) {
+			listeners.splice(index, 1);
+		}
+
+		if (listeners.length > 0) {
+			return;
+		}
+
+		arrayEvents.forEach(function(key) {
+			delete array[key];
+		});
+
+		delete array._chartjs;
+	}
 
 	// Base class for all dataset controllers (line, bar, etc)
 	Chart.DatasetController = function(chart, datasetIndex) {
@@ -2875,11 +2980,20 @@ module.exports = function(Chart) {
 			this.update(true);
 		},
 
+		/**
+		 * @private
+		 */
+		destroy: function() {
+			if (this._data) {
+				unlistenArrayEvents(this._data, this);
+			}
+		},
+
 		createMetaDataset: function() {
 			var me = this;
 			var type = me.datasetElementType;
 			return type && new type({
-				_chart: me.chart.chart,
+				_chart: me.chart,
 				_datasetIndex: me.index
 			});
 		},
@@ -2888,7 +3002,7 @@ module.exports = function(Chart) {
 			var me = this;
 			var type = me.dataElementType;
 			return type && new type({
-				_chart: me.chart.chart,
+				_chart: me.chart,
 				_datasetIndex: me.index,
 				_index: index
 			});
@@ -2902,45 +3016,71 @@ module.exports = function(Chart) {
 			var i, ilen;
 
 			for (i=0, ilen=data.length; i<ilen; ++i) {
-				metaData[i] = metaData[i] || me.createMetaData(meta, i);
+				metaData[i] = metaData[i] || me.createMetaData(i);
 			}
 
 			meta.dataset = meta.dataset || me.createMetaDataset();
 		},
 
 		addElementAndReset: function(index) {
-			var me = this;
-			var element = me.createMetaData(index);
-			me.getMeta().data.splice(index, 0, element);
-			me.updateElement(element, index, true);
+			var element = this.createMetaData(index);
+			this.getMeta().data.splice(index, 0, element);
+			this.updateElement(element, index, true);
 		},
 
 		buildOrUpdateElements: function() {
-			// Handle the number of data points changing
-			var meta = this.getMeta(),
-				md = meta.data,
-				numData = this.getDataset().data.length,
-				numMetaData = md.length;
+			var me = this;
+			var dataset = me.getDataset();
+			var data = dataset.data || (dataset.data = []);
 
-			// Make sure that we handle number of datapoints changing
-			if (numData < numMetaData) {
-				// Remove excess bars for data points that have been removed
-				md.splice(numData, numMetaData - numData);
-			} else if (numData > numMetaData) {
-				// Add new elements
-				for (var index = numMetaData; index < numData; ++index) {
-					this.addElementAndReset(index);
+			// In order to correctly handle data addition/deletion animation (an thus simulate
+			// real-time charts), we need to monitor these data modifications and synchronize
+			// the internal meta data accordingly.
+			if (me._data !== data) {
+				if (me._data) {
+					// This case happens when the user replaced the data array instance.
+					unlistenArrayEvents(me._data, me);
 				}
+
+				listenArrayEvents(data, me);
+				me._data = data;
+			}
+
+			// Re-sync meta data in case the user replaced the data array or if we missed
+			// any updates and so make sure that we handle number of datapoints changing.
+			me.resyncElements();
+		},
+
+		update: helpers.noop,
+
+		transition: function(easingValue) {
+			var meta = this.getMeta();
+			var elements = meta.data || [];
+			var ilen = elements.length;
+			var i = 0;
+
+			for (; i<ilen; ++i) {
+				elements[i].transition(easingValue);
+			}
+
+			if (meta.dataset) {
+				meta.dataset.transition(easingValue);
 			}
 		},
 
-		update: noop,
+		draw: function() {
+			var meta = this.getMeta();
+			var elements = meta.data || [];
+			var ilen = elements.length;
+			var i = 0;
 
-		draw: function(ease) {
-			var easingDecimal = ease || 1;
-			helpers.each(this.getMeta().data, function(element) {
-				element.transition(easingDecimal).draw();
-			});
+			if (meta.dataset) {
+				meta.dataset.draw();
+			}
+
+			for (; i<ilen; ++i) {
+				elements[i].draw();
+			}
 		},
 
 		removeHoverStyle: function(element, elementOpts) {
@@ -2966,8 +3106,69 @@ module.exports = function(Chart) {
 			model.backgroundColor = custom.hoverBackgroundColor ? custom.hoverBackgroundColor : valueOrDefault(dataset.hoverBackgroundColor, index, getHoverColor(model.backgroundColor));
 			model.borderColor = custom.hoverBorderColor ? custom.hoverBorderColor : valueOrDefault(dataset.hoverBorderColor, index, getHoverColor(model.borderColor));
 			model.borderWidth = custom.hoverBorderWidth ? custom.hoverBorderWidth : valueOrDefault(dataset.hoverBorderWidth, index, model.borderWidth);
-		}
+		},
 
+		/**
+		 * @private
+		 */
+		resyncElements: function() {
+			var me = this;
+			var meta = me.getMeta();
+			var data = me.getDataset().data;
+			var numMeta = meta.data.length;
+			var numData = data.length;
+
+			if (numData < numMeta) {
+				meta.data.splice(numData, numMeta - numData);
+			} else if (numData > numMeta) {
+				me.insertElements(numMeta, numData - numMeta);
+			}
+		},
+
+		/**
+		 * @private
+		 */
+		insertElements: function(start, count) {
+			for (var i=0; i<count; ++i) {
+				this.addElementAndReset(start + i);
+			}
+		},
+
+		/**
+		 * @private
+		 */
+		onDataPush: function() {
+			this.insertElements(this.getDataset().data.length-1, arguments.length);
+		},
+
+		/**
+		 * @private
+		 */
+		onDataPop: function() {
+			this.getMeta().data.pop();
+		},
+
+		/**
+		 * @private
+		 */
+		onDataShift: function() {
+			this.getMeta().data.shift();
+		},
+
+		/**
+		 * @private
+		 */
+		onDataSplice: function(start, count) {
+			this.getMeta().data.splice(start, count);
+			this.insertElements(start, arguments.length - 2);
+		},
+
+		/**
+		 * @private
+		 */
+		onDataUnshift: function() {
+			this.insertElements(0, arguments.length);
+		}
 	});
 
 	Chart.DatasetController.extend = helpers.inherits;
@@ -2976,9 +3177,60 @@ module.exports = function(Chart) {
 },{}],18:[function(require,module,exports){
 'use strict';
 
+var color = require('chartjs-color');
+
 module.exports = function(Chart) {
 
 	var helpers = Chart.helpers;
+
+	function interpolate(start, view, model, ease) {
+		var keys = Object.keys(model);
+		var i, ilen, key, actual, origin, target, type, c0, c1;
+
+		for (i=0, ilen=keys.length; i<ilen; ++i) {
+			key = keys[i];
+
+			target = model[key];
+
+			// if a value is added to the model after pivot() has been called, the view
+			// doesn't contain it, so let's initialize the view to the target value.
+			if (!view.hasOwnProperty(key)) {
+				view[key] = target;
+			}
+
+			actual = view[key];
+
+			if (actual === target || key[0] === '_') {
+				continue;
+			}
+
+			if (!start.hasOwnProperty(key)) {
+				start[key] = actual;
+			}
+
+			origin = start[key];
+
+			type = typeof(target);
+
+			if (type === typeof(origin)) {
+				if (type === 'string') {
+					c0 = color(origin);
+					if (c0.valid) {
+						c1 = color(target);
+						if (c1.valid) {
+							view[key] = c1.mix(c0, ease).rgbString();
+							continue;
+						}
+					}
+				} else if (type === 'number' && isFinite(origin) && isFinite(target)) {
+					view[key] = origin + (target - origin) * ease;
+					continue;
+				}
+			}
+
+			view[key] = target;
+		}
+	}
 
 	Chart.elements = {};
 
@@ -2998,59 +3250,32 @@ module.exports = function(Chart) {
 			if (!me._view) {
 				me._view = helpers.clone(me._model);
 			}
-			me._start = helpers.clone(me._view);
+			me._start = {};
 			return me;
 		},
 
 		transition: function(ease) {
 			var me = this;
-
-			if (!me._view) {
-				me._view = helpers.clone(me._model);
-			}
+			var model = me._model;
+			var start = me._start;
+			var view = me._view;
 
 			// No animation -> No Transition
-			if (ease === 1) {
-				me._view = me._model;
+			if (!model || ease === 1) {
+				me._view = model;
 				me._start = null;
 				return me;
 			}
 
-			if (!me._start) {
-				me.pivot();
+			if (!view) {
+				view = me._view = {};
 			}
 
-			helpers.each(me._model, function(value, key) {
+			if (!start) {
+				start = me._start = {};
+			}
 
-				if (key[0] === '_') {
-					// Only non-underscored properties
-				// Init if doesn't exist
-				} else if (!me._view.hasOwnProperty(key)) {
-					if (typeof value === 'number' && !isNaN(me._view[key])) {
-						me._view[key] = value * ease;
-					} else {
-						me._view[key] = value;
-					}
-				// No unnecessary computations
-				} else if (value === me._view[key]) {
-					// It's the same! Woohoo!
-				// Color transitions if possible
-				} else if (typeof value === 'string') {
-					try {
-						var color = helpers.color(me._model[key]).mix(helpers.color(me._start[key]), ease);
-						me._view[key] = color.rgbString();
-					} catch (err) {
-						me._view[key] = value;
-					}
-				// Number transitions
-				} else if (typeof value === 'number') {
-					var startVal = me._start[key] !== undefined && isNaN(me._start[key]) === false ? me._start[key] : 0;
-					me._view[key] = ((me._model[key] - startVal) * ease) + startVal;
-				// Everything else
-				} else {
-					me._view[key] = value;
-				}
-			}, me);
+			interpolate(start, view, model, ease);
 
 			return me;
 		},
@@ -3068,10 +3293,9 @@ module.exports = function(Chart) {
 	});
 
 	Chart.Element.extend = helpers.inherits;
-
 };
 
-},{}],19:[function(require,module,exports){
+},{"chartjs-color":44}],19:[function(require,module,exports){
 /* global window: false */
 /* global document: false */
 'use strict';
@@ -3132,37 +3356,23 @@ module.exports = function(Chart) {
 		var base = helpers.clone(_base);
 		helpers.each(Array.prototype.slice.call(arguments, 1), function(extension) {
 			helpers.each(extension, function(value, key) {
-				if (key === 'scales') {
-					// Scale config merging is complex. Add out own function here for that
-					base[key] = helpers.scaleMerge(base.hasOwnProperty(key) ? base[key] : {}, value);
+				var baseHasProperty = base.hasOwnProperty(key);
+				var baseVal = baseHasProperty ? base[key] : {};
 
+				if (key === 'scales') {
+					// Scale config merging is complex. Add our own function here for that
+					base[key] = helpers.scaleMerge(baseVal, value);
 				} else if (key === 'scale') {
 					// Used in polar area & radar charts since there is only one scale
-					base[key] = helpers.configMerge(base.hasOwnProperty(key) ? base[key] : {}, Chart.scaleService.getScaleDefaults(value.type), value);
-				} else if (base.hasOwnProperty(key) && helpers.isArray(base[key]) && helpers.isArray(value)) {
-					// In this case we have an array of objects replacing another array. Rather than doing a strict replace,
-					// merge. This allows easy scale option merging
-					var baseArray = base[key];
-
-					helpers.each(value, function(valueObj, index) {
-
-						if (index < baseArray.length) {
-							if (typeof baseArray[index] === 'object' && baseArray[index] !== null && typeof valueObj === 'object' && valueObj !== null) {
-								// Two objects are coming together. Do a merge of them.
-								baseArray[index] = helpers.configMerge(baseArray[index], valueObj);
-							} else {
-								// Just overwrite in this case since there is nothing to merge
-								baseArray[index] = valueObj;
-							}
-						} else {
-							baseArray.push(valueObj); // nothing to merge
-						}
-					});
-
-				} else if (base.hasOwnProperty(key) && typeof base[key] === 'object' && base[key] !== null && typeof value === 'object') {
+					base[key] = helpers.configMerge(baseVal, Chart.scaleService.getScaleDefaults(value.type), value);
+				} else if (baseHasProperty
+						&& typeof baseVal === 'object'
+						&& !helpers.isArray(baseVal)
+						&& baseVal !== null
+						&& typeof value === 'object'
+						&& !helpers.isArray(value)) {
 					// If we are overwriting an object with an object, do a merge of the properties.
-					base[key] = helpers.configMerge(base[key], value);
-
+					base[key] = helpers.configMerge(baseVal, value);
 				} else {
 					// can just overwrite the value in this case
 					base[key] = value;
@@ -3325,6 +3535,10 @@ module.exports = function(Chart) {
 	helpers.almostEquals = function(x, y, epsilon) {
 		return Math.abs(x - y) < epsilon;
 	};
+	helpers.almostWhole = function(x, epsilon) {
+		var rounded = Math.round(x);
+		return (((rounded - epsilon) < x) && ((rounded + epsilon) > x));
+	};
 	helpers.max = function(array) {
 		return array.reduce(function(max, value) {
 			if (!isNaN(value)) {
@@ -3381,6 +3595,9 @@ module.exports = function(Chart) {
 			angle: angle,
 			distance: radialDistanceFromCenter
 		};
+	};
+	helpers.distanceBetweenPoints = function(pt1, pt2) {
+		return Math.sqrt(Math.pow(pt2.x - pt1.x, 2) + Math.pow(pt2.y - pt1.y, 2));
 	};
 	helpers.aliasPixel = function(pixelWidth) {
 		return (pixelWidth % 2 === 0) ? 0 : 0.5;
@@ -3446,7 +3663,10 @@ module.exports = function(Chart) {
 			pointBefore = i > 0 ? pointsWithTangents[i - 1] : null;
 			pointAfter = i < pointsLen - 1 ? pointsWithTangents[i + 1] : null;
 			if (pointAfter && !pointAfter.model.skip) {
-				pointCurrent.deltaK = (pointAfter.model.y - pointCurrent.model.y) / (pointAfter.model.x - pointCurrent.model.x);
+				var slopeDeltaX = (pointAfter.model.x - pointCurrent.model.x);
+
+				// In the case of two points that appear at the same x pixel, slopeDeltaX is 0
+				pointCurrent.deltaK = slopeDeltaX !== 0 ? (pointAfter.model.y - pointCurrent.model.y) / slopeDeltaX : 0;
 			}
 
 			if (!pointBefore || pointBefore.model.skip) {
@@ -3747,6 +3967,11 @@ module.exports = function(Chart) {
 	};
 	// Request animation polyfill - http://www.paulirish.com/2011/requestanimationframe-for-smart-animating/
 	helpers.requestAnimFrame = (function() {
+		if (typeof window === 'undefined') {
+			return function(callback) {
+				callback();
+			};
+		}
 		return window.requestAnimationFrame ||
 			window.webkitRequestAnimationFrame ||
 			window.mozRequestAnimationFrame ||
@@ -3754,16 +3979,6 @@ module.exports = function(Chart) {
 			window.msRequestAnimationFrame ||
 			function(callback) {
 				return window.setTimeout(callback, 1000 / 60);
-			};
-	}());
-	helpers.cancelAnimFrame = (function() {
-		return window.cancelAnimationFrame ||
-			window.webkitCancelAnimationFrame ||
-			window.mozCancelAnimationFrame ||
-			window.oCancelAnimationFrame ||
-			window.msCancelAnimationFrame ||
-			function(callback) {
-				return window.clearTimeout(callback, 1000 / 60);
 			};
 	}());
 	// -- DOM methods
@@ -3821,23 +4036,6 @@ module.exports = function(Chart) {
 		} else {
 			node['on' + eventType] = helpers.noop;
 		}
-	};
-	helpers.bindEvents = function(chartInstance, arrayOfEvents, handler) {
-		// Create the events object if it's not already present
-		var events = chartInstance.events = chartInstance.events || {};
-
-		helpers.each(arrayOfEvents, function(eventName) {
-			events[eventName] = function() {
-				handler.apply(chartInstance, arguments);
-			};
-			helpers.addEvent(chartInstance.chart.canvas, eventName, events[eventName]);
-		});
-	};
-	helpers.unbindEvents = function(chartInstance, arrayOfEvents) {
-		var canvas = chartInstance.chart.canvas;
-		helpers.each(arrayOfEvents, function(handler, eventName) {
-			helpers.removeEvent(canvas, eventName, handler);
-		});
 	};
 
 	// Private helper function to convert max-width/max-height values that may be percentages into a number
@@ -3917,25 +4115,24 @@ module.exports = function(Chart) {
 			document.defaultView.getComputedStyle(el, null).getPropertyValue(property);
 	};
 	helpers.retinaScale = function(chart) {
-		var ctx = chart.ctx;
-		var canvas = chart.canvas;
-		var width = canvas.width;
-		var height = canvas.height;
 		var pixelRatio = chart.currentDevicePixelRatio = window.devicePixelRatio || 1;
-
-		if (pixelRatio !== 1) {
-			canvas.height = height * pixelRatio;
-			canvas.width = width * pixelRatio;
-			ctx.scale(pixelRatio, pixelRatio);
-
-			// Store the device pixel ratio so that we can go backwards in `destroy`.
-			// The devicePixelRatio changes with zoom, so there are no guarantees that it is the same
-			// when destroy is called
-			chart.originalDevicePixelRatio = chart.originalDevicePixelRatio || pixelRatio;
+		if (pixelRatio === 1) {
+			return;
 		}
 
-		canvas.style.width = width + 'px';
+		var canvas = chart.canvas;
+		var height = chart.height;
+		var width = chart.width;
+
+		canvas.height = height * pixelRatio;
+		canvas.width = width * pixelRatio;
+		chart.ctx.scale(pixelRatio, pixelRatio);
+
+		// If no style has been set on the canvas, the render size is used as display size,
+		// making the chart visually bigger, so let's enforce it to the "correct" values.
+		// See https://github.com/chartjs/Chart.js/issues/3575
 		canvas.style.height = height + 'px';
+		canvas.style.width = width + 'px';
 	};
 	// -- Canvas methods
 	helpers.clear = function(chart) {
@@ -4017,62 +4214,21 @@ module.exports = function(Chart) {
 		ctx.quadraticCurveTo(x, y, x + radius, y);
 		ctx.closePath();
 	};
-	helpers.color = function(c) {
-		if (!color) {
+
+	helpers.color = !color?
+		function(value) {
 			console.error('Color.js not found!');
-			return c;
-		}
-
-		/* global CanvasGradient */
-		if (c instanceof CanvasGradient) {
-			return color(Chart.defaults.global.defaultColor);
-		}
-
-		return color(c);
-	};
-	helpers.addResizeListener = function(node, callback) {
-		// Hide an iframe before the node
-		var hiddenIframe = document.createElement('iframe');
-		var hiddenIframeClass = 'chartjs-hidden-iframe';
-
-		if (hiddenIframe.classlist) {
-			// can use classlist
-			hiddenIframe.classlist.add(hiddenIframeClass);
-		} else {
-			hiddenIframe.setAttribute('class', hiddenIframeClass);
-		}
-
-		// Set the style
-		hiddenIframe.tabIndex = -1;
-		var style = hiddenIframe.style;
-		style.width = '100%';
-		style.display = 'block';
-		style.border = 0;
-		style.height = 0;
-		style.margin = 0;
-		style.position = 'absolute';
-		style.left = 0;
-		style.right = 0;
-		style.top = 0;
-		style.bottom = 0;
-
-		// Insert the iframe so that contentWindow is available
-		node.insertBefore(hiddenIframe, node.firstChild);
-
-		(hiddenIframe.contentWindow || hiddenIframe).onresize = function() {
-			if (callback) {
-				return callback();
+			return value;
+		} :
+		function(value) {
+			/* global CanvasGradient */
+			if (value instanceof CanvasGradient) {
+				value = Chart.defaults.global.defaultColor;
 			}
-		};
-	};
-	helpers.removeResizeListener = function(node) {
-		var hiddenIframe = node.querySelector('.chartjs-hidden-iframe');
 
-		// Remove the resize detect iframe
-		if (hiddenIframe) {
-			hiddenIframe.parentNode.removeChild(hiddenIframe);
-		}
-	};
+			return color(value);
+		};
+
 	helpers.isArray = Array.isArray?
 		function(obj) {
 			return Array.isArray(obj);
@@ -4104,9 +4260,9 @@ module.exports = function(Chart) {
 
 		return true;
 	};
-	helpers.callCallback = function(fn, args, _tArg) {
+	helpers.callback = function(fn, args, thisArg) {
 		if (fn && typeof fn.call === 'function') {
-			fn.apply(_tArg, args);
+			fn.apply(thisArg, args);
 		}
 	};
 	helpers.getHoverColor = function(colorValue) {
@@ -4115,71 +4271,343 @@ module.exports = function(Chart) {
 			colorValue :
 			helpers.color(colorValue).saturate(0.5).darken(0.1).rgbString();
 	};
+
+	/**
+	 * Provided for backward compatibility, use Chart.helpers#callback instead.
+	 * @function Chart.helpers#callCallback
+	 * @deprecated since version 2.6.0
+	 * @todo remove at version 3
+	 */
+	helpers.callCallback = helpers.callback;
 };
 
-},{"chartjs-color":39}],20:[function(require,module,exports){
+},{"chartjs-color":44}],20:[function(require,module,exports){
+'use strict';
+
+module.exports = function(Chart) {
+	var helpers = Chart.helpers;
+
+	/**
+	 * Helper function to get relative position for an event
+	 * @param {Event|IEvent} event - The event to get the position for
+	 * @param {Chart} chart - The chart
+	 * @returns {Point} the event position
+	 */
+	function getRelativePosition(e, chart) {
+		if (e.native) {
+			return {
+				x: e.x,
+				y: e.y
+			};
+		}
+
+		return helpers.getRelativePosition(e, chart);
+	}
+
+	/**
+	 * Helper function to traverse all of the visible elements in the chart
+	 * @param chart {chart} the chart
+	 * @param handler {Function} the callback to execute for each visible item
+	 */
+	function parseVisibleItems(chart, handler) {
+		var datasets = chart.data.datasets;
+		var meta, i, j, ilen, jlen;
+
+		for (i = 0, ilen = datasets.length; i < ilen; ++i) {
+			if (!chart.isDatasetVisible(i)) {
+				continue;
+			}
+
+			meta = chart.getDatasetMeta(i);
+			for (j = 0, jlen = meta.data.length; j < jlen; ++j) {
+				var element = meta.data[j];
+				if (!element._view.skip) {
+					handler(element);
+				}
+			}
+		}
+	}
+
+	/**
+	 * Helper function to get the items that intersect the event position
+	 * @param items {ChartElement[]} elements to filter
+	 * @param position {Point} the point to be nearest to
+	 * @return {ChartElement[]} the nearest items
+	 */
+	function getIntersectItems(chart, position) {
+		var elements = [];
+
+		parseVisibleItems(chart, function(element) {
+			if (element.inRange(position.x, position.y)) {
+				elements.push(element);
+			}
+		});
+
+		return elements;
+	}
+
+	/**
+	 * Helper function to get the items nearest to the event position considering all visible items in teh chart
+	 * @param chart {Chart} the chart to look at elements from
+	 * @param position {Point} the point to be nearest to
+	 * @param intersect {Boolean} if true, only consider items that intersect the position
+	 * @param distanceMetric {Function} Optional function to provide the distance between
+	 * @return {ChartElement[]} the nearest items
+	 */
+	function getNearestItems(chart, position, intersect, distanceMetric) {
+		var minDistance = Number.POSITIVE_INFINITY;
+		var nearestItems = [];
+
+		if (!distanceMetric) {
+			distanceMetric = helpers.distanceBetweenPoints;
+		}
+
+		parseVisibleItems(chart, function(element) {
+			if (intersect && !element.inRange(position.x, position.y)) {
+				return;
+			}
+
+			var center = element.getCenterPoint();
+			var distance = distanceMetric(position, center);
+
+			if (distance < minDistance) {
+				nearestItems = [element];
+				minDistance = distance;
+			} else if (distance === minDistance) {
+				// Can have multiple items at the same distance in which case we sort by size
+				nearestItems.push(element);
+			}
+		});
+
+		return nearestItems;
+	}
+
+	function indexMode(chart, e, options) {
+		var position = getRelativePosition(e, chart);
+		var distanceMetric = function(pt1, pt2) {
+			return Math.abs(pt1.x - pt2.x);
+		};
+		var items = options.intersect ? getIntersectItems(chart, position) : getNearestItems(chart, position, false, distanceMetric);
+		var elements = [];
+
+		if (!items.length) {
+			return [];
+		}
+
+		chart.data.datasets.forEach(function(dataset, datasetIndex) {
+			if (chart.isDatasetVisible(datasetIndex)) {
+				var meta = chart.getDatasetMeta(datasetIndex),
+					element = meta.data[items[0]._index];
+
+				// don't count items that are skipped (null data)
+				if (element && !element._view.skip) {
+					elements.push(element);
+				}
+			}
+		});
+
+		return elements;
+	}
+
+	/**
+	 * @interface IInteractionOptions
+	 */
+	/**
+	 * If true, only consider items that intersect the point
+	 * @name IInterfaceOptions#boolean
+	 * @type Boolean
+	 */
+
+	/**
+	 * Contains interaction related functions
+	 * @namespace Chart.Interaction
+	 */
+	Chart.Interaction = {
+		// Helper function for different modes
+		modes: {
+			single: function(chart, e) {
+				var position = getRelativePosition(e, chart);
+				var elements = [];
+
+				parseVisibleItems(chart, function(element) {
+					if (element.inRange(position.x, position.y)) {
+						elements.push(element);
+						return elements;
+					}
+				});
+
+				return elements.slice(0, 1);
+			},
+
+			/**
+			 * @function Chart.Interaction.modes.label
+			 * @deprecated since version 2.4.0
+	 		 * @todo remove at version 3
+			 * @private
+			 */
+			label: indexMode,
+
+			/**
+			 * Returns items at the same index. If the options.intersect parameter is true, we only return items if we intersect something
+			 * If the options.intersect mode is false, we find the nearest item and return the items at the same index as that item
+			 * @function Chart.Interaction.modes.index
+			 * @since v2.4.0
+			 * @param chart {chart} the chart we are returning items from
+			 * @param e {Event} the event we are find things at
+			 * @param options {IInteractionOptions} options to use during interaction
+			 * @return {Chart.Element[]} Array of elements that are under the point. If none are found, an empty array is returned
+			 */
+			index: indexMode,
+
+			/**
+			 * Returns items in the same dataset. If the options.intersect parameter is true, we only return items if we intersect something
+			 * If the options.intersect is false, we find the nearest item and return the items in that dataset
+			 * @function Chart.Interaction.modes.dataset
+			 * @param chart {chart} the chart we are returning items from
+			 * @param e {Event} the event we are find things at
+			 * @param options {IInteractionOptions} options to use during interaction
+			 * @return {Chart.Element[]} Array of elements that are under the point. If none are found, an empty array is returned
+			 */
+			dataset: function(chart, e, options) {
+				var position = getRelativePosition(e, chart);
+				var items = options.intersect ? getIntersectItems(chart, position) : getNearestItems(chart, position, false);
+
+				if (items.length > 0) {
+					items = chart.getDatasetMeta(items[0]._datasetIndex).data;
+				}
+
+				return items;
+			},
+
+			/**
+			 * @function Chart.Interaction.modes.x-axis
+			 * @deprecated since version 2.4.0. Use index mode and intersect == true
+			 * @todo remove at version 3
+			 * @private
+			 */
+			'x-axis': function(chart, e) {
+				return indexMode(chart, e, true);
+			},
+
+			/**
+			 * Point mode returns all elements that hit test based on the event position
+			 * of the event
+			 * @function Chart.Interaction.modes.intersect
+			 * @param chart {chart} the chart we are returning items from
+			 * @param e {Event} the event we are find things at
+			 * @return {Chart.Element[]} Array of elements that are under the point. If none are found, an empty array is returned
+			 */
+			point: function(chart, e) {
+				var position = getRelativePosition(e, chart);
+				return getIntersectItems(chart, position);
+			},
+
+			/**
+			 * nearest mode returns the element closest to the point
+			 * @function Chart.Interaction.modes.intersect
+			 * @param chart {chart} the chart we are returning items from
+			 * @param e {Event} the event we are find things at
+			 * @param options {IInteractionOptions} options to use
+			 * @return {Chart.Element[]} Array of elements that are under the point. If none are found, an empty array is returned
+			 */
+			nearest: function(chart, e, options) {
+				var position = getRelativePosition(e, chart);
+				var nearestItems = getNearestItems(chart, position, options.intersect);
+
+				// We have multiple items at the same distance from the event. Now sort by smallest
+				if (nearestItems.length > 1) {
+					nearestItems.sort(function(a, b) {
+						var sizeA = a.getArea();
+						var sizeB = b.getArea();
+						var ret = sizeA - sizeB;
+
+						if (ret === 0) {
+							// if equal sort by dataset index
+							ret = a._datasetIndex - b._datasetIndex;
+						}
+
+						return ret;
+					});
+				}
+
+				// Return only 1 item
+				return nearestItems.slice(0, 1);
+			},
+
+			/**
+			 * x mode returns the elements that hit-test at the current x coordinate
+			 * @function Chart.Interaction.modes.x
+			 * @param chart {chart} the chart we are returning items from
+			 * @param e {Event} the event we are find things at
+			 * @param options {IInteractionOptions} options to use
+			 * @return {Chart.Element[]} Array of elements that are under the point. If none are found, an empty array is returned
+			 */
+			x: function(chart, e, options) {
+				var position = getRelativePosition(e, chart);
+				var items = [];
+				var intersectsItem = false;
+
+				parseVisibleItems(chart, function(element) {
+					if (element.inXRange(position.x)) {
+						items.push(element);
+					}
+
+					if (element.inRange(position.x, position.y)) {
+						intersectsItem = true;
+					}
+				});
+
+				// If we want to trigger on an intersect and we don't have any items
+				// that intersect the position, return nothing
+				if (options.intersect && !intersectsItem) {
+					items = [];
+				}
+				return items;
+			},
+
+			/**
+			 * y mode returns the elements that hit-test at the current y coordinate
+			 * @function Chart.Interaction.modes.y
+			 * @param chart {chart} the chart we are returning items from
+			 * @param e {Event} the event we are find things at
+			 * @param options {IInteractionOptions} options to use
+			 * @return {Chart.Element[]} Array of elements that are under the point. If none are found, an empty array is returned
+			 */
+			y: function(chart, e, options) {
+				var position = getRelativePosition(e, chart);
+				var items = [];
+				var intersectsItem = false;
+
+				parseVisibleItems(chart, function(element) {
+					if (element.inYRange(position.y)) {
+						items.push(element);
+					}
+
+					if (element.inRange(position.x, position.y)) {
+						intersectsItem = true;
+					}
+				});
+
+				// If we want to trigger on an intersect and we don't have any items
+				// that intersect the position, return nothing
+				if (options.intersect && !intersectsItem) {
+					items = [];
+				}
+				return items;
+			}
+		}
+	};
+};
+
+},{}],21:[function(require,module,exports){
 'use strict';
 
 module.exports = function() {
 
 	// Occupy the global variable of Chart, and create a simple base class
-	var Chart = function(context, config) {
-		var me = this;
-		var helpers = Chart.helpers;
-		me.config = config || {
-			data: {
-				datasets: []
-			}
-		};
-
-		// Support a jQuery'd canvas element
-		if (context.length && context[0].getContext) {
-			context = context[0];
-		}
-
-		// Support a canvas domnode
-		if (context.getContext) {
-			context = context.getContext('2d');
-		}
-
-		me.ctx = context;
-		me.canvas = context.canvas;
-
-		context.canvas.style.display = context.canvas.style.display || 'block';
-
-		// Figure out what the size of the chart will be.
-		// If the canvas has a specified width and height, we use those else
-		// we look to see if the canvas node has a CSS width and height.
-		// If there is still no height, fill the parent container
-		me.width = context.canvas.width || parseInt(helpers.getStyle(context.canvas, 'width'), 10) || helpers.getMaximumWidth(context.canvas);
-		me.height = context.canvas.height || parseInt(helpers.getStyle(context.canvas, 'height'), 10) || helpers.getMaximumHeight(context.canvas);
-
-		me.aspectRatio = me.width / me.height;
-
-		if (isNaN(me.aspectRatio) || isFinite(me.aspectRatio) === false) {
-			// If the canvas has no size, try and figure out what the aspect ratio will be.
-			// Some charts prefer square canvases (pie, radar, etc). If that is specified, use that
-			// else use the canvas default ratio of 2
-			me.aspectRatio = config.aspectRatio !== undefined ? config.aspectRatio : 2;
-		}
-
-		// Store the original style of the element so we can set it back
-		me.originalCanvasStyleWidth = context.canvas.style.width;
-		me.originalCanvasStyleHeight = context.canvas.style.height;
-
-		// High pixel density displays - multiply the size of the canvas height/width by the device pixel ratio, then scale.
-		helpers.retinaScale(me);
-		me.controller = new Chart.Controller(me);
-
-		// Always bind this so that if the responsive state changes we still work
-		helpers.addResizeListener(context.canvas.parentNode, function() {
-			if (me.controller && me.controller.config.options.responsive) {
-				me.controller.resize();
-			}
-		});
-
-		return me.controller ? me.controller : me;
-
+	var Chart = function(item, config) {
+		this.construct(item, config);
+		return this;
 	};
 
 	// Globally expose the defaults to allow for user updating/changing
@@ -4191,7 +4619,8 @@ module.exports = function() {
 			events: ['mousemove', 'mouseout', 'click', 'touchstart', 'touchmove'],
 			hover: {
 				onHover: null,
-				mode: 'single',
+				mode: 'nearest',
+				intersect: true,
 				animationDuration: 400
 			},
 			onClick: null,
@@ -4226,15 +4655,54 @@ module.exports = function() {
 	Chart.Chart = Chart;
 
 	return Chart;
-
 };
 
-},{}],21:[function(require,module,exports){
+},{}],22:[function(require,module,exports){
 'use strict';
 
 module.exports = function(Chart) {
 
 	var helpers = Chart.helpers;
+
+	function filterByPosition(array, position) {
+		return helpers.where(array, function(v) {
+			return v.position === position;
+		});
+	}
+
+	function sortByWeight(array, reverse) {
+		array.forEach(function(v, i) {
+			v._tmpIndex_ = i;
+			return v;
+		});
+		array.sort(function(a, b) {
+			var v0 = reverse ? b : a;
+			var v1 = reverse ? a : b;
+			return v0.weight === v1.weight ?
+				v0._tmpIndex_ - v1._tmpIndex_ :
+				v0.weight - v1.weight;
+		});
+		array.forEach(function(v) {
+			delete v._tmpIndex_;
+		});
+	}
+
+	/**
+	 * @interface ILayoutItem
+	 * @prop {String} position - The position of the item in the chart layout. Possible values are
+	 * 'left', 'top', 'right', 'bottom', and 'chartArea'
+	 * @prop {Number} weight - The weight used to sort the item. Higher weights are further away from the chart area
+	 * @prop {Boolean} fullWidth - if true, and the item is horizontal, then push vertical boxes down
+	 * @prop {Function} isHorizontal - returns true if the layout item is horizontal (ie. top or bottom)
+	 * @prop {Function} update - Takes two parameters: width and height. Returns size of item
+	 * @prop {Function} getPadding -  Returns an object with padding on the edges
+	 * @prop {Number} width - Width of item. Must be valid after update()
+	 * @prop {Number} height - Height of item. Must be valid after update()
+	 * @prop {Number} left - Left edge of the item. Set by layout system and cannot be used in update
+	 * @prop {Number} top - Top edge of the item. Set by layout system and cannot be used in update
+	 * @prop {Number} right - Right edge of the item. Set by layout system and cannot be used in update
+	 * @prop {Number} bottom - Bottom edge of the item. Set by layout system and cannot be used in update
+	 */
 
 	// The layout service is very self explanatory.  It's responsible for the layout within a chart.
 	// Scales, Legends and Plugins all rely on the layout service and can easily register to be placed anywhere they need
@@ -4242,56 +4710,101 @@ module.exports = function(Chart) {
 	Chart.layoutService = {
 		defaults: {},
 
-		// Register a box to a chartInstance. A box is simply a reference to an object that requires layout. eg. Scales, Legend, Plugins.
-		addBox: function(chartInstance, box) {
-			if (!chartInstance.boxes) {
-				chartInstance.boxes = [];
+		/**
+		 * Register a box to a chart.
+		 * A box is simply a reference to an object that requires layout. eg. Scales, Legend, Title.
+		 * @param {Chart} chart - the chart to use
+		 * @param {ILayoutItem} item - the item to add to be layed out
+		 */
+		addBox: function(chart, item) {
+			if (!chart.boxes) {
+				chart.boxes = [];
 			}
-			chartInstance.boxes.push(box);
+
+			// initialize item with default values
+			item.fullWidth = item.fullWidth || false;
+			item.position = item.position || 'top';
+			item.weight = item.weight || 0;
+
+			chart.boxes.push(item);
 		},
 
-		removeBox: function(chartInstance, box) {
-			if (!chartInstance.boxes) {
-				return;
+		/**
+		 * Remove a layoutItem from a chart
+		 * @param {Chart} chart - the chart to remove the box from
+		 * @param {Object} layoutItem - the item to remove from the layout
+		 */
+		removeBox: function(chart, layoutItem) {
+			var index = chart.boxes? chart.boxes.indexOf(layoutItem) : -1;
+			if (index !== -1) {
+				chart.boxes.splice(index, 1);
 			}
-			chartInstance.boxes.splice(chartInstance.boxes.indexOf(box), 1);
 		},
 
-		// The most important function
-		update: function(chartInstance, width, height) {
+		/**
+		 * Sets (or updates) options on the given `item`.
+		 * @param {Chart} chart - the chart in which the item lives (or will be added to)
+		 * @param {Object} item - the item to configure with the given options
+		 * @param {Object} options - the new item options.
+		 */
+		configure: function(chart, item, options) {
+			var props = ['fullWidth', 'position', 'weight'];
+			var ilen = props.length;
+			var i = 0;
+			var prop;
 
-			if (!chartInstance) {
+			for (; i<ilen; ++i) {
+				prop = props[i];
+				if (options.hasOwnProperty(prop)) {
+					item[prop] = options[prop];
+				}
+			}
+		},
+
+		/**
+		 * Fits boxes of the given chart into the given size by having each box measure itself
+		 * then running a fitting algorithm
+		 * @param {Chart} chart - the chart
+		 * @param {Number} width - the width to fit into
+		 * @param {Number} height - the height to fit into
+		 */
+		update: function(chart, width, height) {
+			if (!chart) {
 				return;
 			}
 
-			var xPadding = 0;
-			var yPadding = 0;
+			var layoutOptions = chart.options.layout;
+			var padding = layoutOptions ? layoutOptions.padding : null;
 
-			var leftBoxes = helpers.where(chartInstance.boxes, function(box) {
-				return box.options.position === 'left';
-			});
-			var rightBoxes = helpers.where(chartInstance.boxes, function(box) {
-				return box.options.position === 'right';
-			});
-			var topBoxes = helpers.where(chartInstance.boxes, function(box) {
-				return box.options.position === 'top';
-			});
-			var bottomBoxes = helpers.where(chartInstance.boxes, function(box) {
-				return box.options.position === 'bottom';
-			});
+			var leftPadding = 0;
+			var rightPadding = 0;
+			var topPadding = 0;
+			var bottomPadding = 0;
 
-			// Boxes that overlay the chartarea such as the radialLinear scale
-			var chartAreaBoxes = helpers.where(chartInstance.boxes, function(box) {
-				return box.options.position === 'chartArea';
-			});
+			if (!isNaN(padding)) {
+				// options.layout.padding is a number. assign to all
+				leftPadding = padding;
+				rightPadding = padding;
+				topPadding = padding;
+				bottomPadding = padding;
+			} else {
+				leftPadding = padding.left || 0;
+				rightPadding = padding.right || 0;
+				topPadding = padding.top || 0;
+				bottomPadding = padding.bottom || 0;
+			}
 
-			// Ensure that full width boxes are at the very top / bottom
-			topBoxes.sort(function(a, b) {
-				return (b.options.fullWidth ? 1 : 0) - (a.options.fullWidth ? 1 : 0);
-			});
-			bottomBoxes.sort(function(a, b) {
-				return (a.options.fullWidth ? 1 : 0) - (b.options.fullWidth ? 1 : 0);
-			});
+			var leftBoxes = filterByPosition(chart.boxes, 'left');
+			var rightBoxes = filterByPosition(chart.boxes, 'right');
+			var topBoxes = filterByPosition(chart.boxes, 'top');
+			var bottomBoxes = filterByPosition(chart.boxes, 'bottom');
+			var chartAreaBoxes = filterByPosition(chart.boxes, 'chartArea');
+
+			// Sort boxes by weight. A higher weight is further away from the chart area
+			sortByWeight(leftBoxes, true);
+			sortByWeight(rightBoxes, false);
+			sortByWeight(topBoxes, true);
+			sortByWeight(bottomBoxes, false);
 
 			// Essentially we now have any number of boxes on each of the 4 sides.
 			// Our canvas looks like the following.
@@ -4331,8 +4844,8 @@ module.exports = function(Chart) {
 			// 9. Tell any axes that overlay the chart area the positions of the chart area
 
 			// Step 1
-			var chartWidth = width - (2 * xPadding);
-			var chartHeight = height - (2 * yPadding);
+			var chartWidth = width - leftPadding - rightPadding;
+			var chartHeight = height - topPadding - bottomPadding;
 			var chartAreaWidth = chartWidth / 2; // min 50%
 			var chartAreaHeight = chartHeight / 2; // min 50%
 
@@ -4352,7 +4865,7 @@ module.exports = function(Chart) {
 				var isHorizontal = box.isHorizontal();
 
 				if (isHorizontal) {
-					minSize = box.update(box.options.fullWidth ? chartWidth : maxChartAreaWidth, horizontalBoxHeight);
+					minSize = box.update(box.fullWidth ? chartWidth : maxChartAreaWidth, horizontalBoxHeight);
 					maxChartAreaHeight -= minSize.height;
 				} else {
 					minSize = box.update(verticalBoxWidth, chartAreaHeight);
@@ -4362,20 +4875,41 @@ module.exports = function(Chart) {
 				minBoxSizes.push({
 					horizontal: isHorizontal,
 					minSize: minSize,
-					box: box
+					box: box,
 				});
 			}
 
 			helpers.each(leftBoxes.concat(rightBoxes, topBoxes, bottomBoxes), getMinimumBoxSize);
 
+			// If a horizontal box has padding, we move the left boxes over to avoid ugly charts (see issue #2478)
+			var maxHorizontalLeftPadding = 0;
+			var maxHorizontalRightPadding = 0;
+			var maxVerticalTopPadding = 0;
+			var maxVerticalBottomPadding = 0;
+
+			helpers.each(topBoxes.concat(bottomBoxes), function(horizontalBox) {
+				if (horizontalBox.getPadding) {
+					var boxPadding = horizontalBox.getPadding();
+					maxHorizontalLeftPadding = Math.max(maxHorizontalLeftPadding, boxPadding.left);
+					maxHorizontalRightPadding = Math.max(maxHorizontalRightPadding, boxPadding.right);
+				}
+			});
+
+			helpers.each(leftBoxes.concat(rightBoxes), function(verticalBox) {
+				if (verticalBox.getPadding) {
+					var boxPadding = verticalBox.getPadding();
+					maxVerticalTopPadding = Math.max(maxVerticalTopPadding, boxPadding.top);
+					maxVerticalBottomPadding = Math.max(maxVerticalBottomPadding, boxPadding.bottom);
+				}
+			});
+
 			// At this point, maxChartAreaHeight and maxChartAreaWidth are the size the chart area could
 			// be if the axes are drawn at their minimum sizes.
-
 			// Steps 5 & 6
-			var totalLeftBoxesWidth = xPadding;
-			var totalRightBoxesWidth = xPadding;
-			var totalTopBoxesHeight = yPadding;
-			var totalBottomBoxesHeight = yPadding;
+			var totalLeftBoxesWidth = leftPadding;
+			var totalRightBoxesWidth = rightPadding;
+			var totalTopBoxesHeight = topPadding;
+			var totalBottomBoxesHeight = bottomPadding;
 
 			// Function to fit a box
 			function fitBox(box) {
@@ -4386,15 +4920,15 @@ module.exports = function(Chart) {
 				if (minBoxSize) {
 					if (box.isHorizontal()) {
 						var scaleMargin = {
-							left: totalLeftBoxesWidth,
-							right: totalRightBoxesWidth,
+							left: Math.max(totalLeftBoxesWidth, maxHorizontalLeftPadding),
+							right: Math.max(totalRightBoxesWidth, maxHorizontalRightPadding),
 							top: 0,
 							bottom: 0
 						};
 
 						// Don't use min size here because of label rotation. When the labels are rotated, their rotation highly depends
 						// on the margin. Sometimes they need to increase in size slightly
-						box.update(box.options.fullWidth ? chartWidth : maxChartAreaWidth, chartHeight / 2, scaleMargin);
+						box.update(box.fullWidth ? chartWidth : maxChartAreaWidth, chartHeight / 2, scaleMargin);
 					} else {
 						box.update(minBoxSize.minSize.width, maxChartAreaHeight);
 					}
@@ -4445,10 +4979,10 @@ module.exports = function(Chart) {
 			helpers.each(leftBoxes.concat(rightBoxes), finalFitVerticalBox);
 
 			// Recalculate because the size of each layout might have changed slightly due to the margins (label rotation for instance)
-			totalLeftBoxesWidth = xPadding;
-			totalRightBoxesWidth = xPadding;
-			totalTopBoxesHeight = yPadding;
-			totalBottomBoxesHeight = yPadding;
+			totalLeftBoxesWidth = leftPadding;
+			totalRightBoxesWidth = rightPadding;
+			totalTopBoxesHeight = topPadding;
+			totalBottomBoxesHeight = bottomPadding;
 
 			helpers.each(leftBoxes, function(box) {
 				totalLeftBoxesWidth += box.width;
@@ -4464,6 +4998,15 @@ module.exports = function(Chart) {
 			helpers.each(bottomBoxes, function(box) {
 				totalBottomBoxesHeight += box.height;
 			});
+
+			// We may be adding some padding to account for rotated x axis labels
+			var leftPaddingAddition = Math.max(maxHorizontalLeftPadding - totalLeftBoxesWidth, 0);
+			totalLeftBoxesWidth += leftPaddingAddition;
+			totalRightBoxesWidth += Math.max(maxHorizontalRightPadding - totalRightBoxesWidth, 0);
+
+			var topPaddingAddition = Math.max(maxVerticalTopPadding - totalTopBoxesHeight, 0);
+			totalTopBoxesHeight += topPaddingAddition;
+			totalBottomBoxesHeight += Math.max(maxVerticalBottomPadding - totalBottomBoxesHeight, 0);
 
 			// Figure out if our chart area changed. This would occur if the dataset layout label rotation
 			// changed due to the application of the margins in step 6. Since we can only get bigger, this is safe to do
@@ -4481,13 +5024,13 @@ module.exports = function(Chart) {
 				});
 
 				helpers.each(topBoxes, function(box) {
-					if (!box.options.fullWidth) {
+					if (!box.fullWidth) {
 						box.width = newMaxChartAreaWidth;
 					}
 				});
 
 				helpers.each(bottomBoxes, function(box) {
-					if (!box.options.fullWidth) {
+					if (!box.fullWidth) {
 						box.width = newMaxChartAreaWidth;
 					}
 				});
@@ -4497,13 +5040,13 @@ module.exports = function(Chart) {
 			}
 
 			// Step 7 - Position the boxes
-			var left = xPadding;
-			var top = yPadding;
+			var left = leftPadding + leftPaddingAddition;
+			var top = topPadding + topPaddingAddition;
 
 			function placeBox(box) {
 				if (box.isHorizontal()) {
-					box.left = box.options.fullWidth ? xPadding : totalLeftBoxesWidth;
-					box.right = box.options.fullWidth ? width - xPadding : totalLeftBoxesWidth + maxChartAreaWidth;
+					box.left = box.fullWidth ? leftPadding : totalLeftBoxesWidth;
+					box.right = box.fullWidth ? width - rightPadding : totalLeftBoxesWidth + maxChartAreaWidth;
 					box.top = top;
 					box.bottom = top + box.height;
 
@@ -4532,7 +5075,7 @@ module.exports = function(Chart) {
 			helpers.each(bottomBoxes, placeBox);
 
 			// Step 8
-			chartInstance.chartArea = {
+			chart.chartArea = {
 				left: totalLeftBoxesWidth,
 				top: totalTopBoxesHeight,
 				right: totalLeftBoxesWidth + maxChartAreaWidth,
@@ -4541,10 +5084,10 @@ module.exports = function(Chart) {
 
 			// Step 9
 			helpers.each(chartAreaBoxes, function(box) {
-				box.left = chartInstance.chartArea.left;
-				box.top = chartInstance.chartArea.top;
-				box.right = chartInstance.chartArea.right;
-				box.bottom = chartInstance.chartArea.bottom;
+				box.left = chart.chartArea.left;
+				box.top = chart.chartArea.top;
+				box.right = chart.chartArea.right;
+				box.bottom = chart.chartArea.bottom;
 
 				box.update(maxChartAreaWidth, maxChartAreaHeight);
 			});
@@ -4552,20 +5095,3523 @@ module.exports = function(Chart) {
 	};
 };
 
-},{}],22:[function(require,module,exports){
+},{}],23:[function(require,module,exports){
 'use strict';
 
 module.exports = function(Chart) {
 
 	var helpers = Chart.helpers;
+
+	Chart.defaults.global.plugins = {};
+
+	/**
+	 * The plugin service singleton
+	 * @namespace Chart.plugins
+	 * @since 2.1.0
+	 */
+	Chart.plugins = {
+		/**
+		 * Globally registered plugins.
+		 * @private
+		 */
+		_plugins: [],
+
+		/**
+		 * This identifier is used to invalidate the descriptors cache attached to each chart
+		 * when a global plugin is registered or unregistered. In this case, the cache ID is
+		 * incremented and descriptors are regenerated during following API calls.
+		 * @private
+		 */
+		_cacheId: 0,
+
+		/**
+		 * Registers the given plugin(s) if not already registered.
+		 * @param {Array|Object} plugins plugin instance(s).
+		 */
+		register: function(plugins) {
+			var p = this._plugins;
+			([]).concat(plugins).forEach(function(plugin) {
+				if (p.indexOf(plugin) === -1) {
+					p.push(plugin);
+				}
+			});
+
+			this._cacheId++;
+		},
+
+		/**
+		 * Unregisters the given plugin(s) only if registered.
+		 * @param {Array|Object} plugins plugin instance(s).
+		 */
+		unregister: function(plugins) {
+			var p = this._plugins;
+			([]).concat(plugins).forEach(function(plugin) {
+				var idx = p.indexOf(plugin);
+				if (idx !== -1) {
+					p.splice(idx, 1);
+				}
+			});
+
+			this._cacheId++;
+		},
+
+		/**
+		 * Remove all registered plugins.
+		 * @since 2.1.5
+		 */
+		clear: function() {
+			this._plugins = [];
+			this._cacheId++;
+		},
+
+		/**
+		 * Returns the number of registered plugins?
+		 * @returns {Number}
+		 * @since 2.1.5
+		 */
+		count: function() {
+			return this._plugins.length;
+		},
+
+		/**
+		 * Returns all registered plugin instances.
+		 * @returns {Array} array of plugin objects.
+		 * @since 2.1.5
+		 */
+		getAll: function() {
+			return this._plugins;
+		},
+
+		/**
+		 * Calls enabled plugins for `chart` on the specified hook and with the given args.
+		 * This method immediately returns as soon as a plugin explicitly returns false. The
+		 * returned value can be used, for instance, to interrupt the current action.
+		 * @param {Object} chart - The chart instance for which plugins should be called.
+		 * @param {String} hook - The name of the plugin method to call (e.g. 'beforeUpdate').
+		 * @param {Array} [args] - Extra arguments to apply to the hook call.
+		 * @returns {Boolean} false if any of the plugins return false, else returns true.
+		 */
+		notify: function(chart, hook, args) {
+			var descriptors = this.descriptors(chart);
+			var ilen = descriptors.length;
+			var i, descriptor, plugin, params, method;
+
+			for (i=0; i<ilen; ++i) {
+				descriptor = descriptors[i];
+				plugin = descriptor.plugin;
+				method = plugin[hook];
+				if (typeof method === 'function') {
+					params = [chart].concat(args || []);
+					params.push(descriptor.options);
+					if (method.apply(plugin, params) === false) {
+						return false;
+					}
+				}
+			}
+
+			return true;
+		},
+
+		/**
+		 * Returns descriptors of enabled plugins for the given chart.
+		 * @returns {Array} [{ plugin, options }]
+		 * @private
+		 */
+		descriptors: function(chart) {
+			var cache = chart._plugins || (chart._plugins = {});
+			if (cache.id === this._cacheId) {
+				return cache.descriptors;
+			}
+
+			var plugins = [];
+			var descriptors = [];
+			var config = (chart && chart.config) || {};
+			var defaults = Chart.defaults.global.plugins;
+			var options = (config.options && config.options.plugins) || {};
+
+			this._plugins.concat(config.plugins || []).forEach(function(plugin) {
+				var idx = plugins.indexOf(plugin);
+				if (idx !== -1) {
+					return;
+				}
+
+				var id = plugin.id;
+				var opts = options[id];
+				if (opts === false) {
+					return;
+				}
+
+				if (opts === true) {
+					opts = helpers.clone(defaults[id]);
+				}
+
+				plugins.push(plugin);
+				descriptors.push({
+					plugin: plugin,
+					options: opts || {}
+				});
+			});
+
+			cache.descriptors = descriptors;
+			cache.id = this._cacheId;
+			return descriptors;
+		}
+	};
+
+	/**
+	 * Plugin extension hooks.
+	 * @interface IPlugin
+	 * @since 2.1.0
+	 */
+	/**
+	 * @method IPlugin#beforeInit
+	 * @desc Called before initializing `chart`.
+	 * @param {Chart.Controller} chart - The chart instance.
+	 * @param {Object} options - The plugin options.
+	 */
+	/**
+	 * @method IPlugin#afterInit
+	 * @desc Called after `chart` has been initialized and before the first update.
+	 * @param {Chart.Controller} chart - The chart instance.
+	 * @param {Object} options - The plugin options.
+	 */
+	/**
+	 * @method IPlugin#beforeUpdate
+	 * @desc Called before updating `chart`. If any plugin returns `false`, the update
+	 * is cancelled (and thus subsequent render(s)) until another `update` is triggered.
+	 * @param {Chart.Controller} chart - The chart instance.
+	 * @param {Object} options - The plugin options.
+	 * @returns {Boolean} `false` to cancel the chart update.
+	 */
+	/**
+	 * @method IPlugin#afterUpdate
+	 * @desc Called after `chart` has been updated and before rendering. Note that this
+	 * hook will not be called if the chart update has been previously cancelled.
+	 * @param {Chart.Controller} chart - The chart instance.
+	 * @param {Object} options - The plugin options.
+	 */
+	/**
+	 * @method IPlugin#beforeDatasetsUpdate
+ 	 * @desc Called before updating the `chart` datasets. If any plugin returns `false`,
+	 * the datasets update is cancelled until another `update` is triggered.
+	 * @param {Chart.Controller} chart - The chart instance.
+	 * @param {Object} options - The plugin options.
+	 * @returns {Boolean} false to cancel the datasets update.
+	 * @since version 2.1.5
+	 */
+	/**
+	 * @method IPlugin#afterDatasetsUpdate
+	 * @desc Called after the `chart` datasets have been updated. Note that this hook
+	 * will not be called if the datasets update has been previously cancelled.
+	 * @param {Chart.Controller} chart - The chart instance.
+	 * @param {Object} options - The plugin options.
+	 * @since version 2.1.5
+	 */
+	/**
+	 * @method IPlugin#beforeDatasetUpdate
+ 	 * @desc Called before updating the `chart` dataset at the given `args.index`. If any plugin
+	 * returns `false`, the datasets update is cancelled until another `update` is triggered.
+	 * @param {Chart} chart - The chart instance.
+	 * @param {Object} args - The call arguments.
+	 * @param {Object} args.index - The dataset index.
+	 * @param {Number} args.meta - The dataset metadata.
+	 * @param {Object} options - The plugin options.
+	 * @returns {Boolean} `false` to cancel the chart datasets drawing.
+	 */
+	/**
+	 * @method IPlugin#afterDatasetUpdate
+ 	 * @desc Called after the `chart` datasets at the given `args.index` has been updated. Note
+	 * that this hook will not be called if the datasets update has been previously cancelled.
+	 * @param {Chart} chart - The chart instance.
+	 * @param {Object} args - The call arguments.
+	 * @param {Object} args.index - The dataset index.
+	 * @param {Number} args.meta - The dataset metadata.
+	 * @param {Object} options - The plugin options.
+	 */
+	/**
+	 * @method IPlugin#beforeLayout
+	 * @desc Called before laying out `chart`. If any plugin returns `false`,
+	 * the layout update is cancelled until another `update` is triggered.
+	 * @param {Chart.Controller} chart - The chart instance.
+	 * @param {Object} options - The plugin options.
+	 * @returns {Boolean} `false` to cancel the chart layout.
+	 */
+	/**
+	 * @method IPlugin#afterLayout
+	 * @desc Called after the `chart` has been layed out. Note that this hook will not
+	 * be called if the layout update has been previously cancelled.
+	 * @param {Chart.Controller} chart - The chart instance.
+	 * @param {Object} options - The plugin options.
+	 */
+	/**
+	 * @method IPlugin#beforeRender
+	 * @desc Called before rendering `chart`. If any plugin returns `false`,
+	 * the rendering is cancelled until another `render` is triggered.
+	 * @param {Chart.Controller} chart - The chart instance.
+	 * @param {Object} options - The plugin options.
+	 * @returns {Boolean} `false` to cancel the chart rendering.
+	 */
+	/**
+	 * @method IPlugin#afterRender
+	 * @desc Called after the `chart` has been fully rendered (and animation completed). Note
+	 * that this hook will not be called if the rendering has been previously cancelled.
+	 * @param {Chart.Controller} chart - The chart instance.
+	 * @param {Object} options - The plugin options.
+	 */
+	/**
+	 * @method IPlugin#beforeDraw
+	 * @desc Called before drawing `chart` at every animation frame specified by the given
+	 * easing value. If any plugin returns `false`, the frame drawing is cancelled until
+	 * another `render` is triggered.
+	 * @param {Chart.Controller} chart - The chart instance.
+	 * @param {Number} easingValue - The current animation value, between 0.0 and 1.0.
+	 * @param {Object} options - The plugin options.
+	 * @returns {Boolean} `false` to cancel the chart drawing.
+	 */
+	/**
+	 * @method IPlugin#afterDraw
+	 * @desc Called after the `chart` has been drawn for the specific easing value. Note
+	 * that this hook will not be called if the drawing has been previously cancelled.
+	 * @param {Chart.Controller} chart - The chart instance.
+	 * @param {Number} easingValue - The current animation value, between 0.0 and 1.0.
+	 * @param {Object} options - The plugin options.
+	 */
+	/**
+	 * @method IPlugin#beforeDatasetsDraw
+ 	 * @desc Called before drawing the `chart` datasets. If any plugin returns `false`,
+	 * the datasets drawing is cancelled until another `render` is triggered.
+	 * @param {Chart.Controller} chart - The chart instance.
+	 * @param {Number} easingValue - The current animation value, between 0.0 and 1.0.
+	 * @param {Object} options - The plugin options.
+	 * @returns {Boolean} `false` to cancel the chart datasets drawing.
+	 */
+	/**
+	 * @method IPlugin#afterDatasetsDraw
+	 * @desc Called after the `chart` datasets have been drawn. Note that this hook
+	 * will not be called if the datasets drawing has been previously cancelled.
+	 * @param {Chart.Controller} chart - The chart instance.
+	 * @param {Number} easingValue - The current animation value, between 0.0 and 1.0.
+	 * @param {Object} options - The plugin options.
+	 */
+	/**
+	 * @method IPlugin#beforeDatasetDraw
+ 	 * @desc Called before drawing the `chart` dataset at the given `args.index` (datasets
+	 * are drawn in the reverse order). If any plugin returns `false`, the datasets drawing
+	 * is cancelled until another `render` is triggered.
+	 * @param {Chart} chart - The chart instance.
+	 * @param {Object} args - The call arguments.
+	 * @param {Object} args.index - The dataset index.
+	 * @param {Number} args.meta - The dataset metadata.
+	 * @param {Number} args.easingValue - The current animation value, between 0.0 and 1.0.
+	 * @param {Object} options - The plugin options.
+	 * @returns {Boolean} `false` to cancel the chart datasets drawing.
+	 */
+	/**
+	 * @method IPlugin#afterDatasetDraw
+ 	 * @desc Called after the `chart` datasets at the given `args.index` have been drawn
+	 * (datasets are drawn in the reverse order). Note that this hook will not be called
+	 * if the datasets drawing has been previously cancelled.
+	 * @param {Chart} chart - The chart instance.
+	 * @param {Object} args - The call arguments.
+	 * @param {Object} args.index - The dataset index.
+	 * @param {Number} args.meta - The dataset metadata.
+	 * @param {Number} args.easingValue - The current animation value, between 0.0 and 1.0.
+	 * @param {Object} options - The plugin options.
+	 */
+	/**
+	 * @method IPlugin#beforeEvent
+ 	 * @desc Called before processing the specified `event`. If any plugin returns `false`,
+	 * the event will be discarded.
+	 * @param {Chart.Controller} chart - The chart instance.
+	 * @param {IEvent} event - The event object.
+	 * @param {Object} options - The plugin options.
+	 */
+	/**
+	 * @method IPlugin#afterEvent
+	 * @desc Called after the `event` has been consumed. Note that this hook
+	 * will not be called if the `event` has been previously discarded.
+	 * @param {Chart.Controller} chart - The chart instance.
+	 * @param {IEvent} event - The event object.
+	 * @param {Object} options - The plugin options.
+	 */
+	/**
+	 * @method IPlugin#resize
+	 * @desc Called after the chart as been resized.
+	 * @param {Chart.Controller} chart - The chart instance.
+	 * @param {Number} size - The new canvas display size (eq. canvas.style width & height).
+	 * @param {Object} options - The plugin options.
+	 */
+	/**
+	 * @method IPlugin#destroy
+	 * @desc Called after the chart as been destroyed.
+	 * @param {Chart.Controller} chart - The chart instance.
+	 * @param {Object} options - The plugin options.
+	 */
+
+	/**
+	 * Provided for backward compatibility, use Chart.plugins instead
+	 * @namespace Chart.pluginService
+	 * @deprecated since version 2.1.5
+	 * @todo remove at version 3
+	 * @private
+	 */
+	Chart.pluginService = Chart.plugins;
+
+	/**
+	 * Provided for backward compatibility, inheriting from Chart.PlugingBase has no
+	 * effect, instead simply create/register plugins via plain JavaScript objects.
+	 * @interface Chart.PluginBase
+	 * @deprecated since version 2.5.0
+	 * @todo remove at version 3
+	 * @private
+	 */
+	Chart.PluginBase = Chart.Element.extend({});
+};
+
+},{}],24:[function(require,module,exports){
+'use strict';
+
+module.exports = function(Chart) {
+
+	var helpers = Chart.helpers;
+
+	Chart.defaults.scale = {
+		display: true,
+		position: 'left',
+
+		// grid line settings
+		gridLines: {
+			display: true,
+			color: 'rgba(0, 0, 0, 0.1)',
+			lineWidth: 1,
+			drawBorder: true,
+			drawOnChartArea: true,
+			drawTicks: true,
+			tickMarkLength: 10,
+			zeroLineWidth: 1,
+			zeroLineColor: 'rgba(0,0,0,0.25)',
+			zeroLineBorderDash: [],
+			zeroLineBorderDashOffset: 0.0,
+			offsetGridLines: false,
+			borderDash: [],
+			borderDashOffset: 0.0
+		},
+
+		// scale label
+		scaleLabel: {
+			// actual label
+			labelString: '',
+
+			// display property
+			display: false
+		},
+
+		// label settings
+		ticks: {
+			beginAtZero: false,
+			minRotation: 0,
+			maxRotation: 50,
+			mirror: false,
+			padding: 0,
+			reverse: false,
+			display: true,
+			autoSkip: true,
+			autoSkipPadding: 0,
+			labelOffset: 0,
+			// We pass through arrays to be rendered as multiline labels, we convert Others to strings here.
+			callback: Chart.Ticks.formatters.values
+		}
+	};
+
+	function computeTextSize(context, tick, font) {
+		return helpers.isArray(tick) ?
+			helpers.longestText(context, font, tick) :
+			context.measureText(tick).width;
+	}
+
+	function parseFontOptions(options) {
+		var getValueOrDefault = helpers.getValueOrDefault;
+		var globalDefaults = Chart.defaults.global;
+		var size = getValueOrDefault(options.fontSize, globalDefaults.defaultFontSize);
+		var style = getValueOrDefault(options.fontStyle, globalDefaults.defaultFontStyle);
+		var family = getValueOrDefault(options.fontFamily, globalDefaults.defaultFontFamily);
+
+		return {
+			size: size,
+			style: style,
+			family: family,
+			font: helpers.fontString(size, style, family)
+		};
+	}
+
+	Chart.Scale = Chart.Element.extend({
+		/**
+		 * Get the padding needed for the scale
+		 * @method getPadding
+		 * @private
+		 * @returns {Padding} the necessary padding
+		 */
+		getPadding: function() {
+			var me = this;
+			return {
+				left: me.paddingLeft || 0,
+				top: me.paddingTop || 0,
+				right: me.paddingRight || 0,
+				bottom: me.paddingBottom || 0
+			};
+		},
+
+		// These methods are ordered by lifecyle. Utilities then follow.
+		// Any function defined here is inherited by all scale types.
+		// Any function can be extended by the scale type
+
+		beforeUpdate: function() {
+			helpers.callback(this.options.beforeUpdate, [this]);
+		},
+		update: function(maxWidth, maxHeight, margins) {
+			var me = this;
+
+			// Update Lifecycle - Probably don't want to ever extend or overwrite this function ;)
+			me.beforeUpdate();
+
+			// Absorb the master measurements
+			me.maxWidth = maxWidth;
+			me.maxHeight = maxHeight;
+			me.margins = helpers.extend({
+				left: 0,
+				right: 0,
+				top: 0,
+				bottom: 0
+			}, margins);
+			me.longestTextCache = me.longestTextCache || {};
+
+			// Dimensions
+			me.beforeSetDimensions();
+			me.setDimensions();
+			me.afterSetDimensions();
+
+			// Data min/max
+			me.beforeDataLimits();
+			me.determineDataLimits();
+			me.afterDataLimits();
+
+			// Ticks
+			me.beforeBuildTicks();
+			me.buildTicks();
+			me.afterBuildTicks();
+
+			me.beforeTickToLabelConversion();
+			me.convertTicksToLabels();
+			me.afterTickToLabelConversion();
+
+			// Tick Rotation
+			me.beforeCalculateTickRotation();
+			me.calculateTickRotation();
+			me.afterCalculateTickRotation();
+			// Fit
+			me.beforeFit();
+			me.fit();
+			me.afterFit();
+			//
+			me.afterUpdate();
+
+			return me.minSize;
+
+		},
+		afterUpdate: function() {
+			helpers.callback(this.options.afterUpdate, [this]);
+		},
+
+		//
+
+		beforeSetDimensions: function() {
+			helpers.callback(this.options.beforeSetDimensions, [this]);
+		},
+		setDimensions: function() {
+			var me = this;
+			// Set the unconstrained dimension before label rotation
+			if (me.isHorizontal()) {
+				// Reset position before calculating rotation
+				me.width = me.maxWidth;
+				me.left = 0;
+				me.right = me.width;
+			} else {
+				me.height = me.maxHeight;
+
+				// Reset position before calculating rotation
+				me.top = 0;
+				me.bottom = me.height;
+			}
+
+			// Reset padding
+			me.paddingLeft = 0;
+			me.paddingTop = 0;
+			me.paddingRight = 0;
+			me.paddingBottom = 0;
+		},
+		afterSetDimensions: function() {
+			helpers.callback(this.options.afterSetDimensions, [this]);
+		},
+
+		// Data limits
+		beforeDataLimits: function() {
+			helpers.callback(this.options.beforeDataLimits, [this]);
+		},
+		determineDataLimits: helpers.noop,
+		afterDataLimits: function() {
+			helpers.callback(this.options.afterDataLimits, [this]);
+		},
+
+		//
+		beforeBuildTicks: function() {
+			helpers.callback(this.options.beforeBuildTicks, [this]);
+		},
+		buildTicks: helpers.noop,
+		afterBuildTicks: function() {
+			helpers.callback(this.options.afterBuildTicks, [this]);
+		},
+
+		beforeTickToLabelConversion: function() {
+			helpers.callback(this.options.beforeTickToLabelConversion, [this]);
+		},
+		convertTicksToLabels: function() {
+			var me = this;
+			// Convert ticks to strings
+			var tickOpts = me.options.ticks;
+			me.ticks = me.ticks.map(tickOpts.userCallback || tickOpts.callback);
+		},
+		afterTickToLabelConversion: function() {
+			helpers.callback(this.options.afterTickToLabelConversion, [this]);
+		},
+
+		//
+
+		beforeCalculateTickRotation: function() {
+			helpers.callback(this.options.beforeCalculateTickRotation, [this]);
+		},
+		calculateTickRotation: function() {
+			var me = this;
+			var context = me.ctx;
+			var tickOpts = me.options.ticks;
+
+			// Get the width of each grid by calculating the difference
+			// between x offsets between 0 and 1.
+			var tickFont = parseFontOptions(tickOpts);
+			context.font = tickFont.font;
+
+			var labelRotation = tickOpts.minRotation || 0;
+
+			if (me.options.display && me.isHorizontal()) {
+				var originalLabelWidth = helpers.longestText(context, tickFont.font, me.ticks, me.longestTextCache);
+				var labelWidth = originalLabelWidth;
+				var cosRotation;
+				var sinRotation;
+
+				// Allow 3 pixels x2 padding either side for label readability
+				var tickWidth = me.getPixelForTick(1) - me.getPixelForTick(0) - 6;
+
+				// Max label rotation can be set or default to 90 - also act as a loop counter
+				while (labelWidth > tickWidth && labelRotation < tickOpts.maxRotation) {
+					var angleRadians = helpers.toRadians(labelRotation);
+					cosRotation = Math.cos(angleRadians);
+					sinRotation = Math.sin(angleRadians);
+
+					if (sinRotation * originalLabelWidth > me.maxHeight) {
+						// go back one step
+						labelRotation--;
+						break;
+					}
+
+					labelRotation++;
+					labelWidth = cosRotation * originalLabelWidth;
+				}
+			}
+
+			me.labelRotation = labelRotation;
+		},
+		afterCalculateTickRotation: function() {
+			helpers.callback(this.options.afterCalculateTickRotation, [this]);
+		},
+
+		//
+
+		beforeFit: function() {
+			helpers.callback(this.options.beforeFit, [this]);
+		},
+		fit: function() {
+			var me = this;
+			// Reset
+			var minSize = me.minSize = {
+				width: 0,
+				height: 0
+			};
+
+			var opts = me.options;
+			var tickOpts = opts.ticks;
+			var scaleLabelOpts = opts.scaleLabel;
+			var gridLineOpts = opts.gridLines;
+			var display = opts.display;
+			var isHorizontal = me.isHorizontal();
+
+			var tickFont = parseFontOptions(tickOpts);
+			var scaleLabelFontSize = parseFontOptions(scaleLabelOpts).size * 1.5;
+			var tickMarkLength = opts.gridLines.tickMarkLength;
+
+			// Width
+			if (isHorizontal) {
+				// subtract the margins to line up with the chartArea if we are a full width scale
+				minSize.width = me.isFullWidth() ? me.maxWidth - me.margins.left - me.margins.right : me.maxWidth;
+			} else {
+				minSize.width = display && gridLineOpts.drawTicks ? tickMarkLength : 0;
+			}
+
+			// height
+			if (isHorizontal) {
+				minSize.height = display && gridLineOpts.drawTicks ? tickMarkLength : 0;
+			} else {
+				minSize.height = me.maxHeight; // fill all the height
+			}
+
+			// Are we showing a title for the scale?
+			if (scaleLabelOpts.display && display) {
+				if (isHorizontal) {
+					minSize.height += scaleLabelFontSize;
+				} else {
+					minSize.width += scaleLabelFontSize;
+				}
+			}
+
+			// Don't bother fitting the ticks if we are not showing them
+			if (tickOpts.display && display) {
+				var largestTextWidth = helpers.longestText(me.ctx, tickFont.font, me.ticks, me.longestTextCache);
+				var tallestLabelHeightInLines = helpers.numberOfLabelLines(me.ticks);
+				var lineSpace = tickFont.size * 0.5;
+
+				if (isHorizontal) {
+					// A horizontal axis is more constrained by the height.
+					me.longestLabelWidth = largestTextWidth;
+
+					var angleRadians = helpers.toRadians(me.labelRotation);
+					var cosRotation = Math.cos(angleRadians);
+					var sinRotation = Math.sin(angleRadians);
+
+					// TODO - improve this calculation
+					var labelHeight = (sinRotation * largestTextWidth)
+						+ (tickFont.size * tallestLabelHeightInLines)
+						+ (lineSpace * tallestLabelHeightInLines);
+
+					minSize.height = Math.min(me.maxHeight, minSize.height + labelHeight);
+					me.ctx.font = tickFont.font;
+
+					var firstTick = me.ticks[0];
+					var firstLabelWidth = computeTextSize(me.ctx, firstTick, tickFont.font);
+
+					var lastTick = me.ticks[me.ticks.length - 1];
+					var lastLabelWidth = computeTextSize(me.ctx, lastTick, tickFont.font);
+
+					// Ensure that our ticks are always inside the canvas. When rotated, ticks are right aligned which means that the right padding is dominated
+					// by the font height
+					if (me.labelRotation !== 0) {
+						me.paddingLeft = opts.position === 'bottom'? (cosRotation * firstLabelWidth) + 3: (cosRotation * lineSpace) + 3; // add 3 px to move away from canvas edges
+						me.paddingRight = opts.position === 'bottom'? (cosRotation * lineSpace) + 3: (cosRotation * lastLabelWidth) + 3;
+					} else {
+						me.paddingLeft = firstLabelWidth / 2 + 3; // add 3 px to move away from canvas edges
+						me.paddingRight = lastLabelWidth / 2 + 3;
+					}
+				} else {
+					// A vertical axis is more constrained by the width. Labels are the dominant factor here, so get that length first
+					// Account for padding
+
+					if (tickOpts.mirror) {
+						largestTextWidth = 0;
+					} else {
+						largestTextWidth += me.options.ticks.padding;
+					}
+					minSize.width = Math.min(me.maxWidth, minSize.width + largestTextWidth);
+					me.paddingTop = tickFont.size / 2;
+					me.paddingBottom = tickFont.size / 2;
+				}
+			}
+
+			me.handleMargins();
+
+			me.width = minSize.width;
+			me.height = minSize.height;
+		},
+
+		/**
+		 * Handle margins and padding interactions
+		 * @private
+		 */
+		handleMargins: function() {
+			var me = this;
+			if (me.margins) {
+				me.paddingLeft = Math.max(me.paddingLeft - me.margins.left, 0);
+				me.paddingTop = Math.max(me.paddingTop - me.margins.top, 0);
+				me.paddingRight = Math.max(me.paddingRight - me.margins.right, 0);
+				me.paddingBottom = Math.max(me.paddingBottom - me.margins.bottom, 0);
+			}
+		},
+
+		afterFit: function() {
+			helpers.callback(this.options.afterFit, [this]);
+		},
+
+		// Shared Methods
+		isHorizontal: function() {
+			return this.options.position === 'top' || this.options.position === 'bottom';
+		},
+		isFullWidth: function() {
+			return (this.options.fullWidth);
+		},
+
+		// Get the correct value. NaN bad inputs, If the value type is object get the x or y based on whether we are horizontal or not
+		getRightValue: function(rawValue) {
+			// Null and undefined values first
+			if (rawValue === null || typeof(rawValue) === 'undefined') {
+				return NaN;
+			}
+			// isNaN(object) returns true, so make sure NaN is checking for a number; Discard Infinite values
+			if (typeof(rawValue) === 'number' && !isFinite(rawValue)) {
+				return NaN;
+			}
+			// If it is in fact an object, dive in one more level
+			if (typeof(rawValue) === 'object') {
+				if ((rawValue instanceof Date) || (rawValue.isValid)) {
+					return rawValue;
+				}
+				return this.getRightValue(this.isHorizontal() ? rawValue.x : rawValue.y);
+			}
+
+			// Value is good, return it
+			return rawValue;
+		},
+
+		// Used to get the value to display in the tooltip for the data at the given index
+		// function getLabelForIndex(index, datasetIndex)
+		getLabelForIndex: helpers.noop,
+
+		// Used to get data value locations.  Value can either be an index or a numerical value
+		getPixelForValue: helpers.noop,
+
+		// Used to get the data value from a given pixel. This is the inverse of getPixelForValue
+		getValueForPixel: helpers.noop,
+
+		// Used for tick location, should
+		getPixelForTick: function(index, includeOffset) {
+			var me = this;
+			if (me.isHorizontal()) {
+				var innerWidth = me.width - (me.paddingLeft + me.paddingRight);
+				var tickWidth = innerWidth / Math.max((me.ticks.length - ((me.options.gridLines.offsetGridLines) ? 0 : 1)), 1);
+				var pixel = (tickWidth * index) + me.paddingLeft;
+
+				if (includeOffset) {
+					pixel += tickWidth / 2;
+				}
+
+				var finalVal = me.left + Math.round(pixel);
+				finalVal += me.isFullWidth() ? me.margins.left : 0;
+				return finalVal;
+			}
+			var innerHeight = me.height - (me.paddingTop + me.paddingBottom);
+			return me.top + (index * (innerHeight / (me.ticks.length - 1)));
+		},
+
+		// Utility for getting the pixel location of a percentage of scale
+		getPixelForDecimal: function(decimal /* , includeOffset*/) {
+			var me = this;
+			if (me.isHorizontal()) {
+				var innerWidth = me.width - (me.paddingLeft + me.paddingRight);
+				var valueOffset = (innerWidth * decimal) + me.paddingLeft;
+
+				var finalVal = me.left + Math.round(valueOffset);
+				finalVal += me.isFullWidth() ? me.margins.left : 0;
+				return finalVal;
+			}
+			return me.top + (decimal * me.height);
+		},
+
+		getBasePixel: function() {
+			return this.getPixelForValue(this.getBaseValue());
+		},
+
+		getBaseValue: function() {
+			var me = this;
+			var min = me.min;
+			var max = me.max;
+
+			return me.beginAtZero ? 0:
+				min < 0 && max < 0? max :
+				min > 0 && max > 0? min :
+				0;
+		},
+
+		// Actually draw the scale on the canvas
+		// @param {rectangle} chartArea : the area of the chart to draw full grid lines on
+		draw: function(chartArea) {
+			var me = this;
+			var options = me.options;
+			if (!options.display) {
+				return;
+			}
+
+			var context = me.ctx;
+			var globalDefaults = Chart.defaults.global;
+			var optionTicks = options.ticks;
+			var gridLines = options.gridLines;
+			var scaleLabel = options.scaleLabel;
+
+			var isRotated = me.labelRotation !== 0;
+			var skipRatio;
+			var useAutoskipper = optionTicks.autoSkip;
+			var isHorizontal = me.isHorizontal();
+
+			// figure out the maximum number of gridlines to show
+			var maxTicks;
+			if (optionTicks.maxTicksLimit) {
+				maxTicks = optionTicks.maxTicksLimit;
+			}
+
+			var tickFontColor = helpers.getValueOrDefault(optionTicks.fontColor, globalDefaults.defaultFontColor);
+			var tickFont = parseFontOptions(optionTicks);
+
+			var tl = gridLines.drawTicks ? gridLines.tickMarkLength : 0;
+
+			var scaleLabelFontColor = helpers.getValueOrDefault(scaleLabel.fontColor, globalDefaults.defaultFontColor);
+			var scaleLabelFont = parseFontOptions(scaleLabel);
+
+			var labelRotationRadians = helpers.toRadians(me.labelRotation);
+			var cosRotation = Math.cos(labelRotationRadians);
+			var longestRotatedLabel = me.longestLabelWidth * cosRotation;
+
+			// Make sure we draw text in the correct color and font
+			context.fillStyle = tickFontColor;
+
+			var itemsToDraw = [];
+
+			if (isHorizontal) {
+				skipRatio = false;
+
+				if ((longestRotatedLabel + optionTicks.autoSkipPadding) * me.ticks.length > (me.width - (me.paddingLeft + me.paddingRight))) {
+					skipRatio = 1 + Math.floor(((longestRotatedLabel + optionTicks.autoSkipPadding) * me.ticks.length) / (me.width - (me.paddingLeft + me.paddingRight)));
+				}
+
+				// if they defined a max number of optionTicks,
+				// increase skipRatio until that number is met
+				if (maxTicks && me.ticks.length > maxTicks) {
+					while (!skipRatio || me.ticks.length / (skipRatio || 1) > maxTicks) {
+						if (!skipRatio) {
+							skipRatio = 1;
+						}
+						skipRatio += 1;
+					}
+				}
+
+				if (!useAutoskipper) {
+					skipRatio = false;
+				}
+			}
+
+
+			var xTickStart = options.position === 'right' ? me.left : me.right - tl;
+			var xTickEnd = options.position === 'right' ? me.left + tl : me.right;
+			var yTickStart = options.position === 'bottom' ? me.top : me.bottom - tl;
+			var yTickEnd = options.position === 'bottom' ? me.top + tl : me.bottom;
+
+			helpers.each(me.ticks, function(label, index) {
+				// If the callback returned a null or undefined value, do not draw this line
+				if (label === undefined || label === null) {
+					return;
+				}
+
+				var isLastTick = me.ticks.length === index + 1;
+
+				// Since we always show the last tick,we need may need to hide the last shown one before
+				var shouldSkip = (skipRatio > 1 && index % skipRatio > 0) || (index % skipRatio === 0 && index + skipRatio >= me.ticks.length);
+				if (shouldSkip && !isLastTick || (label === undefined || label === null)) {
+					return;
+				}
+
+				var lineWidth, lineColor, borderDash, borderDashOffset;
+				if (index === (typeof me.zeroLineIndex !== 'undefined' ? me.zeroLineIndex : 0)) {
+					// Draw the first index specially
+					lineWidth = gridLines.zeroLineWidth;
+					lineColor = gridLines.zeroLineColor;
+					borderDash = gridLines.zeroLineBorderDash;
+					borderDashOffset = gridLines.zeroLineBorderDashOffset;
+				} else {
+					lineWidth = helpers.getValueAtIndexOrDefault(gridLines.lineWidth, index);
+					lineColor = helpers.getValueAtIndexOrDefault(gridLines.color, index);
+					borderDash = helpers.getValueOrDefault(gridLines.borderDash, globalDefaults.borderDash);
+					borderDashOffset = helpers.getValueOrDefault(gridLines.borderDashOffset, globalDefaults.borderDashOffset);
+				}
+
+				// Common properties
+				var tx1, ty1, tx2, ty2, x1, y1, x2, y2, labelX, labelY;
+				var textAlign = 'middle';
+				var textBaseline = 'middle';
+
+				if (isHorizontal) {
+
+					if (options.position === 'bottom') {
+						// bottom
+						textBaseline = !isRotated? 'top':'middle';
+						textAlign = !isRotated? 'center': 'right';
+						labelY = me.top + tl;
+					} else {
+						// top
+						textBaseline = !isRotated? 'bottom':'middle';
+						textAlign = !isRotated? 'center': 'left';
+						labelY = me.bottom - tl;
+					}
+
+					var xLineValue = me.getPixelForTick(index) + helpers.aliasPixel(lineWidth); // xvalues for grid lines
+					labelX = me.getPixelForTick(index, gridLines.offsetGridLines) + optionTicks.labelOffset; // x values for optionTicks (need to consider offsetLabel option)
+
+					tx1 = tx2 = x1 = x2 = xLineValue;
+					ty1 = yTickStart;
+					ty2 = yTickEnd;
+					y1 = chartArea.top;
+					y2 = chartArea.bottom;
+				} else {
+					var isLeft = options.position === 'left';
+					var tickPadding = optionTicks.padding;
+					var labelXOffset;
+
+					if (optionTicks.mirror) {
+						textAlign = isLeft ? 'left' : 'right';
+						labelXOffset = tickPadding;
+					} else {
+						textAlign = isLeft ? 'right' : 'left';
+						labelXOffset = tl + tickPadding;
+					}
+
+					labelX = isLeft ? me.right - labelXOffset : me.left + labelXOffset;
+
+					var yLineValue = me.getPixelForTick(index); // xvalues for grid lines
+					yLineValue += helpers.aliasPixel(lineWidth);
+					labelY = me.getPixelForTick(index, gridLines.offsetGridLines);
+
+					tx1 = xTickStart;
+					tx2 = xTickEnd;
+					x1 = chartArea.left;
+					x2 = chartArea.right;
+					ty1 = ty2 = y1 = y2 = yLineValue;
+				}
+
+				itemsToDraw.push({
+					tx1: tx1,
+					ty1: ty1,
+					tx2: tx2,
+					ty2: ty2,
+					x1: x1,
+					y1: y1,
+					x2: x2,
+					y2: y2,
+					labelX: labelX,
+					labelY: labelY,
+					glWidth: lineWidth,
+					glColor: lineColor,
+					glBorderDash: borderDash,
+					glBorderDashOffset: borderDashOffset,
+					rotation: -1 * labelRotationRadians,
+					label: label,
+					textBaseline: textBaseline,
+					textAlign: textAlign
+				});
+			});
+
+			// Draw all of the tick labels, tick marks, and grid lines at the correct places
+			helpers.each(itemsToDraw, function(itemToDraw) {
+				if (gridLines.display) {
+					context.save();
+					context.lineWidth = itemToDraw.glWidth;
+					context.strokeStyle = itemToDraw.glColor;
+					if (context.setLineDash) {
+						context.setLineDash(itemToDraw.glBorderDash);
+						context.lineDashOffset = itemToDraw.glBorderDashOffset;
+					}
+
+					context.beginPath();
+
+					if (gridLines.drawTicks) {
+						context.moveTo(itemToDraw.tx1, itemToDraw.ty1);
+						context.lineTo(itemToDraw.tx2, itemToDraw.ty2);
+					}
+
+					if (gridLines.drawOnChartArea) {
+						context.moveTo(itemToDraw.x1, itemToDraw.y1);
+						context.lineTo(itemToDraw.x2, itemToDraw.y2);
+					}
+
+					context.stroke();
+					context.restore();
+				}
+
+				if (optionTicks.display) {
+					context.save();
+					context.translate(itemToDraw.labelX, itemToDraw.labelY);
+					context.rotate(itemToDraw.rotation);
+					context.font = tickFont.font;
+					context.textBaseline = itemToDraw.textBaseline;
+					context.textAlign = itemToDraw.textAlign;
+
+					var label = itemToDraw.label;
+					if (helpers.isArray(label)) {
+						for (var i = 0, y = 0; i < label.length; ++i) {
+							// We just make sure the multiline element is a string here..
+							context.fillText('' + label[i], 0, y);
+							// apply same lineSpacing as calculated @ L#320
+							y += (tickFont.size * 1.5);
+						}
+					} else {
+						context.fillText(label, 0, 0);
+					}
+					context.restore();
+				}
+			});
+
+			if (scaleLabel.display) {
+				// Draw the scale label
+				var scaleLabelX;
+				var scaleLabelY;
+				var rotation = 0;
+
+				if (isHorizontal) {
+					scaleLabelX = me.left + ((me.right - me.left) / 2); // midpoint of the width
+					scaleLabelY = options.position === 'bottom' ? me.bottom - (scaleLabelFont.size / 2) : me.top + (scaleLabelFont.size / 2);
+				} else {
+					var isLeft = options.position === 'left';
+					scaleLabelX = isLeft ? me.left + (scaleLabelFont.size / 2) : me.right - (scaleLabelFont.size / 2);
+					scaleLabelY = me.top + ((me.bottom - me.top) / 2);
+					rotation = isLeft ? -0.5 * Math.PI : 0.5 * Math.PI;
+				}
+
+				context.save();
+				context.translate(scaleLabelX, scaleLabelY);
+				context.rotate(rotation);
+				context.textAlign = 'center';
+				context.textBaseline = 'middle';
+				context.fillStyle = scaleLabelFontColor; // render in correct colour
+				context.font = scaleLabelFont.font;
+				context.fillText(scaleLabel.labelString, 0, 0);
+				context.restore();
+			}
+
+			if (gridLines.drawBorder) {
+				// Draw the line at the edge of the axis
+				context.lineWidth = helpers.getValueAtIndexOrDefault(gridLines.lineWidth, 0);
+				context.strokeStyle = helpers.getValueAtIndexOrDefault(gridLines.color, 0);
+				var x1 = me.left,
+					x2 = me.right,
+					y1 = me.top,
+					y2 = me.bottom;
+
+				var aliasPixel = helpers.aliasPixel(context.lineWidth);
+				if (isHorizontal) {
+					y1 = y2 = options.position === 'top' ? me.bottom : me.top;
+					y1 += aliasPixel;
+					y2 += aliasPixel;
+				} else {
+					x1 = x2 = options.position === 'left' ? me.right : me.left;
+					x1 += aliasPixel;
+					x2 += aliasPixel;
+				}
+
+				context.beginPath();
+				context.moveTo(x1, y1);
+				context.lineTo(x2, y2);
+				context.stroke();
+			}
+		}
+	});
+};
+
+},{}],25:[function(require,module,exports){
+'use strict';
+
+module.exports = function(Chart) {
+
+	var helpers = Chart.helpers;
+
+	Chart.scaleService = {
+		// Scale registration object. Extensions can register new scale types (such as log or DB scales) and then
+		// use the new chart options to grab the correct scale
+		constructors: {},
+		// Use a registration function so that we can move to an ES6 map when we no longer need to support
+		// old browsers
+
+		// Scale config defaults
+		defaults: {},
+		registerScaleType: function(type, scaleConstructor, defaults) {
+			this.constructors[type] = scaleConstructor;
+			this.defaults[type] = helpers.clone(defaults);
+		},
+		getScaleConstructor: function(type) {
+			return this.constructors.hasOwnProperty(type) ? this.constructors[type] : undefined;
+		},
+		getScaleDefaults: function(type) {
+			// Return the scale defaults merged with the global settings so that we always use the latest ones
+			return this.defaults.hasOwnProperty(type) ? helpers.scaleMerge(Chart.defaults.scale, this.defaults[type]) : {};
+		},
+		updateScaleDefaults: function(type, additions) {
+			var defaults = this.defaults;
+			if (defaults.hasOwnProperty(type)) {
+				defaults[type] = helpers.extend(defaults[type], additions);
+			}
+		},
+		addScalesToLayout: function(chart) {
+			// Adds each scale to the chart.boxes array to be sized accordingly
+			helpers.each(chart.scales, function(scale) {
+				// Set ILayoutItem parameters for backwards compatibility
+				scale.fullWidth = scale.options.fullWidth;
+				scale.position = scale.options.position;
+				scale.weight = scale.options.weight;
+				Chart.layoutService.addBox(chart, scale);
+			});
+		}
+	};
+};
+
+},{}],26:[function(require,module,exports){
+'use strict';
+
+module.exports = function(Chart) {
+
+	var helpers = Chart.helpers;
+
+	/**
+	 * Namespace to hold static tick generation functions
+	 * @namespace Chart.Ticks
+	 */
+	Chart.Ticks = {
+		/**
+		 * Namespace to hold generators for different types of ticks
+		 * @namespace Chart.Ticks.generators
+		 */
+		generators: {
+			/**
+			 * Interface for the options provided to the numeric tick generator
+			 * @interface INumericTickGenerationOptions
+			 */
+			/**
+			 * The maximum number of ticks to display
+			 * @name INumericTickGenerationOptions#maxTicks
+			 * @type Number
+			 */
+			/**
+			 * The distance between each tick.
+			 * @name INumericTickGenerationOptions#stepSize
+			 * @type Number
+			 * @optional
+			 */
+			/**
+			 * Forced minimum for the ticks. If not specified, the minimum of the data range is used to calculate the tick minimum
+			 * @name INumericTickGenerationOptions#min
+			 * @type Number
+			 * @optional
+			 */
+			/**
+			 * The maximum value of the ticks. If not specified, the maximum of the data range is used to calculate the tick maximum
+			 * @name INumericTickGenerationOptions#max
+			 * @type Number
+			 * @optional
+			 */
+
+			/**
+			 * Generate a set of linear ticks
+			 * @method Chart.Ticks.generators.linear
+			 * @param generationOptions {INumericTickGenerationOptions} the options used to generate the ticks
+			 * @param dataRange {IRange} the range of the data
+			 * @returns {Array<Number>} array of tick values
+			 */
+			linear: function(generationOptions, dataRange) {
+				var ticks = [];
+				// To get a "nice" value for the tick spacing, we will use the appropriately named
+				// "nice number" algorithm. See http://stackoverflow.com/questions/8506881/nice-label-algorithm-for-charts-with-minimum-ticks
+				// for details.
+
+				var spacing;
+				if (generationOptions.stepSize && generationOptions.stepSize > 0) {
+					spacing = generationOptions.stepSize;
+				} else {
+					var niceRange = helpers.niceNum(dataRange.max - dataRange.min, false);
+					spacing = helpers.niceNum(niceRange / (generationOptions.maxTicks - 1), true);
+				}
+				var niceMin = Math.floor(dataRange.min / spacing) * spacing;
+				var niceMax = Math.ceil(dataRange.max / spacing) * spacing;
+
+				// If min, max and stepSize is set and they make an evenly spaced scale use it.
+				if (generationOptions.min && generationOptions.max && generationOptions.stepSize) {
+					// If very close to our whole number, use it.
+					if (helpers.almostWhole((generationOptions.max - generationOptions.min) / generationOptions.stepSize, spacing / 1000)) {
+						niceMin = generationOptions.min;
+						niceMax = generationOptions.max;
+					}
+				}
+
+				var numSpaces = (niceMax - niceMin) / spacing;
+				// If very close to our rounded value, use it.
+				if (helpers.almostEquals(numSpaces, Math.round(numSpaces), spacing / 1000)) {
+					numSpaces = Math.round(numSpaces);
+				} else {
+					numSpaces = Math.ceil(numSpaces);
+				}
+
+				// Put the values into the ticks array
+				ticks.push(generationOptions.min !== undefined ? generationOptions.min : niceMin);
+				for (var j = 1; j < numSpaces; ++j) {
+					ticks.push(niceMin + (j * spacing));
+				}
+				ticks.push(generationOptions.max !== undefined ? generationOptions.max : niceMax);
+
+				return ticks;
+			},
+
+			/**
+			 * Generate a set of logarithmic ticks
+			 * @method Chart.Ticks.generators.logarithmic
+			 * @param generationOptions {INumericTickGenerationOptions} the options used to generate the ticks
+			 * @param dataRange {IRange} the range of the data
+			 * @returns {Array<Number>} array of tick values
+			 */
+			logarithmic: function(generationOptions, dataRange) {
+				var ticks = [];
+				var getValueOrDefault = helpers.getValueOrDefault;
+
+				// Figure out what the max number of ticks we can support it is based on the size of
+				// the axis area. For now, we say that the minimum tick spacing in pixels must be 50
+				// We also limit the maximum number of ticks to 11 which gives a nice 10 squares on
+				// the graph
+				var tickVal = getValueOrDefault(generationOptions.min, Math.pow(10, Math.floor(helpers.log10(dataRange.min))));
+
+				var endExp = Math.floor(helpers.log10(dataRange.max));
+				var endSignificand = Math.ceil(dataRange.max / Math.pow(10, endExp));
+				var exp;
+				var significand;
+
+				if (tickVal === 0) {
+					exp = Math.floor(helpers.log10(dataRange.minNotZero));
+					significand = Math.floor(dataRange.minNotZero / Math.pow(10, exp));
+
+					ticks.push(tickVal);
+					tickVal = significand * Math.pow(10, exp);
+				} else {
+					exp = Math.floor(helpers.log10(tickVal));
+					significand = Math.floor(tickVal / Math.pow(10, exp));
+				}
+
+				do {
+					ticks.push(tickVal);
+
+					++significand;
+					if (significand === 10) {
+						significand = 1;
+						++exp;
+					}
+
+					tickVal = significand * Math.pow(10, exp);
+				} while (exp < endExp || (exp === endExp && significand < endSignificand));
+
+				var lastTick = getValueOrDefault(generationOptions.max, tickVal);
+				ticks.push(lastTick);
+
+				return ticks;
+			}
+		},
+
+		/**
+		 * Namespace to hold formatters for different types of ticks
+		 * @namespace Chart.Ticks.formatters
+		 */
+		formatters: {
+			/**
+			 * Formatter for value labels
+			 * @method Chart.Ticks.formatters.values
+			 * @param value the value to display
+			 * @return {String|Array} the label to display
+			 */
+			values: function(value) {
+				return helpers.isArray(value) ? value : '' + value;
+			},
+
+			/**
+			 * Formatter for linear numeric ticks
+			 * @method Chart.Ticks.formatters.linear
+			 * @param tickValue {Number} the value to be formatted
+			 * @param index {Number} the position of the tickValue parameter in the ticks array
+			 * @param ticks {Array<Number>} the list of ticks being converted
+			 * @return {String} string representation of the tickValue parameter
+			 */
+			linear: function(tickValue, index, ticks) {
+				// If we have lots of ticks, don't use the ones
+				var delta = ticks.length > 3 ? ticks[2] - ticks[1] : ticks[1] - ticks[0];
+
+				// If we have a number like 2.5 as the delta, figure out how many decimal places we need
+				if (Math.abs(delta) > 1) {
+					if (tickValue !== Math.floor(tickValue)) {
+						// not an integer
+						delta = tickValue - Math.floor(tickValue);
+					}
+				}
+
+				var logDelta = helpers.log10(Math.abs(delta));
+				var tickString = '';
+
+				if (tickValue !== 0) {
+					var numDecimal = -1 * Math.floor(logDelta);
+					numDecimal = Math.max(Math.min(numDecimal, 20), 0); // toFixed has a max of 20 decimal places
+					tickString = tickValue.toFixed(numDecimal);
+				} else {
+					tickString = '0'; // never show decimal places for 0
+				}
+
+				return tickString;
+			},
+
+			logarithmic: function(tickValue, index, ticks) {
+				var remain = tickValue / (Math.pow(10, Math.floor(helpers.log10(tickValue))));
+
+				if (tickValue === 0) {
+					return '0';
+				} else if (remain === 1 || remain === 2 || remain === 5 || index === 0 || index === ticks.length - 1) {
+					return tickValue.toExponential();
+				}
+				return '';
+			}
+		}
+	};
+};
+
+},{}],27:[function(require,module,exports){
+'use strict';
+
+module.exports = function(Chart) {
+
+	var helpers = Chart.helpers;
+
+	/**
+ 	 * Helper method to merge the opacity into a color
+ 	 */
+	function mergeOpacity(colorString, opacity) {
+		var color = helpers.color(colorString);
+		return color.alpha(opacity * color.alpha()).rgbaString();
+	}
+
+	Chart.defaults.global.tooltips = {
+		enabled: true,
+		custom: null,
+		mode: 'nearest',
+		position: 'average',
+		intersect: true,
+		backgroundColor: 'rgba(0,0,0,0.8)',
+		titleFontStyle: 'bold',
+		titleSpacing: 2,
+		titleMarginBottom: 6,
+		titleFontColor: '#fff',
+		titleAlign: 'left',
+		bodySpacing: 2,
+		bodyFontColor: '#fff',
+		bodyAlign: 'left',
+		footerFontStyle: 'bold',
+		footerSpacing: 2,
+		footerMarginTop: 6,
+		footerFontColor: '#fff',
+		footerAlign: 'left',
+		yPadding: 6,
+		xPadding: 6,
+		caretPadding: 2,
+		caretSize: 5,
+		cornerRadius: 6,
+		multiKeyBackground: '#fff',
+		displayColors: true,
+		borderColor: 'rgba(0,0,0,0)',
+		borderWidth: 0,
+		callbacks: {
+			// Args are: (tooltipItems, data)
+			beforeTitle: helpers.noop,
+			title: function(tooltipItems, data) {
+				// Pick first xLabel for now
+				var title = '';
+				var labels = data.labels;
+				var labelCount = labels ? labels.length : 0;
+
+				if (tooltipItems.length > 0) {
+					var item = tooltipItems[0];
+
+					if (item.xLabel) {
+						title = item.xLabel;
+					} else if (labelCount > 0 && item.index < labelCount) {
+						title = labels[item.index];
+					}
+				}
+
+				return title;
+			},
+			afterTitle: helpers.noop,
+
+			// Args are: (tooltipItems, data)
+			beforeBody: helpers.noop,
+
+			// Args are: (tooltipItem, data)
+			beforeLabel: helpers.noop,
+			label: function(tooltipItem, data) {
+				var label = data.datasets[tooltipItem.datasetIndex].label || '';
+
+				if (label) {
+					label += ': ';
+				}
+				label += tooltipItem.yLabel;
+				return label;
+			},
+			labelColor: function(tooltipItem, chart) {
+				var meta = chart.getDatasetMeta(tooltipItem.datasetIndex);
+				var activeElement = meta.data[tooltipItem.index];
+				var view = activeElement._view;
+				return {
+					borderColor: view.borderColor,
+					backgroundColor: view.backgroundColor
+				};
+			},
+			afterLabel: helpers.noop,
+
+			// Args are: (tooltipItems, data)
+			afterBody: helpers.noop,
+
+			// Args are: (tooltipItems, data)
+			beforeFooter: helpers.noop,
+			footer: helpers.noop,
+			afterFooter: helpers.noop
+		}
+	};
+
+	// Helper to push or concat based on if the 2nd parameter is an array or not
+	function pushOrConcat(base, toPush) {
+		if (toPush) {
+			if (helpers.isArray(toPush)) {
+				// base = base.concat(toPush);
+				Array.prototype.push.apply(base, toPush);
+			} else {
+				base.push(toPush);
+			}
+		}
+
+		return base;
+	}
+
+	// Private helper to create a tooltip item model
+	// @param element : the chart element (point, arc, bar) to create the tooltip item for
+	// @return : new tooltip item
+	function createTooltipItem(element) {
+		var xScale = element._xScale;
+		var yScale = element._yScale || element._scale; // handle radar || polarArea charts
+		var index = element._index,
+			datasetIndex = element._datasetIndex;
+
+		return {
+			xLabel: xScale ? xScale.getLabelForIndex(index, datasetIndex) : '',
+			yLabel: yScale ? yScale.getLabelForIndex(index, datasetIndex) : '',
+			index: index,
+			datasetIndex: datasetIndex,
+			x: element._model.x,
+			y: element._model.y
+		};
+	}
+
+	/**
+	 * Helper to get the reset model for the tooltip
+	 * @param tooltipOpts {Object} the tooltip options
+	 */
+	function getBaseModel(tooltipOpts) {
+		var globalDefaults = Chart.defaults.global;
+		var getValueOrDefault = helpers.getValueOrDefault;
+
+		return {
+			// Positioning
+			xPadding: tooltipOpts.xPadding,
+			yPadding: tooltipOpts.yPadding,
+			xAlign: tooltipOpts.xAlign,
+			yAlign: tooltipOpts.yAlign,
+
+			// Body
+			bodyFontColor: tooltipOpts.bodyFontColor,
+			_bodyFontFamily: getValueOrDefault(tooltipOpts.bodyFontFamily, globalDefaults.defaultFontFamily),
+			_bodyFontStyle: getValueOrDefault(tooltipOpts.bodyFontStyle, globalDefaults.defaultFontStyle),
+			_bodyAlign: tooltipOpts.bodyAlign,
+			bodyFontSize: getValueOrDefault(tooltipOpts.bodyFontSize, globalDefaults.defaultFontSize),
+			bodySpacing: tooltipOpts.bodySpacing,
+
+			// Title
+			titleFontColor: tooltipOpts.titleFontColor,
+			_titleFontFamily: getValueOrDefault(tooltipOpts.titleFontFamily, globalDefaults.defaultFontFamily),
+			_titleFontStyle: getValueOrDefault(tooltipOpts.titleFontStyle, globalDefaults.defaultFontStyle),
+			titleFontSize: getValueOrDefault(tooltipOpts.titleFontSize, globalDefaults.defaultFontSize),
+			_titleAlign: tooltipOpts.titleAlign,
+			titleSpacing: tooltipOpts.titleSpacing,
+			titleMarginBottom: tooltipOpts.titleMarginBottom,
+
+			// Footer
+			footerFontColor: tooltipOpts.footerFontColor,
+			_footerFontFamily: getValueOrDefault(tooltipOpts.footerFontFamily, globalDefaults.defaultFontFamily),
+			_footerFontStyle: getValueOrDefault(tooltipOpts.footerFontStyle, globalDefaults.defaultFontStyle),
+			footerFontSize: getValueOrDefault(tooltipOpts.footerFontSize, globalDefaults.defaultFontSize),
+			_footerAlign: tooltipOpts.footerAlign,
+			footerSpacing: tooltipOpts.footerSpacing,
+			footerMarginTop: tooltipOpts.footerMarginTop,
+
+			// Appearance
+			caretSize: tooltipOpts.caretSize,
+			cornerRadius: tooltipOpts.cornerRadius,
+			backgroundColor: tooltipOpts.backgroundColor,
+			opacity: 0,
+			legendColorBackground: tooltipOpts.multiKeyBackground,
+			displayColors: tooltipOpts.displayColors,
+			borderColor: tooltipOpts.borderColor,
+			borderWidth: tooltipOpts.borderWidth
+		};
+	}
+
+	/**
+	 * Get the size of the tooltip
+	 */
+	function getTooltipSize(tooltip, model) {
+		var ctx = tooltip._chart.ctx;
+
+		var height = model.yPadding * 2; // Tooltip Padding
+		var width = 0;
+
+		// Count of all lines in the body
+		var body = model.body;
+		var combinedBodyLength = body.reduce(function(count, bodyItem) {
+			return count + bodyItem.before.length + bodyItem.lines.length + bodyItem.after.length;
+		}, 0);
+		combinedBodyLength += model.beforeBody.length + model.afterBody.length;
+
+		var titleLineCount = model.title.length;
+		var footerLineCount = model.footer.length;
+		var titleFontSize = model.titleFontSize,
+			bodyFontSize = model.bodyFontSize,
+			footerFontSize = model.footerFontSize;
+
+		height += titleLineCount * titleFontSize; // Title Lines
+		height += titleLineCount ? (titleLineCount - 1) * model.titleSpacing : 0; // Title Line Spacing
+		height += titleLineCount ? model.titleMarginBottom : 0; // Title's bottom Margin
+		height += combinedBodyLength * bodyFontSize; // Body Lines
+		height += combinedBodyLength ? (combinedBodyLength - 1) * model.bodySpacing : 0; // Body Line Spacing
+		height += footerLineCount ? model.footerMarginTop : 0; // Footer Margin
+		height += footerLineCount * (footerFontSize); // Footer Lines
+		height += footerLineCount ? (footerLineCount - 1) * model.footerSpacing : 0; // Footer Line Spacing
+
+		// Title width
+		var widthPadding = 0;
+		var maxLineWidth = function(line) {
+			width = Math.max(width, ctx.measureText(line).width + widthPadding);
+		};
+
+		ctx.font = helpers.fontString(titleFontSize, model._titleFontStyle, model._titleFontFamily);
+		helpers.each(model.title, maxLineWidth);
+
+		// Body width
+		ctx.font = helpers.fontString(bodyFontSize, model._bodyFontStyle, model._bodyFontFamily);
+		helpers.each(model.beforeBody.concat(model.afterBody), maxLineWidth);
+
+		// Body lines may include some extra width due to the color box
+		widthPadding = model.displayColors ? (bodyFontSize + 2) : 0;
+		helpers.each(body, function(bodyItem) {
+			helpers.each(bodyItem.before, maxLineWidth);
+			helpers.each(bodyItem.lines, maxLineWidth);
+			helpers.each(bodyItem.after, maxLineWidth);
+		});
+
+		// Reset back to 0
+		widthPadding = 0;
+
+		// Footer width
+		ctx.font = helpers.fontString(footerFontSize, model._footerFontStyle, model._footerFontFamily);
+		helpers.each(model.footer, maxLineWidth);
+
+		// Add padding
+		width += 2 * model.xPadding;
+
+		return {
+			width: width,
+			height: height
+		};
+	}
+
+	/**
+	 * Helper to get the alignment of a tooltip given the size
+	 */
+	function determineAlignment(tooltip, size) {
+		var model = tooltip._model;
+		var chart = tooltip._chart;
+		var chartArea = tooltip._chart.chartArea;
+		var xAlign = 'center';
+		var yAlign = 'center';
+
+		if (model.y < size.height) {
+			yAlign = 'top';
+		} else if (model.y > (chart.height - size.height)) {
+			yAlign = 'bottom';
+		}
+
+		var lf, rf; // functions to determine left, right alignment
+		var olf, orf; // functions to determine if left/right alignment causes tooltip to go outside chart
+		var yf; // function to get the y alignment if the tooltip goes outside of the left or right edges
+		var midX = (chartArea.left + chartArea.right) / 2;
+		var midY = (chartArea.top + chartArea.bottom) / 2;
+
+		if (yAlign === 'center') {
+			lf = function(x) {
+				return x <= midX;
+			};
+			rf = function(x) {
+				return x > midX;
+			};
+		} else {
+			lf = function(x) {
+				return x <= (size.width / 2);
+			};
+			rf = function(x) {
+				return x >= (chart.width - (size.width / 2));
+			};
+		}
+
+		olf = function(x) {
+			return x + size.width > chart.width;
+		};
+		orf = function(x) {
+			return x - size.width < 0;
+		};
+		yf = function(y) {
+			return y <= midY ? 'top' : 'bottom';
+		};
+
+		if (lf(model.x)) {
+			xAlign = 'left';
+
+			// Is tooltip too wide and goes over the right side of the chart.?
+			if (olf(model.x)) {
+				xAlign = 'center';
+				yAlign = yf(model.y);
+			}
+		} else if (rf(model.x)) {
+			xAlign = 'right';
+
+			// Is tooltip too wide and goes outside left edge of canvas?
+			if (orf(model.x)) {
+				xAlign = 'center';
+				yAlign = yf(model.y);
+			}
+		}
+
+		var opts = tooltip._options;
+		return {
+			xAlign: opts.xAlign ? opts.xAlign : xAlign,
+			yAlign: opts.yAlign ? opts.yAlign : yAlign
+		};
+	}
+
+	/**
+	 * @Helper to get the location a tooltip needs to be placed at given the initial position (via the vm) and the size and alignment
+	 */
+	function getBackgroundPoint(vm, size, alignment) {
+		// Background Position
+		var x = vm.x;
+		var y = vm.y;
+
+		var caretSize = vm.caretSize,
+			caretPadding = vm.caretPadding,
+			cornerRadius = vm.cornerRadius,
+			xAlign = alignment.xAlign,
+			yAlign = alignment.yAlign,
+			paddingAndSize = caretSize + caretPadding,
+			radiusAndPadding = cornerRadius + caretPadding;
+
+		if (xAlign === 'right') {
+			x -= size.width;
+		} else if (xAlign === 'center') {
+			x -= (size.width / 2);
+		}
+
+		if (yAlign === 'top') {
+			y += paddingAndSize;
+		} else if (yAlign === 'bottom') {
+			y -= size.height + paddingAndSize;
+		} else {
+			y -= (size.height / 2);
+		}
+
+		if (yAlign === 'center') {
+			if (xAlign === 'left') {
+				x += paddingAndSize;
+			} else if (xAlign === 'right') {
+				x -= paddingAndSize;
+			}
+		} else if (xAlign === 'left') {
+			x -= radiusAndPadding;
+		} else if (xAlign === 'right') {
+			x += radiusAndPadding;
+		}
+
+		return {
+			x: x,
+			y: y
+		};
+	}
+
+	Chart.Tooltip = Chart.Element.extend({
+		initialize: function() {
+			this._model = getBaseModel(this._options);
+		},
+
+		// Get the title
+		// Args are: (tooltipItem, data)
+		getTitle: function() {
+			var me = this;
+			var opts = me._options;
+			var callbacks = opts.callbacks;
+
+			var beforeTitle = callbacks.beforeTitle.apply(me, arguments),
+				title = callbacks.title.apply(me, arguments),
+				afterTitle = callbacks.afterTitle.apply(me, arguments);
+
+			var lines = [];
+			lines = pushOrConcat(lines, beforeTitle);
+			lines = pushOrConcat(lines, title);
+			lines = pushOrConcat(lines, afterTitle);
+
+			return lines;
+		},
+
+		// Args are: (tooltipItem, data)
+		getBeforeBody: function() {
+			var lines = this._options.callbacks.beforeBody.apply(this, arguments);
+			return helpers.isArray(lines) ? lines : lines !== undefined ? [lines] : [];
+		},
+
+		// Args are: (tooltipItem, data)
+		getBody: function(tooltipItems, data) {
+			var me = this;
+			var callbacks = me._options.callbacks;
+			var bodyItems = [];
+
+			helpers.each(tooltipItems, function(tooltipItem) {
+				var bodyItem = {
+					before: [],
+					lines: [],
+					after: []
+				};
+				pushOrConcat(bodyItem.before, callbacks.beforeLabel.call(me, tooltipItem, data));
+				pushOrConcat(bodyItem.lines, callbacks.label.call(me, tooltipItem, data));
+				pushOrConcat(bodyItem.after, callbacks.afterLabel.call(me, tooltipItem, data));
+
+				bodyItems.push(bodyItem);
+			});
+
+			return bodyItems;
+		},
+
+		// Args are: (tooltipItem, data)
+		getAfterBody: function() {
+			var lines = this._options.callbacks.afterBody.apply(this, arguments);
+			return helpers.isArray(lines) ? lines : lines !== undefined ? [lines] : [];
+		},
+
+		// Get the footer and beforeFooter and afterFooter lines
+		// Args are: (tooltipItem, data)
+		getFooter: function() {
+			var me = this;
+			var callbacks = me._options.callbacks;
+
+			var beforeFooter = callbacks.beforeFooter.apply(me, arguments);
+			var footer = callbacks.footer.apply(me, arguments);
+			var afterFooter = callbacks.afterFooter.apply(me, arguments);
+
+			var lines = [];
+			lines = pushOrConcat(lines, beforeFooter);
+			lines = pushOrConcat(lines, footer);
+			lines = pushOrConcat(lines, afterFooter);
+
+			return lines;
+		},
+
+		update: function(changed) {
+			var me = this;
+			var opts = me._options;
+
+			// Need to regenerate the model because its faster than using extend and it is necessary due to the optimization in Chart.Element.transition
+			// that does _view = _model if ease === 1. This causes the 2nd tooltip update to set properties in both the view and model at the same time
+			// which breaks any animations.
+			var existingModel = me._model;
+			var model = me._model = getBaseModel(opts);
+			var active = me._active;
+
+			var data = me._data;
+
+			// In the case where active.length === 0 we need to keep these at existing values for good animations
+			var alignment = {
+				xAlign: existingModel.xAlign,
+				yAlign: existingModel.yAlign
+			};
+			var backgroundPoint = {
+				x: existingModel.x,
+				y: existingModel.y
+			};
+			var tooltipSize = {
+				width: existingModel.width,
+				height: existingModel.height
+			};
+			var tooltipPosition = {
+				x: existingModel.caretX,
+				y: existingModel.caretY
+			};
+
+			var i, len;
+
+			if (active.length) {
+				model.opacity = 1;
+
+				var labelColors = [];
+				tooltipPosition = Chart.Tooltip.positioners[opts.position](active, me._eventPosition);
+
+				var tooltipItems = [];
+				for (i = 0, len = active.length; i < len; ++i) {
+					tooltipItems.push(createTooltipItem(active[i]));
+				}
+
+				// If the user provided a filter function, use it to modify the tooltip items
+				if (opts.filter) {
+					tooltipItems = tooltipItems.filter(function(a) {
+						return opts.filter(a, data);
+					});
+				}
+
+				// If the user provided a sorting function, use it to modify the tooltip items
+				if (opts.itemSort) {
+					tooltipItems = tooltipItems.sort(function(a, b) {
+						return opts.itemSort(a, b, data);
+					});
+				}
+
+				// Determine colors for boxes
+				helpers.each(tooltipItems, function(tooltipItem) {
+					labelColors.push(opts.callbacks.labelColor.call(me, tooltipItem, me._chart));
+				});
+
+				// Build the Text Lines
+				model.title = me.getTitle(tooltipItems, data);
+				model.beforeBody = me.getBeforeBody(tooltipItems, data);
+				model.body = me.getBody(tooltipItems, data);
+				model.afterBody = me.getAfterBody(tooltipItems, data);
+				model.footer = me.getFooter(tooltipItems, data);
+
+				// Initial positioning and colors
+				model.x = Math.round(tooltipPosition.x);
+				model.y = Math.round(tooltipPosition.y);
+				model.caretPadding = opts.caretPadding;
+				model.labelColors = labelColors;
+
+				// data points
+				model.dataPoints = tooltipItems;
+
+				// We need to determine alignment of the tooltip
+				tooltipSize = getTooltipSize(this, model);
+				alignment = determineAlignment(this, tooltipSize);
+				// Final Size and Position
+				backgroundPoint = getBackgroundPoint(model, tooltipSize, alignment);
+			} else {
+				model.opacity = 0;
+			}
+
+			model.xAlign = alignment.xAlign;
+			model.yAlign = alignment.yAlign;
+			model.x = backgroundPoint.x;
+			model.y = backgroundPoint.y;
+			model.width = tooltipSize.width;
+			model.height = tooltipSize.height;
+
+			// Point where the caret on the tooltip points to
+			model.caretX = tooltipPosition.x;
+			model.caretY = tooltipPosition.y;
+
+			me._model = model;
+
+			if (changed && opts.custom) {
+				opts.custom.call(me, model);
+			}
+
+			return me;
+		},
+		drawCaret: function(tooltipPoint, size) {
+			var ctx = this._chart.ctx;
+			var vm = this._view;
+			var caretPosition = this.getCaretPosition(tooltipPoint, size, vm);
+
+			ctx.lineTo(caretPosition.x1, caretPosition.y1);
+			ctx.lineTo(caretPosition.x2, caretPosition.y2);
+			ctx.lineTo(caretPosition.x3, caretPosition.y3);
+		},
+		getCaretPosition: function(tooltipPoint, size, vm) {
+			var x1, x2, x3;
+			var y1, y2, y3;
+			var caretSize = vm.caretSize;
+			var cornerRadius = vm.cornerRadius;
+			var xAlign = vm.xAlign,
+				yAlign = vm.yAlign;
+			var ptX = tooltipPoint.x,
+				ptY = tooltipPoint.y;
+			var width = size.width,
+				height = size.height;
+
+			if (yAlign === 'center') {
+				y2 = ptY + (height / 2);
+
+				if (xAlign === 'left') {
+					x1 = ptX;
+					x2 = x1 - caretSize;
+					x3 = x1;
+
+					y1 = y2 + caretSize;
+					y3 = y2 - caretSize;
+				} else {
+					x1 = ptX + width;
+					x2 = x1 + caretSize;
+					x3 = x1;
+
+					y1 = y2 - caretSize;
+					y3 = y2 + caretSize;
+				}
+			} else {
+				if (xAlign === 'left') {
+					x2 = ptX + cornerRadius + (caretSize);
+					x1 = x2 - caretSize;
+					x3 = x2 + caretSize;
+				} else if (xAlign === 'right') {
+					x2 = ptX + width - cornerRadius - caretSize;
+					x1 = x2 - caretSize;
+					x3 = x2 + caretSize;
+				} else {
+					x2 = ptX + (width / 2);
+					x1 = x2 - caretSize;
+					x3 = x2 + caretSize;
+				}
+				if (yAlign === 'top') {
+					y1 = ptY;
+					y2 = y1 - caretSize;
+					y3 = y1;
+				} else {
+					y1 = ptY + height;
+					y2 = y1 + caretSize;
+					y3 = y1;
+					// invert drawing order
+					var tmp = x3;
+					x3 = x1;
+					x1 = tmp;
+				}
+			}
+			return {x1: x1, x2: x2, x3: x3, y1: y1, y2: y2, y3: y3};
+		},
+		drawTitle: function(pt, vm, ctx, opacity) {
+			var title = vm.title;
+
+			if (title.length) {
+				ctx.textAlign = vm._titleAlign;
+				ctx.textBaseline = 'top';
+
+				var titleFontSize = vm.titleFontSize,
+					titleSpacing = vm.titleSpacing;
+
+				ctx.fillStyle = mergeOpacity(vm.titleFontColor, opacity);
+				ctx.font = helpers.fontString(titleFontSize, vm._titleFontStyle, vm._titleFontFamily);
+
+				var i, len;
+				for (i = 0, len = title.length; i < len; ++i) {
+					ctx.fillText(title[i], pt.x, pt.y);
+					pt.y += titleFontSize + titleSpacing; // Line Height and spacing
+
+					if (i + 1 === title.length) {
+						pt.y += vm.titleMarginBottom - titleSpacing; // If Last, add margin, remove spacing
+					}
+				}
+			}
+		},
+		drawBody: function(pt, vm, ctx, opacity) {
+			var bodyFontSize = vm.bodyFontSize;
+			var bodySpacing = vm.bodySpacing;
+			var body = vm.body;
+
+			ctx.textAlign = vm._bodyAlign;
+			ctx.textBaseline = 'top';
+
+			var textColor = mergeOpacity(vm.bodyFontColor, opacity);
+			ctx.fillStyle = textColor;
+			ctx.font = helpers.fontString(bodyFontSize, vm._bodyFontStyle, vm._bodyFontFamily);
+
+			// Before Body
+			var xLinePadding = 0;
+			var fillLineOfText = function(line) {
+				ctx.fillText(line, pt.x + xLinePadding, pt.y);
+				pt.y += bodyFontSize + bodySpacing;
+			};
+
+			// Before body lines
+			helpers.each(vm.beforeBody, fillLineOfText);
+
+			var drawColorBoxes = vm.displayColors;
+			xLinePadding = drawColorBoxes ? (bodyFontSize + 2) : 0;
+
+			// Draw body lines now
+			helpers.each(body, function(bodyItem, i) {
+				helpers.each(bodyItem.before, fillLineOfText);
+
+				helpers.each(bodyItem.lines, function(line) {
+					// Draw Legend-like boxes if needed
+					if (drawColorBoxes) {
+						// Fill a white rect so that colours merge nicely if the opacity is < 1
+						ctx.fillStyle = mergeOpacity(vm.legendColorBackground, opacity);
+						ctx.fillRect(pt.x, pt.y, bodyFontSize, bodyFontSize);
+
+						// Border
+						ctx.strokeStyle = mergeOpacity(vm.labelColors[i].borderColor, opacity);
+						ctx.strokeRect(pt.x, pt.y, bodyFontSize, bodyFontSize);
+
+						// Inner square
+						ctx.fillStyle = mergeOpacity(vm.labelColors[i].backgroundColor, opacity);
+						ctx.fillRect(pt.x + 1, pt.y + 1, bodyFontSize - 2, bodyFontSize - 2);
+
+						ctx.fillStyle = textColor;
+					}
+
+					fillLineOfText(line);
+				});
+
+				helpers.each(bodyItem.after, fillLineOfText);
+			});
+
+			// Reset back to 0 for after body
+			xLinePadding = 0;
+
+			// After body lines
+			helpers.each(vm.afterBody, fillLineOfText);
+			pt.y -= bodySpacing; // Remove last body spacing
+		},
+		drawFooter: function(pt, vm, ctx, opacity) {
+			var footer = vm.footer;
+
+			if (footer.length) {
+				pt.y += vm.footerMarginTop;
+
+				ctx.textAlign = vm._footerAlign;
+				ctx.textBaseline = 'top';
+
+				ctx.fillStyle = mergeOpacity(vm.footerFontColor, opacity);
+				ctx.font = helpers.fontString(vm.footerFontSize, vm._footerFontStyle, vm._footerFontFamily);
+
+				helpers.each(footer, function(line) {
+					ctx.fillText(line, pt.x, pt.y);
+					pt.y += vm.footerFontSize + vm.footerSpacing;
+				});
+			}
+		},
+		drawBackground: function(pt, vm, ctx, tooltipSize, opacity) {
+			ctx.fillStyle = mergeOpacity(vm.backgroundColor, opacity);
+			ctx.strokeStyle = mergeOpacity(vm.borderColor, opacity);
+			ctx.lineWidth = vm.borderWidth;
+			var xAlign = vm.xAlign;
+			var yAlign = vm.yAlign;
+			var x = pt.x;
+			var y = pt.y;
+			var width = tooltipSize.width;
+			var height = tooltipSize.height;
+			var radius = vm.cornerRadius;
+
+			ctx.beginPath();
+			ctx.moveTo(x + radius, y);
+			if (yAlign === 'top') {
+				this.drawCaret(pt, tooltipSize);
+			}
+			ctx.lineTo(x + width - radius, y);
+			ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+			if (yAlign === 'center' && xAlign === 'right') {
+				this.drawCaret(pt, tooltipSize);
+			}
+			ctx.lineTo(x + width, y + height - radius);
+			ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+			if (yAlign === 'bottom') {
+				this.drawCaret(pt, tooltipSize);
+			}
+			ctx.lineTo(x + radius, y + height);
+			ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+			if (yAlign === 'center' && xAlign === 'left') {
+				this.drawCaret(pt, tooltipSize);
+			}
+			ctx.lineTo(x, y + radius);
+			ctx.quadraticCurveTo(x, y, x + radius, y);
+			ctx.closePath();
+
+			ctx.fill();
+
+			if (vm.borderWidth > 0) {
+				ctx.stroke();
+			}
+		},
+		draw: function() {
+			var ctx = this._chart.ctx;
+			var vm = this._view;
+
+			if (vm.opacity === 0) {
+				return;
+			}
+
+			var tooltipSize = {
+				width: vm.width,
+				height: vm.height
+			};
+			var pt = {
+				x: vm.x,
+				y: vm.y
+			};
+
+			// IE11/Edge does not like very small opacities, so snap to 0
+			var opacity = Math.abs(vm.opacity < 1e-3) ? 0 : vm.opacity;
+
+			// Truthy/falsey value for empty tooltip
+			var hasTooltipContent = vm.title.length || vm.beforeBody.length || vm.body.length || vm.afterBody.length || vm.footer.length;
+
+			if (this._options.enabled && hasTooltipContent) {
+				// Draw Background
+				this.drawBackground(pt, vm, ctx, tooltipSize, opacity);
+
+				// Draw Title, Body, and Footer
+				pt.x += vm.xPadding;
+				pt.y += vm.yPadding;
+
+				// Titles
+				this.drawTitle(pt, vm, ctx, opacity);
+
+				// Body
+				this.drawBody(pt, vm, ctx, opacity);
+
+				// Footer
+				this.drawFooter(pt, vm, ctx, opacity);
+			}
+		},
+
+		/**
+		 * Handle an event
+		 * @private
+		 * @param {IEvent} event - The event to handle
+		 * @returns {Boolean} true if the tooltip changed
+		 */
+		handleEvent: function(e) {
+			var me = this;
+			var options = me._options;
+			var changed = false;
+
+			me._lastActive = me._lastActive || [];
+
+			// Find Active Elements for tooltips
+			if (e.type === 'mouseout') {
+				me._active = [];
+			} else {
+				me._active = me._chart.getElementsAtEventForMode(e, options.mode, options);
+			}
+
+			// Remember Last Actives
+			changed = !helpers.arrayEquals(me._active, me._lastActive);
+
+			// If tooltip didn't change, do not handle the target event
+			if (!changed) {
+				return false;
+			}
+
+			me._lastActive = me._active;
+
+			if (options.enabled || options.custom) {
+				me._eventPosition = {
+					x: e.x,
+					y: e.y
+				};
+
+				var model = me._model;
+				me.update(true);
+				me.pivot();
+
+				// See if our tooltip position changed
+				changed |= (model.x !== me._model.x) || (model.y !== me._model.y);
+			}
+
+			return changed;
+		}
+	});
+
+	/**
+	 * @namespace Chart.Tooltip.positioners
+	 */
+	Chart.Tooltip.positioners = {
+		/**
+		 * Average mode places the tooltip at the average position of the elements shown
+		 * @function Chart.Tooltip.positioners.average
+		 * @param elements {ChartElement[]} the elements being displayed in the tooltip
+		 * @returns {Point} tooltip position
+		 */
+		average: function(elements) {
+			if (!elements.length) {
+				return false;
+			}
+
+			var i, len;
+			var x = 0;
+			var y = 0;
+			var count = 0;
+
+			for (i = 0, len = elements.length; i < len; ++i) {
+				var el = elements[i];
+				if (el && el.hasValue()) {
+					var pos = el.tooltipPosition();
+					x += pos.x;
+					y += pos.y;
+					++count;
+				}
+			}
+
+			return {
+				x: Math.round(x / count),
+				y: Math.round(y / count)
+			};
+		},
+
+		/**
+		 * Gets the tooltip position nearest of the item nearest to the event position
+		 * @function Chart.Tooltip.positioners.nearest
+		 * @param elements {Chart.Element[]} the tooltip elements
+		 * @param eventPosition {Point} the position of the event in canvas coordinates
+		 * @returns {Point} the tooltip position
+		 */
+		nearest: function(elements, eventPosition) {
+			var x = eventPosition.x;
+			var y = eventPosition.y;
+
+			var nearestElement;
+			var minDistance = Number.POSITIVE_INFINITY;
+			var i, len;
+			for (i = 0, len = elements.length; i < len; ++i) {
+				var el = elements[i];
+				if (el && el.hasValue()) {
+					var center = el.getCenterPoint();
+					var d = helpers.distanceBetweenPoints(eventPosition, center);
+
+					if (d < minDistance) {
+						minDistance = d;
+						nearestElement = el;
+					}
+				}
+			}
+
+			if (nearestElement) {
+				var tp = nearestElement.tooltipPosition();
+				x = tp.x;
+				y = tp.y;
+			}
+
+			return {
+				x: x,
+				y: y
+			};
+		}
+	};
+};
+
+},{}],28:[function(require,module,exports){
+'use strict';
+
+module.exports = function(Chart) {
+
+	var helpers = Chart.helpers,
+		globalOpts = Chart.defaults.global;
+
+	globalOpts.elements.arc = {
+		backgroundColor: globalOpts.defaultColor,
+		borderColor: '#fff',
+		borderWidth: 2
+	};
+
+	Chart.elements.Arc = Chart.Element.extend({
+		inLabelRange: function(mouseX) {
+			var vm = this._view;
+
+			if (vm) {
+				return (Math.pow(mouseX - vm.x, 2) < Math.pow(vm.radius + vm.hoverRadius, 2));
+			}
+			return false;
+		},
+		inRange: function(chartX, chartY) {
+			var vm = this._view;
+
+			if (vm) {
+				var pointRelativePosition = helpers.getAngleFromPoint(vm, {
+						x: chartX,
+						y: chartY
+					}),
+					angle = pointRelativePosition.angle,
+					distance = pointRelativePosition.distance;
+
+				// Sanitise angle range
+				var startAngle = vm.startAngle;
+				var endAngle = vm.endAngle;
+				while (endAngle < startAngle) {
+					endAngle += 2.0 * Math.PI;
+				}
+				while (angle > endAngle) {
+					angle -= 2.0 * Math.PI;
+				}
+				while (angle < startAngle) {
+					angle += 2.0 * Math.PI;
+				}
+
+				// Check if within the range of the open/close angle
+				var betweenAngles = (angle >= startAngle && angle <= endAngle),
+					withinRadius = (distance >= vm.innerRadius && distance <= vm.outerRadius);
+
+				return (betweenAngles && withinRadius);
+			}
+			return false;
+		},
+		getCenterPoint: function() {
+			var vm = this._view;
+			var halfAngle = (vm.startAngle + vm.endAngle) / 2;
+			var halfRadius = (vm.innerRadius + vm.outerRadius) / 2;
+			return {
+				x: vm.x + Math.cos(halfAngle) * halfRadius,
+				y: vm.y + Math.sin(halfAngle) * halfRadius
+			};
+		},
+		getArea: function() {
+			var vm = this._view;
+			return Math.PI * ((vm.endAngle - vm.startAngle) / (2 * Math.PI)) * (Math.pow(vm.outerRadius, 2) - Math.pow(vm.innerRadius, 2));
+		},
+		tooltipPosition: function() {
+			var vm = this._view;
+
+			var centreAngle = vm.startAngle + ((vm.endAngle - vm.startAngle) / 2),
+				rangeFromCentre = (vm.outerRadius - vm.innerRadius) / 2 + vm.innerRadius;
+			return {
+				x: vm.x + (Math.cos(centreAngle) * rangeFromCentre),
+				y: vm.y + (Math.sin(centreAngle) * rangeFromCentre)
+			};
+		},
+		draw: function() {
+
+			var ctx = this._chart.ctx,
+				vm = this._view,
+				sA = vm.startAngle,
+				eA = vm.endAngle;
+
+			ctx.beginPath();
+
+			ctx.arc(vm.x, vm.y, vm.outerRadius, sA, eA);
+			ctx.arc(vm.x, vm.y, vm.innerRadius, eA, sA, true);
+
+			ctx.closePath();
+			ctx.strokeStyle = vm.borderColor;
+			ctx.lineWidth = vm.borderWidth;
+
+			ctx.fillStyle = vm.backgroundColor;
+
+			ctx.fill();
+			ctx.lineJoin = 'bevel';
+
+			if (vm.borderWidth) {
+				ctx.stroke();
+			}
+		}
+	});
+};
+
+},{}],29:[function(require,module,exports){
+'use strict';
+
+module.exports = function(Chart) {
+
+	var helpers = Chart.helpers;
+	var globalDefaults = Chart.defaults.global;
+
+	Chart.defaults.global.elements.line = {
+		tension: 0.4,
+		backgroundColor: globalDefaults.defaultColor,
+		borderWidth: 3,
+		borderColor: globalDefaults.defaultColor,
+		borderCapStyle: 'butt',
+		borderDash: [],
+		borderDashOffset: 0.0,
+		borderJoinStyle: 'miter',
+		capBezierPoints: true,
+		fill: true, // do we fill in the area between the line and its base axis
+	};
+
+	Chart.elements.Line = Chart.Element.extend({
+		draw: function() {
+			var me = this;
+			var vm = me._view;
+			var ctx = me._chart.ctx;
+			var spanGaps = vm.spanGaps;
+			var points = me._children.slice(); // clone array
+			var globalOptionLineElements = globalDefaults.elements.line;
+			var lastDrawnIndex = -1;
+			var index, current, previous, currentVM;
+
+			// If we are looping, adding the first point again
+			if (me._loop && points.length) {
+				points.push(points[0]);
+			}
+
+			ctx.save();
+
+			// Stroke Line Options
+			ctx.lineCap = vm.borderCapStyle || globalOptionLineElements.borderCapStyle;
+
+			// IE 9 and 10 do not support line dash
+			if (ctx.setLineDash) {
+				ctx.setLineDash(vm.borderDash || globalOptionLineElements.borderDash);
+			}
+
+			ctx.lineDashOffset = vm.borderDashOffset || globalOptionLineElements.borderDashOffset;
+			ctx.lineJoin = vm.borderJoinStyle || globalOptionLineElements.borderJoinStyle;
+			ctx.lineWidth = vm.borderWidth || globalOptionLineElements.borderWidth;
+			ctx.strokeStyle = vm.borderColor || globalDefaults.defaultColor;
+
+			// Stroke Line
+			ctx.beginPath();
+			lastDrawnIndex = -1;
+
+			for (index = 0; index < points.length; ++index) {
+				current = points[index];
+				previous = helpers.previousItem(points, index);
+				currentVM = current._view;
+
+				// First point moves to it's starting position no matter what
+				if (index === 0) {
+					if (!currentVM.skip) {
+						ctx.moveTo(currentVM.x, currentVM.y);
+						lastDrawnIndex = index;
+					}
+				} else {
+					previous = lastDrawnIndex === -1 ? previous : points[lastDrawnIndex];
+
+					if (!currentVM.skip) {
+						if ((lastDrawnIndex !== (index - 1) && !spanGaps) || lastDrawnIndex === -1) {
+							// There was a gap and this is the first point after the gap
+							ctx.moveTo(currentVM.x, currentVM.y);
+						} else {
+							// Line to next point
+							helpers.canvas.lineTo(ctx, previous._view, current._view);
+						}
+						lastDrawnIndex = index;
+					}
+				}
+			}
+
+			ctx.stroke();
+			ctx.restore();
+		}
+	});
+};
+
+},{}],30:[function(require,module,exports){
+'use strict';
+
+module.exports = function(Chart) {
+
+	var helpers = Chart.helpers,
+		globalOpts = Chart.defaults.global,
+		defaultColor = globalOpts.defaultColor;
+
+	globalOpts.elements.point = {
+		radius: 3,
+		pointStyle: 'circle',
+		backgroundColor: defaultColor,
+		borderWidth: 1,
+		borderColor: defaultColor,
+		// Hover
+		hitRadius: 1,
+		hoverRadius: 4,
+		hoverBorderWidth: 1
+	};
+
+	function xRange(mouseX) {
+		var vm = this._view;
+		return vm ? (Math.pow(mouseX - vm.x, 2) < Math.pow(vm.radius + vm.hitRadius, 2)) : false;
+	}
+
+	function yRange(mouseY) {
+		var vm = this._view;
+		return vm ? (Math.pow(mouseY - vm.y, 2) < Math.pow(vm.radius + vm.hitRadius, 2)) : false;
+	}
+
+	Chart.elements.Point = Chart.Element.extend({
+		inRange: function(mouseX, mouseY) {
+			var vm = this._view;
+			return vm ? ((Math.pow(mouseX - vm.x, 2) + Math.pow(mouseY - vm.y, 2)) < Math.pow(vm.hitRadius + vm.radius, 2)) : false;
+		},
+
+		inLabelRange: xRange,
+		inXRange: xRange,
+		inYRange: yRange,
+
+		getCenterPoint: function() {
+			var vm = this._view;
+			return {
+				x: vm.x,
+				y: vm.y
+			};
+		},
+		getArea: function() {
+			return Math.PI * Math.pow(this._view.radius, 2);
+		},
+		tooltipPosition: function() {
+			var vm = this._view;
+			return {
+				x: vm.x,
+				y: vm.y,
+				padding: vm.radius + vm.borderWidth
+			};
+		},
+		draw: function(chartArea) {
+			var vm = this._view;
+			var model = this._model;
+			var ctx = this._chart.ctx;
+			var pointStyle = vm.pointStyle;
+			var radius = vm.radius;
+			var x = vm.x;
+			var y = vm.y;
+			var color = Chart.helpers.color;
+			var errMargin = 1.01; // 1.01 is margin for Accumulated error. (Especially Edge, IE.)
+			var ratio = 0;
+
+			if (vm.skip) {
+				return;
+			}
+
+			ctx.strokeStyle = vm.borderColor || defaultColor;
+			ctx.lineWidth = helpers.getValueOrDefault(vm.borderWidth, globalOpts.elements.point.borderWidth);
+			ctx.fillStyle = vm.backgroundColor || defaultColor;
+
+			// Cliping for Points.
+			// going out from inner charArea?
+			if ((chartArea !== undefined) && ((model.x < chartArea.left) || (chartArea.right*errMargin < model.x) || (model.y < chartArea.top) || (chartArea.bottom*errMargin < model.y))) {
+				// Point fade out
+				if (model.x < chartArea.left) {
+					ratio = (x - model.x) / (chartArea.left - model.x);
+				} else if (chartArea.right*errMargin < model.x) {
+					ratio = (model.x - x) / (model.x - chartArea.right);
+				} else if (model.y < chartArea.top) {
+					ratio = (y - model.y) / (chartArea.top - model.y);
+				} else if (chartArea.bottom*errMargin < model.y) {
+					ratio = (model.y - y) / (model.y - chartArea.bottom);
+				}
+				ratio = Math.round(ratio*100) / 100;
+				ctx.strokeStyle = color(ctx.strokeStyle).alpha(ratio).rgbString();
+				ctx.fillStyle = color(ctx.fillStyle).alpha(ratio).rgbString();
+			}
+
+			Chart.canvasHelpers.drawPoint(ctx, pointStyle, radius, x, y);
+		}
+	});
+};
+
+},{}],31:[function(require,module,exports){
+'use strict';
+
+module.exports = function(Chart) {
+
+	var globalOpts = Chart.defaults.global;
+
+	globalOpts.elements.rectangle = {
+		backgroundColor: globalOpts.defaultColor,
+		borderWidth: 0,
+		borderColor: globalOpts.defaultColor,
+		borderSkipped: 'bottom'
+	};
+
+	function isVertical(bar) {
+		return bar._view.width !== undefined;
+	}
+
+	/**
+	 * Helper function to get the bounds of the bar regardless of the orientation
+	 * @private
+	 * @param bar {Chart.Element.Rectangle} the bar
+	 * @return {Bounds} bounds of the bar
+	 */
+	function getBarBounds(bar) {
+		var vm = bar._view;
+		var x1, x2, y1, y2;
+
+		if (isVertical(bar)) {
+			// vertical
+			var halfWidth = vm.width / 2;
+			x1 = vm.x - halfWidth;
+			x2 = vm.x + halfWidth;
+			y1 = Math.min(vm.y, vm.base);
+			y2 = Math.max(vm.y, vm.base);
+		} else {
+			// horizontal bar
+			var halfHeight = vm.height / 2;
+			x1 = Math.min(vm.x, vm.base);
+			x2 = Math.max(vm.x, vm.base);
+			y1 = vm.y - halfHeight;
+			y2 = vm.y + halfHeight;
+		}
+
+		return {
+			left: x1,
+			top: y1,
+			right: x2,
+			bottom: y2
+		};
+	}
+
+	Chart.elements.Rectangle = Chart.Element.extend({
+		draw: function() {
+			var ctx = this._chart.ctx;
+			var vm = this._view;
+			var left, right, top, bottom, signX, signY, borderSkipped;
+			var borderWidth = vm.borderWidth;
+
+			if (!vm.horizontal) {
+				// bar
+				left = vm.x - vm.width / 2;
+				right = vm.x + vm.width / 2;
+				top = vm.y;
+				bottom = vm.base;
+				signX = 1;
+				signY = bottom > top? 1: -1;
+				borderSkipped = vm.borderSkipped || 'bottom';
+			} else {
+				// horizontal bar
+				left = vm.base;
+				right = vm.x;
+				top = vm.y - vm.height / 2;
+				bottom = vm.y + vm.height / 2;
+				signX = right > left? 1: -1;
+				signY = 1;
+				borderSkipped = vm.borderSkipped || 'left';
+			}
+
+			// Canvas doesn't allow us to stroke inside the width so we can
+			// adjust the sizes to fit if we're setting a stroke on the line
+			if (borderWidth) {
+				// borderWidth shold be less than bar width and bar height.
+				var barSize = Math.min(Math.abs(left - right), Math.abs(top - bottom));
+				borderWidth = borderWidth > barSize? barSize: borderWidth;
+				var halfStroke = borderWidth / 2;
+				// Adjust borderWidth when bar top position is near vm.base(zero).
+				var borderLeft = left + (borderSkipped !== 'left'? halfStroke * signX: 0);
+				var borderRight = right + (borderSkipped !== 'right'? -halfStroke * signX: 0);
+				var borderTop = top + (borderSkipped !== 'top'? halfStroke * signY: 0);
+				var borderBottom = bottom + (borderSkipped !== 'bottom'? -halfStroke * signY: 0);
+				// not become a vertical line?
+				if (borderLeft !== borderRight) {
+					top = borderTop;
+					bottom = borderBottom;
+				}
+				// not become a horizontal line?
+				if (borderTop !== borderBottom) {
+					left = borderLeft;
+					right = borderRight;
+				}
+			}
+
+			ctx.beginPath();
+			ctx.fillStyle = vm.backgroundColor;
+			ctx.strokeStyle = vm.borderColor;
+			ctx.lineWidth = borderWidth;
+
+			// Corner points, from bottom-left to bottom-right clockwise
+			// | 1 2 |
+			// | 0 3 |
+			var corners = [
+				[left, bottom],
+				[left, top],
+				[right, top],
+				[right, bottom]
+			];
+
+			// Find first (starting) corner with fallback to 'bottom'
+			var borders = ['bottom', 'left', 'top', 'right'];
+			var startCorner = borders.indexOf(borderSkipped, 0);
+			if (startCorner === -1) {
+				startCorner = 0;
+			}
+
+			function cornerAt(index) {
+				return corners[(startCorner + index) % 4];
+			}
+
+			// Draw rectangle from 'startCorner'
+			var corner = cornerAt(0);
+			ctx.moveTo(corner[0], corner[1]);
+
+			for (var i = 1; i < 4; i++) {
+				corner = cornerAt(i);
+				ctx.lineTo(corner[0], corner[1]);
+			}
+
+			ctx.fill();
+			if (borderWidth) {
+				ctx.stroke();
+			}
+		},
+		height: function() {
+			var vm = this._view;
+			return vm.base - vm.y;
+		},
+		inRange: function(mouseX, mouseY) {
+			var inRange = false;
+
+			if (this._view) {
+				var bounds = getBarBounds(this);
+				inRange = mouseX >= bounds.left && mouseX <= bounds.right && mouseY >= bounds.top && mouseY <= bounds.bottom;
+			}
+
+			return inRange;
+		},
+		inLabelRange: function(mouseX, mouseY) {
+			var me = this;
+			if (!me._view) {
+				return false;
+			}
+
+			var inRange = false;
+			var bounds = getBarBounds(me);
+
+			if (isVertical(me)) {
+				inRange = mouseX >= bounds.left && mouseX <= bounds.right;
+			} else {
+				inRange = mouseY >= bounds.top && mouseY <= bounds.bottom;
+			}
+
+			return inRange;
+		},
+		inXRange: function(mouseX) {
+			var bounds = getBarBounds(this);
+			return mouseX >= bounds.left && mouseX <= bounds.right;
+		},
+		inYRange: function(mouseY) {
+			var bounds = getBarBounds(this);
+			return mouseY >= bounds.top && mouseY <= bounds.bottom;
+		},
+		getCenterPoint: function() {
+			var vm = this._view;
+			var x, y;
+			if (isVertical(this)) {
+				x = vm.x;
+				y = (vm.y + vm.base) / 2;
+			} else {
+				x = (vm.x + vm.base) / 2;
+				y = vm.y;
+			}
+
+			return {x: x, y: y};
+		},
+		getArea: function() {
+			var vm = this._view;
+			return vm.width * Math.abs(vm.y - vm.base);
+		},
+		tooltipPosition: function() {
+			var vm = this._view;
+			return {
+				x: vm.x,
+				y: vm.y
+			};
+		}
+	});
+
+};
+
+},{}],32:[function(require,module,exports){
+'use strict';
+
+// Chart.Platform implementation for targeting a web browser
+module.exports = function(Chart) {
+	var helpers = Chart.helpers;
+
+	// DOM event types -> Chart.js event types.
+	// Note: only events with different types are mapped.
+	// https://developer.mozilla.org/en-US/docs/Web/Events
+	var eventTypeMap = {
+		// Touch events
+		touchstart: 'mousedown',
+		touchmove: 'mousemove',
+		touchend: 'mouseup',
+
+		// Pointer events
+		pointerenter: 'mouseenter',
+		pointerdown: 'mousedown',
+		pointermove: 'mousemove',
+		pointerup: 'mouseup',
+		pointerleave: 'mouseout',
+		pointerout: 'mouseout'
+	};
+
+	/**
+	 * The "used" size is the final value of a dimension property after all calculations have
+	 * been performed. This method uses the computed style of `element` but returns undefined
+	 * if the computed style is not expressed in pixels. That can happen in some cases where
+	 * `element` has a size relative to its parent and this last one is not yet displayed,
+	 * for example because of `display: none` on a parent node.
+	 * @see https://developer.mozilla.org/en-US/docs/Web/CSS/used_value
+	 * @returns {Number} Size in pixels or undefined if unknown.
+	 */
+	function readUsedSize(element, property) {
+		var value = helpers.getStyle(element, property);
+		var matches = value && value.match(/^(\d+)(\.\d+)?px$/);
+		return matches? Number(matches[1]) : undefined;
+	}
+
+	/**
+	 * Initializes the canvas style and render size without modifying the canvas display size,
+	 * since responsiveness is handled by the controller.resize() method. The config is used
+	 * to determine the aspect ratio to apply in case no explicit height has been specified.
+	 */
+	function initCanvas(canvas, config) {
+		var style = canvas.style;
+
+		// NOTE(SB) canvas.getAttribute('width') !== canvas.width: in the first case it
+		// returns null or '' if no explicit value has been set to the canvas attribute.
+		var renderHeight = canvas.getAttribute('height');
+		var renderWidth = canvas.getAttribute('width');
+
+		// Chart.js modifies some canvas values that we want to restore on destroy
+		canvas._chartjs = {
+			initial: {
+				height: renderHeight,
+				width: renderWidth,
+				style: {
+					display: style.display,
+					height: style.height,
+					width: style.width
+				}
+			}
+		};
+
+		// Force canvas to display as block to avoid extra space caused by inline
+		// elements, which would interfere with the responsive resize process.
+		// https://github.com/chartjs/Chart.js/issues/2538
+		style.display = style.display || 'block';
+
+		if (renderWidth === null || renderWidth === '') {
+			var displayWidth = readUsedSize(canvas, 'width');
+			if (displayWidth !== undefined) {
+				canvas.width = displayWidth;
+			}
+		}
+
+		if (renderHeight === null || renderHeight === '') {
+			if (canvas.style.height === '') {
+				// If no explicit render height and style height, let's apply the aspect ratio,
+				// which one can be specified by the user but also by charts as default option
+				// (i.e. options.aspectRatio). If not specified, use canvas aspect ratio of 2.
+				canvas.height = canvas.width / (config.options.aspectRatio || 2);
+			} else {
+				var displayHeight = readUsedSize(canvas, 'height');
+				if (displayWidth !== undefined) {
+					canvas.height = displayHeight;
+				}
+			}
+		}
+
+		return canvas;
+	}
+
+	function createEvent(type, chart, x, y, nativeEvent) {
+		return {
+			type: type,
+			chart: chart,
+			native: nativeEvent || null,
+			x: x !== undefined? x : null,
+			y: y !== undefined? y : null,
+		};
+	}
+
+	function fromNativeEvent(event, chart) {
+		var type = eventTypeMap[event.type] || event.type;
+		var pos = helpers.getRelativePosition(event, chart);
+		return createEvent(type, chart, pos.x, pos.y, event);
+	}
+
+	function createResizer(handler) {
+		var iframe = document.createElement('iframe');
+		iframe.className = 'chartjs-hidden-iframe';
+		iframe.style.cssText =
+			'display:block;'+
+			'overflow:hidden;'+
+			'border:0;'+
+			'margin:0;'+
+			'top:0;'+
+			'left:0;'+
+			'bottom:0;'+
+			'right:0;'+
+			'height:100%;'+
+			'width:100%;'+
+			'position:absolute;'+
+			'pointer-events:none;'+
+			'z-index:-1;';
+
+		// Prevent the iframe to gain focus on tab.
+		// https://github.com/chartjs/Chart.js/issues/3090
+		iframe.tabIndex = -1;
+
+		// If the iframe is re-attached to the DOM, the resize listener is removed because the
+		// content is reloaded, so make sure to install the handler after the iframe is loaded.
+		// https://github.com/chartjs/Chart.js/issues/3521
+		helpers.addEvent(iframe, 'load', function() {
+			helpers.addEvent(iframe.contentWindow || iframe, 'resize', handler);
+
+			// The iframe size might have changed while loading, which can also
+			// happen if the size has been changed while detached from the DOM.
+			handler();
+		});
+
+		return iframe;
+	}
+
+	function addResizeListener(node, listener, chart) {
+		var stub = node._chartjs = {
+			ticking: false
+		};
+
+		// Throttle the callback notification until the next animation frame.
+		var notify = function() {
+			if (!stub.ticking) {
+				stub.ticking = true;
+				helpers.requestAnimFrame.call(window, function() {
+					if (stub.resizer) {
+						stub.ticking = false;
+						return listener(createEvent('resize', chart));
+					}
+				});
+			}
+		};
+
+		// Let's keep track of this added iframe and thus avoid DOM query when removing it.
+		stub.resizer = createResizer(notify);
+
+		node.insertBefore(stub.resizer, node.firstChild);
+	}
+
+	function removeResizeListener(node) {
+		if (!node || !node._chartjs) {
+			return;
+		}
+
+		var resizer = node._chartjs.resizer;
+		if (resizer) {
+			resizer.parentNode.removeChild(resizer);
+			node._chartjs.resizer = null;
+		}
+
+		delete node._chartjs;
+	}
+
+	return {
+		acquireContext: function(item, config) {
+			if (typeof item === 'string') {
+				item = document.getElementById(item);
+			} else if (item.length) {
+				// Support for array based queries (such as jQuery)
+				item = item[0];
+			}
+
+			if (item && item.canvas) {
+				// Support for any object associated to a canvas (including a context2d)
+				item = item.canvas;
+			}
+
+			// To prevent canvas fingerprinting, some add-ons undefine the getContext
+			// method, for example: https://github.com/kkapsner/CanvasBlocker
+			// https://github.com/chartjs/Chart.js/issues/2807
+			var context = item && item.getContext && item.getContext('2d');
+
+			// `instanceof HTMLCanvasElement/CanvasRenderingContext2D` fails when the item is
+			// inside an iframe or when running in a protected environment. We could guess the
+			// types from their toString() value but let's keep things flexible and assume it's
+			// a sufficient condition if the item has a context2D which has item as `canvas`.
+			// https://github.com/chartjs/Chart.js/issues/3887
+			// https://github.com/chartjs/Chart.js/issues/4102
+			// https://github.com/chartjs/Chart.js/issues/4152
+			if (context && context.canvas === item) {
+				initCanvas(item, config);
+				return context;
+			}
+
+			return null;
+		},
+
+		releaseContext: function(context) {
+			var canvas = context.canvas;
+			if (!canvas._chartjs) {
+				return;
+			}
+
+			var initial = canvas._chartjs.initial;
+			['height', 'width'].forEach(function(prop) {
+				var value = initial[prop];
+				if (value === undefined || value === null) {
+					canvas.removeAttribute(prop);
+				} else {
+					canvas.setAttribute(prop, value);
+				}
+			});
+
+			helpers.each(initial.style || {}, function(value, key) {
+				canvas.style[key] = value;
+			});
+
+			// The canvas render size might have been changed (and thus the state stack discarded),
+			// we can't use save() and restore() to restore the initial state. So make sure that at
+			// least the canvas context is reset to the default state by setting the canvas width.
+			// https://www.w3.org/TR/2011/WD-html5-20110525/the-canvas-element.html
+			canvas.width = canvas.width;
+
+			delete canvas._chartjs;
+		},
+
+		addEventListener: function(chart, type, listener) {
+			var canvas = chart.canvas;
+			if (type === 'resize') {
+				// Note: the resize event is not supported on all browsers.
+				addResizeListener(canvas.parentNode, listener, chart);
+				return;
+			}
+
+			var stub = listener._chartjs || (listener._chartjs = {});
+			var proxies = stub.proxies || (stub.proxies = {});
+			var proxy = proxies[chart.id + '_' + type] = function(event) {
+				listener(fromNativeEvent(event, chart));
+			};
+
+			helpers.addEvent(canvas, type, proxy);
+		},
+
+		removeEventListener: function(chart, type, listener) {
+			var canvas = chart.canvas;
+			if (type === 'resize') {
+				// Note: the resize event is not supported on all browsers.
+				removeResizeListener(canvas.parentNode, listener);
+				return;
+			}
+
+			var stub = listener._chartjs || {};
+			var proxies = stub.proxies || {};
+			var proxy = proxies[chart.id + '_' + type];
+			if (!proxy) {
+				return;
+			}
+
+			helpers.removeEvent(canvas, type, proxy);
+		}
+	};
+};
+
+},{}],33:[function(require,module,exports){
+'use strict';
+
+// By default, select the browser (DOM) platform.
+// @TODO Make possible to select another platform at build time.
+var implementation = require('./platform.dom.js');
+
+module.exports = function(Chart) {
+	/**
+	 * @namespace Chart.platform
+	 * @see https://chartjs.gitbooks.io/proposals/content/Platform.html
+	 * @since 2.4.0
+	 */
+	Chart.platform = {
+		/**
+		 * Called at chart construction time, returns a context2d instance implementing
+		 * the [W3C Canvas 2D Context API standard]{@link https://www.w3.org/TR/2dcontext/}.
+		 * @param {*} item - The native item from which to acquire context (platform specific)
+		 * @param {Object} options - The chart options
+		 * @returns {CanvasRenderingContext2D} context2d instance
+		 */
+		acquireContext: function() {},
+
+		/**
+		 * Called at chart destruction time, releases any resources associated to the context
+		 * previously returned by the acquireContext() method.
+		 * @param {CanvasRenderingContext2D} context - The context2d instance
+		 * @returns {Boolean} true if the method succeeded, else false
+		 */
+		releaseContext: function() {},
+
+		/**
+		 * Registers the specified listener on the given chart.
+		 * @param {Chart} chart - Chart from which to listen for event
+		 * @param {String} type - The ({@link IEvent}) type to listen for
+		 * @param {Function} listener - Receives a notification (an object that implements
+		 * the {@link IEvent} interface) when an event of the specified type occurs.
+		 */
+		addEventListener: function() {},
+
+		/**
+		 * Removes the specified listener previously registered with addEventListener.
+		 * @param {Chart} chart -Chart from which to remove the listener
+		 * @param {String} type - The ({@link IEvent}) type to remove
+		 * @param {Function} listener - The listener function to remove from the event target.
+		 */
+		removeEventListener: function() {}
+	};
+
+	/**
+	 * @interface IPlatform
+	 * Allows abstracting platform dependencies away from the chart
+	 * @borrows Chart.platform.acquireContext as acquireContext
+	 * @borrows Chart.platform.releaseContext as releaseContext
+	 * @borrows Chart.platform.addEventListener as addEventListener
+	 * @borrows Chart.platform.removeEventListener as removeEventListener
+	 */
+
+	/**
+	 * @interface IEvent
+	 * @prop {String} type - The event type name, possible values are:
+	 * 'contextmenu', 'mouseenter', 'mousedown', 'mousemove', 'mouseup', 'mouseout',
+	 * 'click', 'dblclick', 'keydown', 'keypress', 'keyup' and 'resize'
+	 * @prop {*} native - The original native event (null for emulated events, e.g. 'resize')
+	 * @prop {Number} x - The mouse x position, relative to the canvas (null for incompatible events)
+	 * @prop {Number} y - The mouse y position, relative to the canvas (null for incompatible events)
+	 */
+
+	Chart.helpers.extend(Chart.platform, implementation(Chart));
+};
+
+},{"./platform.dom.js":32}],34:[function(require,module,exports){
+'use strict';
+
+module.exports = function(Chart) {
+	/**
+	 * Plugin based on discussion from the following Chart.js issues:
+	 * @see https://github.com/chartjs/Chart.js/issues/2380#issuecomment-279961569
+	 * @see https://github.com/chartjs/Chart.js/issues/2440#issuecomment-256461897
+	 */
+	Chart.defaults.global.plugins.filler = {
+		propagate: true
+	};
+
+	var defaults = Chart.defaults;
+	var helpers = Chart.helpers;
+	var mappers = {
+		dataset: function(source) {
+			var index = source.fill;
+			var chart = source.chart;
+			var meta = chart.getDatasetMeta(index);
+			var visible = meta && chart.isDatasetVisible(index);
+			var points = (visible && meta.dataset._children) || [];
+
+			return !points.length? null : function(point, i) {
+				return points[i]._view || null;
+			};
+		},
+
+		boundary: function(source) {
+			var boundary = source.boundary;
+			var x = boundary? boundary.x : null;
+			var y = boundary? boundary.y : null;
+
+			return function(point) {
+				return {
+					x: x === null? point.x : x,
+					y: y === null? point.y : y,
+				};
+			};
+		}
+	};
+
+	// @todo if (fill[0] === '#')
+	function decodeFill(el, index, count) {
+		var model = el._model || {};
+		var fill = model.fill;
+		var target;
+
+		if (fill === undefined) {
+			fill = !!model.backgroundColor;
+		}
+
+		if (fill === false || fill === null) {
+			return false;
+		}
+
+		if (fill === true) {
+			return 'origin';
+		}
+
+		target = parseFloat(fill, 10);
+		if (isFinite(target) && Math.floor(target) === target) {
+			if (fill[0] === '-' || fill[0] === '+') {
+				target = index + target;
+			}
+
+			if (target === index || target < 0 || target >= count) {
+				return false;
+			}
+
+			return target;
+		}
+
+		switch (fill) {
+		// compatibility
+		case 'bottom':
+			return 'start';
+		case 'top':
+			return 'end';
+		case 'zero':
+			return 'origin';
+		// supported boundaries
+		case 'origin':
+		case 'start':
+		case 'end':
+			return fill;
+		// invalid fill values
+		default:
+			return false;
+		}
+	}
+
+	function computeBoundary(source) {
+		var model = source.el._model || {};
+		var scale = source.el._scale || {};
+		var fill = source.fill;
+		var target = null;
+		var horizontal;
+
+		if (isFinite(fill)) {
+			return null;
+		}
+
+		// Backward compatibility: until v3, we still need to support boundary values set on
+		// the model (scaleTop, scaleBottom and scaleZero) because some external plugins and
+		// controllers might still use it (e.g. the Smith chart).
+
+		if (fill === 'start') {
+			target = model.scaleBottom === undefined? scale.bottom : model.scaleBottom;
+		} else if (fill === 'end') {
+			target = model.scaleTop === undefined? scale.top : model.scaleTop;
+		} else if (model.scaleZero !== undefined) {
+			target = model.scaleZero;
+		} else if (scale.getBasePosition) {
+			target = scale.getBasePosition();
+		} else if (scale.getBasePixel) {
+			target = scale.getBasePixel();
+		}
+
+		if (target !== undefined && target !== null) {
+			if (target.x !== undefined && target.y !== undefined) {
+				return target;
+			}
+
+			if (typeof target === 'number' && isFinite(target)) {
+				horizontal = scale.isHorizontal();
+				return {
+					x: horizontal? target : null,
+					y: horizontal? null : target
+				};
+			}
+		}
+
+		return null;
+	}
+
+	function resolveTarget(sources, index, propagate) {
+		var source = sources[index];
+		var fill = source.fill;
+		var visited = [index];
+		var target;
+
+		if (!propagate) {
+			return fill;
+		}
+
+		while (fill !== false && visited.indexOf(fill) === -1) {
+			if (!isFinite(fill)) {
+				return fill;
+			}
+
+			target = sources[fill];
+			if (!target) {
+				return false;
+			}
+
+			if (target.visible) {
+				return fill;
+			}
+
+			visited.push(fill);
+			fill = target.fill;
+		}
+
+		return false;
+	}
+
+	function createMapper(source) {
+		var fill = source.fill;
+		var type = 'dataset';
+
+		if (fill === false) {
+			return null;
+		}
+
+		if (!isFinite(fill)) {
+			type = 'boundary';
+		}
+
+		return mappers[type](source);
+	}
+
+	function isDrawable(point) {
+		return point && !point.skip;
+	}
+
+	function drawArea(ctx, curve0, curve1, len0, len1) {
+		var i;
+
+		if (!len0 || !len1) {
+			return;
+		}
+
+		// building first area curve (normal)
+		ctx.moveTo(curve0[0].x, curve0[0].y);
+		for (i=1; i<len0; ++i) {
+			helpers.canvas.lineTo(ctx, curve0[i-1], curve0[i]);
+		}
+
+		// joining the two area curves
+		ctx.lineTo(curve1[len1-1].x, curve1[len1-1].y);
+
+		// building opposite area curve (reverse)
+		for (i=len1-1; i>0; --i) {
+			helpers.canvas.lineTo(ctx, curve1[i], curve1[i-1], true);
+		}
+	}
+
+	function doFill(ctx, points, mapper, view, color, loop) {
+		var count = points.length;
+		var span = view.spanGaps;
+		var curve0 = [];
+		var curve1 = [];
+		var len0 = 0;
+		var len1 = 0;
+		var i, ilen, index, p0, p1, d0, d1;
+
+		ctx.beginPath();
+
+		for (i = 0, ilen = (count + !!loop); i < ilen; ++i) {
+			index = i%count;
+			p0 = points[index]._view;
+			p1 = mapper(p0, index, view);
+			d0 = isDrawable(p0);
+			d1 = isDrawable(p1);
+
+			if (d0 && d1) {
+				len0 = curve0.push(p0);
+				len1 = curve1.push(p1);
+			} else if (len0 && len1) {
+				if (!span) {
+					drawArea(ctx, curve0, curve1, len0, len1);
+					len0 = len1 = 0;
+					curve0 = [];
+					curve1 = [];
+				} else {
+					if (d0) {
+						curve0.push(p0);
+					}
+					if (d1) {
+						curve1.push(p1);
+					}
+				}
+			}
+		}
+
+		drawArea(ctx, curve0, curve1, len0, len1);
+
+		ctx.closePath();
+		ctx.fillStyle = color;
+		ctx.fill();
+	}
+
+	return {
+		id: 'filler',
+
+		afterDatasetsUpdate: function(chart, options) {
+			var count = (chart.data.datasets || []).length;
+			var propagate = options.propagate;
+			var sources = [];
+			var meta, i, el, source;
+
+			for (i = 0; i < count; ++i) {
+				meta = chart.getDatasetMeta(i);
+				el = meta.dataset;
+				source = null;
+
+				if (el && el._model && el instanceof Chart.elements.Line) {
+					source = {
+						visible: chart.isDatasetVisible(i),
+						fill: decodeFill(el, i, count),
+						chart: chart,
+						el: el
+					};
+				}
+
+				meta.$filler = source;
+				sources.push(source);
+			}
+
+			for (i=0; i<count; ++i) {
+				source = sources[i];
+				if (!source) {
+					continue;
+				}
+
+				source.fill = resolveTarget(sources, i, propagate);
+				source.boundary = computeBoundary(source);
+				source.mapper = createMapper(source);
+			}
+		},
+
+		beforeDatasetDraw: function(chart, args) {
+			var meta = args.meta.$filler;
+			if (!meta) {
+				return;
+			}
+
+			var el = meta.el;
+			var view = el._view;
+			var points = el._children || [];
+			var mapper = meta.mapper;
+			var color = view.backgroundColor || defaults.global.defaultColor;
+
+			if (mapper && color && points.length) {
+				doFill(chart.ctx, points, mapper, view, color, el._loop);
+			}
+		}
+	};
+};
+
+},{}],35:[function(require,module,exports){
+'use strict';
+
+module.exports = function(Chart) {
+
+	var helpers = Chart.helpers;
+	var layout = Chart.layoutService;
 	var noop = helpers.noop;
 
 	Chart.defaults.global.legend = {
-
 		display: true,
 		position: 'top',
-		fullWidth: true, // marks that this box should take the full width of the canvas (pushing down other boxes)
+		fullWidth: true,
 		reverse: false,
+		weight: 1000,
 
 		// a callback that will handle
 		onClick: function(e, legendItem) {
@@ -4619,6 +8665,18 @@ module.exports = function(Chart) {
 		}
 	};
 
+	/**
+	 * Helper function to get the box width based on the usePointStyle option
+	 * @param labelopts {Object} the label options on the legend
+	 * @param fontSize {Number} the label font size
+	 * @return {Number} width of the color box area
+	 */
+	function getBoxWidth(labelOpts, fontSize) {
+		return labelOpts.usePointStyle ?
+			fontSize * Math.SQRT2 :
+			labelOpts.boxWidth;
+	}
+
 	Chart.Legend = Chart.Element.extend({
 
 		initialize: function(config) {
@@ -4631,7 +8689,7 @@ module.exports = function(Chart) {
 			this.doughnutMode = false;
 		},
 
-		// These methods are ordered by lifecyle. Utilities then follow.
+		// These methods are ordered by lifecycle. Utilities then follow.
 		// Any function defined here is inherited by all legend types.
 		// Any function can be extended by the legend type
 
@@ -4705,10 +8763,20 @@ module.exports = function(Chart) {
 		beforeBuildLabels: noop,
 		buildLabels: function() {
 			var me = this;
-			me.legendItems = me.options.labels.generateLabels.call(me, me.chart);
-			if (me.options.reverse) {
-				me.legendItems.reverse();
+			var labelOpts = me.options.labels;
+			var legendItems = labelOpts.generateLabels.call(me, me.chart);
+
+			if (labelOpts.filter) {
+				legendItems = legendItems.filter(function(item) {
+					return labelOpts.filter(item, me.chart.data);
+				});
 			}
+
+			if (me.options.reverse) {
+				legendItems.reverse();
+			}
+
+			me.legendItems = legendItems;
 		},
 		afterBuildLabels: noop,
 
@@ -4759,11 +8827,9 @@ module.exports = function(Chart) {
 					ctx.textBaseline = 'top';
 
 					helpers.each(me.legendItems, function(legendItem, i) {
-						var boxWidth = labelOpts.usePointStyle ?
-							fontSize * Math.sqrt(2) :
-							labelOpts.boxWidth;
-
+						var boxWidth = getBoxWidth(labelOpts, fontSize);
 						var width = boxWidth + (fontSize / 2) + ctx.measureText(legendItem.text).width;
+
 						if (lineWidths[lineWidths.length - 1] + width + labelOpts.padding >= me.width) {
 							totalHeight += fontSize + (labelOpts.padding);
 							lineWidths[lineWidths.length] = me.left;
@@ -4791,10 +8857,7 @@ module.exports = function(Chart) {
 					var itemHeight = fontSize + vPadding;
 
 					helpers.each(me.legendItems, function(legendItem, i) {
-						// If usePointStyle is set, multiple boxWidth by 2 since it represents
-						// the radius and not truly the width
-						var boxWidth = labelOpts.usePointStyle ? 2 * labelOpts.boxWidth : labelOpts.boxWidth;
-
+						var boxWidth = getBoxWidth(labelOpts, fontSize);
 						var itemWidth = boxWidth + (fontSize / 2) + ctx.measureText(legendItem.text).width;
 
 						// If too tall, go to new column
@@ -4835,7 +8898,7 @@ module.exports = function(Chart) {
 			return this.options.position === 'top' || this.options.position === 'bottom';
 		},
 
-		// Actualy draw the legend on the canvas
+		// Actually draw the legend on the canvas
 		draw: function() {
 			var me = this;
 			var opts = me.options;
@@ -4863,7 +8926,7 @@ module.exports = function(Chart) {
 				ctx.fillStyle = fontColor; // render in correct colour
 				ctx.font = labelFont;
 
-				var boxWidth = labelOpts.boxWidth,
+				var boxWidth = getBoxWidth(labelOpts, fontSize),
 					hitboxes = me.legendHitBoxes;
 
 				// current position
@@ -4889,7 +8952,7 @@ module.exports = function(Chart) {
 					}
 
 					if (opts.labels && opts.labels.usePointStyle) {
-						// Recalulate x and y for drawPoint() because its expecting
+						// Recalculate x and y for drawPoint() because its expecting
 						// x and y to be center of figure (instead of top left)
 						var radius = fontSize * Math.SQRT2 / 2;
 						var offSet = radius / Math.SQRT2;
@@ -4940,9 +9003,7 @@ module.exports = function(Chart) {
 				var itemHeight = fontSize + labelOpts.padding;
 				helpers.each(me.legendItems, function(legendItem, i) {
 					var textWidth = ctx.measureText(legendItem.text).width,
-						width = labelOpts.usePointStyle ?
-							fontSize + (fontSize / 2) + textWidth :
-							boxWidth + (fontSize / 2) + textWidth,
+						width = boxWidth + (fontSize / 2) + textWidth,
 						x = cursor.x,
 						y = cursor.y;
 
@@ -4954,7 +9015,7 @@ module.exports = function(Chart) {
 						}
 					} else if (y + itemHeight > me.bottom) {
 						x = cursor.x = x + me.columnWidths[cursor.line] + labelOpts.padding;
-						y = cursor.y = me.top;
+						y = cursor.y = me.top + labelOpts.padding;
 						cursor.line++;
 					}
 
@@ -4976,11 +9037,17 @@ module.exports = function(Chart) {
 			}
 		},
 
-		// Handle an event
+		/**
+		 * Handle an event
+		 * @private
+		 * @param {IEvent} event - The event to handle
+		 * @return {Boolean} true if a change occured
+		 */
 		handleEvent: function(e) {
 			var me = this;
 			var opts = me.options;
 			var type = e.type === 'mouseup' ? 'click' : e.type;
+			var changed = false;
 
 			if (type === 'mousemove') {
 				if (!opts.onHover) {
@@ -4994,9 +9061,9 @@ module.exports = function(Chart) {
 				return;
 			}
 
-			var position = helpers.getRelativePosition(e, me.chart.chart),
-				x = position.x,
-				y = position.y;
+			// Chart event already has relative position in it
+			var x = e.x,
+				y = e.y;
 
 			if (x >= me.left && x <= me.right && y >= me.top && y <= me.bottom) {
 				// See if we are touching one of the dataset boxes
@@ -5007,982 +9074,89 @@ module.exports = function(Chart) {
 					if (x >= hitBox.left && x <= hitBox.left + hitBox.width && y >= hitBox.top && y <= hitBox.top + hitBox.height) {
 						// Touching an element
 						if (type === 'click') {
-							opts.onClick.call(me, e, me.legendItems[i]);
+							// use e.native for backwards compatibility
+							opts.onClick.call(me, e.native, me.legendItems[i]);
+							changed = true;
 							break;
 						} else if (type === 'mousemove') {
-							opts.onHover.call(me, e, me.legendItems[i]);
+							// use e.native for backwards compatibility
+							opts.onHover.call(me, e.native, me.legendItems[i]);
+							changed = true;
 							break;
 						}
 					}
 				}
 			}
+
+			return changed;
 		}
 	});
 
-	// Register the legend plugin
-	Chart.plugins.register({
-		beforeInit: function(chartInstance) {
-			var opts = chartInstance.options;
-			var legendOpts = opts.legend;
+	function createNewLegendAndAttach(chart, legendOpts) {
+		var legend = new Chart.Legend({
+			ctx: chart.ctx,
+			options: legendOpts,
+			chart: chart
+		});
+
+		layout.configure(chart, legend, legendOpts);
+		layout.addBox(chart, legend);
+		chart.legend = legend;
+	}
+
+	return {
+		id: 'legend',
+
+		beforeInit: function(chart) {
+			var legendOpts = chart.options.legend;
 
 			if (legendOpts) {
-				chartInstance.legend = new Chart.Legend({
-					ctx: chartInstance.chart.ctx,
-					options: legendOpts,
-					chart: chartInstance
-				});
-
-				Chart.layoutService.addBox(chartInstance, chartInstance.legend);
+				createNewLegendAndAttach(chart, legendOpts);
 			}
-		}
-	});
-};
+		},
 
-},{}],23:[function(require,module,exports){
-'use strict';
+		beforeUpdate: function(chart) {
+			var legendOpts = chart.options.legend;
+			var legend = chart.legend;
 
-module.exports = function(Chart) {
+			if (legendOpts) {
+				legendOpts = helpers.configMerge(Chart.defaults.global.legend, legendOpts);
 
-	var noop = Chart.helpers.noop;
-
-	/**
-	 * The plugin service singleton
-	 * @namespace Chart.plugins
-	 * @since 2.1.0
-	 */
-	Chart.plugins = {
-		_plugins: [],
-
-		/**
-		 * Registers the given plugin(s) if not already registered.
-		 * @param {Array|Object} plugins plugin instance(s).
-		 */
-		register: function(plugins) {
-			var p = this._plugins;
-			([]).concat(plugins).forEach(function(plugin) {
-				if (p.indexOf(plugin) === -1) {
-					p.push(plugin);
+				if (legend) {
+					layout.configure(chart, legend, legendOpts);
+					legend.options = legendOpts;
+				} else {
+					createNewLegendAndAttach(chart, legendOpts);
 				}
-			});
-		},
-
-		/**
-		 * Unregisters the given plugin(s) only if registered.
-		 * @param {Array|Object} plugins plugin instance(s).
-		 */
-		unregister: function(plugins) {
-			var p = this._plugins;
-			([]).concat(plugins).forEach(function(plugin) {
-				var idx = p.indexOf(plugin);
-				if (idx !== -1) {
-					p.splice(idx, 1);
-				}
-			});
-		},
-
-		/**
-		 * Remove all registered p^lugins.
-		 * @since 2.1.5
-		 */
-		clear: function() {
-			this._plugins = [];
-		},
-
-		/**
-		 * Returns the number of registered plugins?
-		 * @returns {Number}
-		 * @since 2.1.5
-		 */
-		count: function() {
-			return this._plugins.length;
-		},
-
-		/**
-		 * Returns all registered plugin intances.
-		 * @returns {Array} array of plugin objects.
-		 * @since 2.1.5
-		 */
-		getAll: function() {
-			return this._plugins;
-		},
-
-		/**
-		 * Calls registered plugins on the specified extension, with the given args. This
-		 * method immediately returns as soon as a plugin explicitly returns false. The
-		 * returned value can be used, for instance, to interrupt the current action.
-		 * @param {String} extension the name of the plugin method to call (e.g. 'beforeUpdate').
-		 * @param {Array} [args] extra arguments to apply to the extension call.
-		 * @returns {Boolean} false if any of the plugins return false, else returns true.
-		 */
-		notify: function(extension, args) {
-			var plugins = this._plugins;
-			var ilen = plugins.length;
-			var i, plugin;
-
-			for (i=0; i<ilen; ++i) {
-				plugin = plugins[i];
-				if (typeof plugin[extension] === 'function') {
-					if (plugin[extension].apply(plugin, args || []) === false) {
-						return false;
-					}
-				}
+			} else if (legend) {
+				layout.removeBox(chart, legend);
+				delete chart.legend;
 			}
+		},
 
-			return true;
+		afterEvent: function(chart, e) {
+			var legend = chart.legend;
+			if (legend) {
+				legend.handleEvent(e);
+			}
 		}
 	};
-
-	/**
-	 * Plugin extension methods.
-	 * @interface Chart.PluginBase
-	 * @since 2.1.0
-	 */
-	Chart.PluginBase = Chart.Element.extend({
-		// Called at start of chart init
-		beforeInit: noop,
-
-		// Called at end of chart init
-		afterInit: noop,
-
-		// Called at start of update
-		beforeUpdate: noop,
-
-		// Called at end of update
-		afterUpdate: noop,
-
-		// Called at start of draw
-		beforeDraw: noop,
-
-		// Called at end of draw
-		afterDraw: noop,
-
-		// Called during destroy
-		destroy: noop
-	});
-
-	/**
-	 * Provided for backward compatibility, use Chart.plugins instead
-	 * @namespace Chart.pluginService
-	 * @deprecated since version 2.1.5
-	 * @todo remove me at version 3
-	 */
-	Chart.pluginService = Chart.plugins;
 };
 
-},{}],24:[function(require,module,exports){
+},{}],36:[function(require,module,exports){
 'use strict';
 
 module.exports = function(Chart) {
 
 	var helpers = Chart.helpers;
-
-	Chart.defaults.scale = {
-		display: true,
-		position: 'left',
-
-		// grid line settings
-		gridLines: {
-			display: true,
-			color: 'rgba(0, 0, 0, 0.1)',
-			lineWidth: 1,
-			drawBorder: true,
-			drawOnChartArea: true,
-			drawTicks: true,
-			tickMarkLength: 10,
-			zeroLineWidth: 1,
-			zeroLineColor: 'rgba(0,0,0,0.25)',
-			offsetGridLines: false,
-			borderDash: [],
-			borderDashOffset: 0.0
-		},
-
-		// scale label
-		scaleLabel: {
-			// actual label
-			labelString: '',
-
-			// display property
-			display: false
-		},
-
-		// label settings
-		ticks: {
-			beginAtZero: false,
-			minRotation: 0,
-			maxRotation: 50,
-			mirror: false,
-			padding: 10,
-			reverse: false,
-			display: true,
-			autoSkip: true,
-			autoSkipPadding: 0,
-			labelOffset: 0,
-			// We pass through arrays to be rendered as multiline labels, we convert Others to strings here.
-			callback: function(value) {
-				return helpers.isArray(value) ? value : '' + value;
-			}
-		}
-	};
-
-	Chart.Scale = Chart.Element.extend({
-
-		// These methods are ordered by lifecyle. Utilities then follow.
-		// Any function defined here is inherited by all scale types.
-		// Any function can be extended by the scale type
-
-		beforeUpdate: function() {
-			helpers.callCallback(this.options.beforeUpdate, [this]);
-		},
-		update: function(maxWidth, maxHeight, margins) {
-			var me = this;
-
-			// Update Lifecycle - Probably don't want to ever extend or overwrite this function ;)
-			me.beforeUpdate();
-
-			// Absorb the master measurements
-			me.maxWidth = maxWidth;
-			me.maxHeight = maxHeight;
-			me.margins = helpers.extend({
-				left: 0,
-				right: 0,
-				top: 0,
-				bottom: 0
-			}, margins);
-
-			// Dimensions
-			me.beforeSetDimensions();
-			me.setDimensions();
-			me.afterSetDimensions();
-
-			// Data min/max
-			me.beforeDataLimits();
-			me.determineDataLimits();
-			me.afterDataLimits();
-
-			// Ticks
-			me.beforeBuildTicks();
-			me.buildTicks();
-			me.afterBuildTicks();
-
-			me.beforeTickToLabelConversion();
-			me.convertTicksToLabels();
-			me.afterTickToLabelConversion();
-
-			// Tick Rotation
-			me.beforeCalculateTickRotation();
-			me.calculateTickRotation();
-			me.afterCalculateTickRotation();
-			// Fit
-			me.beforeFit();
-			me.fit();
-			me.afterFit();
-			//
-			me.afterUpdate();
-
-			return me.minSize;
-
-		},
-		afterUpdate: function() {
-			helpers.callCallback(this.options.afterUpdate, [this]);
-		},
-
-		//
-
-		beforeSetDimensions: function() {
-			helpers.callCallback(this.options.beforeSetDimensions, [this]);
-		},
-		setDimensions: function() {
-			var me = this;
-			// Set the unconstrained dimension before label rotation
-			if (me.isHorizontal()) {
-				// Reset position before calculating rotation
-				me.width = me.maxWidth;
-				me.left = 0;
-				me.right = me.width;
-			} else {
-				me.height = me.maxHeight;
-
-				// Reset position before calculating rotation
-				me.top = 0;
-				me.bottom = me.height;
-			}
-
-			// Reset padding
-			me.paddingLeft = 0;
-			me.paddingTop = 0;
-			me.paddingRight = 0;
-			me.paddingBottom = 0;
-		},
-		afterSetDimensions: function() {
-			helpers.callCallback(this.options.afterSetDimensions, [this]);
-		},
-
-		// Data limits
-		beforeDataLimits: function() {
-			helpers.callCallback(this.options.beforeDataLimits, [this]);
-		},
-		determineDataLimits: helpers.noop,
-		afterDataLimits: function() {
-			helpers.callCallback(this.options.afterDataLimits, [this]);
-		},
-
-		//
-		beforeBuildTicks: function() {
-			helpers.callCallback(this.options.beforeBuildTicks, [this]);
-		},
-		buildTicks: helpers.noop,
-		afterBuildTicks: function() {
-			helpers.callCallback(this.options.afterBuildTicks, [this]);
-		},
-
-		beforeTickToLabelConversion: function() {
-			helpers.callCallback(this.options.beforeTickToLabelConversion, [this]);
-		},
-		convertTicksToLabels: function() {
-			var me = this;
-			// Convert ticks to strings
-			me.ticks = me.ticks.map(function(numericalTick, index, ticks) {
-				if (me.options.ticks.userCallback) {
-					return me.options.ticks.userCallback(numericalTick, index, ticks);
-				}
-				return me.options.ticks.callback(numericalTick, index, ticks);
-			},
-			me);
-		},
-		afterTickToLabelConversion: function() {
-			helpers.callCallback(this.options.afterTickToLabelConversion, [this]);
-		},
-
-		//
-
-		beforeCalculateTickRotation: function() {
-			helpers.callCallback(this.options.beforeCalculateTickRotation, [this]);
-		},
-		calculateTickRotation: function() {
-			var me = this;
-			var context = me.ctx;
-			var globalDefaults = Chart.defaults.global;
-			var optionTicks = me.options.ticks;
-
-			// Get the width of each grid by calculating the difference
-			// between x offsets between 0 and 1.
-			var tickFontSize = helpers.getValueOrDefault(optionTicks.fontSize, globalDefaults.defaultFontSize);
-			var tickFontStyle = helpers.getValueOrDefault(optionTicks.fontStyle, globalDefaults.defaultFontStyle);
-			var tickFontFamily = helpers.getValueOrDefault(optionTicks.fontFamily, globalDefaults.defaultFontFamily);
-			var tickLabelFont = helpers.fontString(tickFontSize, tickFontStyle, tickFontFamily);
-			context.font = tickLabelFont;
-
-			var firstWidth = context.measureText(me.ticks[0]).width;
-			var lastWidth = context.measureText(me.ticks[me.ticks.length - 1]).width;
-			var firstRotated;
-
-			me.labelRotation = optionTicks.minRotation || 0;
-			me.paddingRight = 0;
-			me.paddingLeft = 0;
-
-			if (me.options.display) {
-				if (me.isHorizontal()) {
-					me.paddingRight = lastWidth / 2 + 3;
-					me.paddingLeft = firstWidth / 2 + 3;
-
-					if (!me.longestTextCache) {
-						me.longestTextCache = {};
-					}
-					var originalLabelWidth = helpers.longestText(context, tickLabelFont, me.ticks, me.longestTextCache);
-					var labelWidth = originalLabelWidth;
-					var cosRotation;
-					var sinRotation;
-
-					// Allow 3 pixels x2 padding either side for label readability
-					// only the index matters for a dataset scale, but we want a consistent interface between scales
-					var tickWidth = me.getPixelForTick(1) - me.getPixelForTick(0) - 6;
-
-					// Max label rotation can be set or default to 90 - also act as a loop counter
-					while (labelWidth > tickWidth && me.labelRotation < optionTicks.maxRotation) {
-						cosRotation = Math.cos(helpers.toRadians(me.labelRotation));
-						sinRotation = Math.sin(helpers.toRadians(me.labelRotation));
-
-						firstRotated = cosRotation * firstWidth;
-
-						// We're right aligning the text now.
-						if (firstRotated + tickFontSize / 2 > me.yLabelWidth) {
-							me.paddingLeft = firstRotated + tickFontSize / 2;
-						}
-
-						me.paddingRight = tickFontSize / 2;
-
-						if (sinRotation * originalLabelWidth > me.maxHeight) {
-							// go back one step
-							me.labelRotation--;
-							break;
-						}
-
-						me.labelRotation++;
-						labelWidth = cosRotation * originalLabelWidth;
-					}
-				}
-			}
-
-			if (me.margins) {
-				me.paddingLeft = Math.max(me.paddingLeft - me.margins.left, 0);
-				me.paddingRight = Math.max(me.paddingRight - me.margins.right, 0);
-			}
-		},
-		afterCalculateTickRotation: function() {
-			helpers.callCallback(this.options.afterCalculateTickRotation, [this]);
-		},
-
-		//
-
-		beforeFit: function() {
-			helpers.callCallback(this.options.beforeFit, [this]);
-		},
-		fit: function() {
-			var me = this;
-			// Reset
-			var minSize = me.minSize = {
-				width: 0,
-				height: 0
-			};
-
-			var opts = me.options;
-			var globalDefaults = Chart.defaults.global;
-			var tickOpts = opts.ticks;
-			var scaleLabelOpts = opts.scaleLabel;
-			var gridLineOpts = opts.gridLines;
-			var display = opts.display;
-			var isHorizontal = me.isHorizontal();
-
-			var tickFontSize = helpers.getValueOrDefault(tickOpts.fontSize, globalDefaults.defaultFontSize);
-			var tickFontStyle = helpers.getValueOrDefault(tickOpts.fontStyle, globalDefaults.defaultFontStyle);
-			var tickFontFamily = helpers.getValueOrDefault(tickOpts.fontFamily, globalDefaults.defaultFontFamily);
-			var tickLabelFont = helpers.fontString(tickFontSize, tickFontStyle, tickFontFamily);
-
-			var scaleLabelFontSize = helpers.getValueOrDefault(scaleLabelOpts.fontSize, globalDefaults.defaultFontSize);
-
-			var tickMarkLength = opts.gridLines.tickMarkLength;
-
-			// Width
-			if (isHorizontal) {
-				// subtract the margins to line up with the chartArea if we are a full width scale
-				minSize.width = me.isFullWidth() ? me.maxWidth - me.margins.left - me.margins.right : me.maxWidth;
-			} else {
-				minSize.width = display && gridLineOpts.drawTicks ? tickMarkLength : 0;
-			}
-
-			// height
-			if (isHorizontal) {
-				minSize.height = display && gridLineOpts.drawTicks ? tickMarkLength : 0;
-			} else {
-				minSize.height = me.maxHeight; // fill all the height
-			}
-
-			// Are we showing a title for the scale?
-			if (scaleLabelOpts.display && display) {
-				if (isHorizontal) {
-					minSize.height += (scaleLabelFontSize * 1.5);
-				} else {
-					minSize.width += (scaleLabelFontSize * 1.5);
-				}
-			}
-
-			if (tickOpts.display && display) {
-				// Don't bother fitting the ticks if we are not showing them
-				if (!me.longestTextCache) {
-					me.longestTextCache = {};
-				}
-
-				var largestTextWidth = helpers.longestText(me.ctx, tickLabelFont, me.ticks, me.longestTextCache);
-				var tallestLabelHeightInLines = helpers.numberOfLabelLines(me.ticks);
-				var lineSpace = tickFontSize * 0.5;
-
-				if (isHorizontal) {
-					// A horizontal axis is more constrained by the height.
-					me.longestLabelWidth = largestTextWidth;
-
-					// TODO - improve this calculation
-					var labelHeight = (Math.sin(helpers.toRadians(me.labelRotation)) * me.longestLabelWidth) + (tickFontSize * tallestLabelHeightInLines) + (lineSpace * tallestLabelHeightInLines);
-
-					minSize.height = Math.min(me.maxHeight, minSize.height + labelHeight);
-					me.ctx.font = tickLabelFont;
-
-					var firstLabelWidth = me.ctx.measureText(me.ticks[0]).width;
-					var lastLabelWidth = me.ctx.measureText(me.ticks[me.ticks.length - 1]).width;
-
-					// Ensure that our ticks are always inside the canvas. When rotated, ticks are right aligned which means that the right padding is dominated
-					// by the font height
-					var cosRotation = Math.cos(helpers.toRadians(me.labelRotation));
-					var sinRotation = Math.sin(helpers.toRadians(me.labelRotation));
-					me.paddingLeft = me.labelRotation !== 0 ? (cosRotation * firstLabelWidth) + 3 : firstLabelWidth / 2 + 3; // add 3 px to move away from canvas edges
-					me.paddingRight = me.labelRotation !== 0 ? (sinRotation * (tickFontSize / 2)) + 3 : lastLabelWidth / 2 + 3; // when rotated
-				} else {
-					// A vertical axis is more constrained by the width. Labels are the dominant factor here, so get that length first
-					var maxLabelWidth = me.maxWidth - minSize.width;
-
-					// Account for padding
-					var mirror = tickOpts.mirror;
-					if (!mirror) {
-						largestTextWidth += me.options.ticks.padding;
-					} else {
-						// If mirrored text is on the inside so don't expand
-						largestTextWidth = 0;
-					}
-
-					if (largestTextWidth < maxLabelWidth) {
-						// We don't need all the room
-						minSize.width += largestTextWidth;
-					} else {
-						// Expand to max size
-						minSize.width = me.maxWidth;
-					}
-
-					me.paddingTop = tickFontSize / 2;
-					me.paddingBottom = tickFontSize / 2;
-				}
-			}
-
-			if (me.margins) {
-				me.paddingLeft = Math.max(me.paddingLeft - me.margins.left, 0);
-				me.paddingTop = Math.max(me.paddingTop - me.margins.top, 0);
-				me.paddingRight = Math.max(me.paddingRight - me.margins.right, 0);
-				me.paddingBottom = Math.max(me.paddingBottom - me.margins.bottom, 0);
-			}
-
-			me.width = minSize.width;
-			me.height = minSize.height;
-
-		},
-		afterFit: function() {
-			helpers.callCallback(this.options.afterFit, [this]);
-		},
-
-		// Shared Methods
-		isHorizontal: function() {
-			return this.options.position === 'top' || this.options.position === 'bottom';
-		},
-		isFullWidth: function() {
-			return (this.options.fullWidth);
-		},
-
-		// Get the correct value. NaN bad inputs, If the value type is object get the x or y based on whether we are horizontal or not
-		getRightValue: function(rawValue) {
-			// Null and undefined values first
-			if (rawValue === null || typeof(rawValue) === 'undefined') {
-				return NaN;
-			}
-			// isNaN(object) returns true, so make sure NaN is checking for a number
-			if (typeof(rawValue) === 'number' && isNaN(rawValue)) {
-				return NaN;
-			}
-			// If it is in fact an object, dive in one more level
-			if (typeof(rawValue) === 'object') {
-				if ((rawValue instanceof Date) || (rawValue.isValid)) {
-					return rawValue;
-				}
-				return this.getRightValue(this.isHorizontal() ? rawValue.x : rawValue.y);
-			}
-
-			// Value is good, return it
-			return rawValue;
-		},
-
-		// Used to get the value to display in the tooltip for the data at the given index
-		// function getLabelForIndex(index, datasetIndex)
-		getLabelForIndex: helpers.noop,
-
-		// Used to get data value locations.  Value can either be an index or a numerical value
-		getPixelForValue: helpers.noop,
-
-		// Used to get the data value from a given pixel. This is the inverse of getPixelForValue
-		getValueForPixel: helpers.noop,
-
-		// Used for tick location, should
-		getPixelForTick: function(index, includeOffset) {
-			var me = this;
-			if (me.isHorizontal()) {
-				var innerWidth = me.width - (me.paddingLeft + me.paddingRight);
-				var tickWidth = innerWidth / Math.max((me.ticks.length - ((me.options.gridLines.offsetGridLines) ? 0 : 1)), 1);
-				var pixel = (tickWidth * index) + me.paddingLeft;
-
-				if (includeOffset) {
-					pixel += tickWidth / 2;
-				}
-
-				var finalVal = me.left + Math.round(pixel);
-				finalVal += me.isFullWidth() ? me.margins.left : 0;
-				return finalVal;
-			}
-			var innerHeight = me.height - (me.paddingTop + me.paddingBottom);
-			return me.top + (index * (innerHeight / (me.ticks.length - 1)));
-		},
-
-		// Utility for getting the pixel location of a percentage of scale
-		getPixelForDecimal: function(decimal /* , includeOffset*/) {
-			var me = this;
-			if (me.isHorizontal()) {
-				var innerWidth = me.width - (me.paddingLeft + me.paddingRight);
-				var valueOffset = (innerWidth * decimal) + me.paddingLeft;
-
-				var finalVal = me.left + Math.round(valueOffset);
-				finalVal += me.isFullWidth() ? me.margins.left : 0;
-				return finalVal;
-			}
-			return me.top + (decimal * me.height);
-		},
-
-		getBasePixel: function() {
-			var me = this;
-			var min = me.min;
-			var max = me.max;
-
-			return me.getPixelForValue(
-				me.beginAtZero? 0:
-				min < 0 && max < 0? max :
-				min > 0 && max > 0? min :
-				0);
-		},
-
-		// Actualy draw the scale on the canvas
-		// @param {rectangle} chartArea : the area of the chart to draw full grid lines on
-		draw: function(chartArea) {
-			var me = this;
-			var options = me.options;
-			if (!options.display) {
-				return;
-			}
-
-			var context = me.ctx;
-			var globalDefaults = Chart.defaults.global;
-			var optionTicks = options.ticks;
-			var gridLines = options.gridLines;
-			var scaleLabel = options.scaleLabel;
-
-			var isRotated = me.labelRotation !== 0;
-			var skipRatio;
-			var useAutoskipper = optionTicks.autoSkip;
-			var isHorizontal = me.isHorizontal();
-
-			// figure out the maximum number of gridlines to show
-			var maxTicks;
-			if (optionTicks.maxTicksLimit) {
-				maxTicks = optionTicks.maxTicksLimit;
-			}
-
-			var tickFontColor = helpers.getValueOrDefault(optionTicks.fontColor, globalDefaults.defaultFontColor);
-			var tickFontSize = helpers.getValueOrDefault(optionTicks.fontSize, globalDefaults.defaultFontSize);
-			var tickFontStyle = helpers.getValueOrDefault(optionTicks.fontStyle, globalDefaults.defaultFontStyle);
-			var tickFontFamily = helpers.getValueOrDefault(optionTicks.fontFamily, globalDefaults.defaultFontFamily);
-			var tickLabelFont = helpers.fontString(tickFontSize, tickFontStyle, tickFontFamily);
-			var tl = gridLines.tickMarkLength;
-			var borderDash = helpers.getValueOrDefault(gridLines.borderDash, globalDefaults.borderDash);
-			var borderDashOffset = helpers.getValueOrDefault(gridLines.borderDashOffset, globalDefaults.borderDashOffset);
-
-			var scaleLabelFontColor = helpers.getValueOrDefault(scaleLabel.fontColor, globalDefaults.defaultFontColor);
-			var scaleLabelFontSize = helpers.getValueOrDefault(scaleLabel.fontSize, globalDefaults.defaultFontSize);
-			var scaleLabelFontStyle = helpers.getValueOrDefault(scaleLabel.fontStyle, globalDefaults.defaultFontStyle);
-			var scaleLabelFontFamily = helpers.getValueOrDefault(scaleLabel.fontFamily, globalDefaults.defaultFontFamily);
-			var scaleLabelFont = helpers.fontString(scaleLabelFontSize, scaleLabelFontStyle, scaleLabelFontFamily);
-
-			var labelRotationRadians = helpers.toRadians(me.labelRotation);
-			var cosRotation = Math.cos(labelRotationRadians);
-			var longestRotatedLabel = me.longestLabelWidth * cosRotation;
-
-			// Make sure we draw text in the correct color and font
-			context.fillStyle = tickFontColor;
-
-			var itemsToDraw = [];
-
-			if (isHorizontal) {
-				skipRatio = false;
-
-				// Only calculate the skip ratio with the half width of longestRotateLabel if we got an actual rotation
-				// See #2584
-				if (isRotated) {
-					longestRotatedLabel /= 2;
-				}
-
-				if ((longestRotatedLabel + optionTicks.autoSkipPadding) * me.ticks.length > (me.width - (me.paddingLeft + me.paddingRight))) {
-					skipRatio = 1 + Math.floor(((longestRotatedLabel + optionTicks.autoSkipPadding) * me.ticks.length) / (me.width - (me.paddingLeft + me.paddingRight)));
-				}
-
-				// if they defined a max number of optionTicks,
-				// increase skipRatio until that number is met
-				if (maxTicks && me.ticks.length > maxTicks) {
-					while (!skipRatio || me.ticks.length / (skipRatio || 1) > maxTicks) {
-						if (!skipRatio) {
-							skipRatio = 1;
-						}
-						skipRatio += 1;
-					}
-				}
-
-				if (!useAutoskipper) {
-					skipRatio = false;
-				}
-			}
-
-
-			var xTickStart = options.position === 'right' ? me.left : me.right - tl;
-			var xTickEnd = options.position === 'right' ? me.left + tl : me.right;
-			var yTickStart = options.position === 'bottom' ? me.top : me.bottom - tl;
-			var yTickEnd = options.position === 'bottom' ? me.top + tl : me.bottom;
-
-			helpers.each(me.ticks, function(label, index) {
-				// If the callback returned a null or undefined value, do not draw this line
-				if (label === undefined || label === null) {
-					return;
-				}
-
-				var isLastTick = me.ticks.length === index + 1;
-
-				// Since we always show the last tick,we need may need to hide the last shown one before
-				var shouldSkip = (skipRatio > 1 && index % skipRatio > 0) || (index % skipRatio === 0 && index + skipRatio >= me.ticks.length);
-				if (shouldSkip && !isLastTick || (label === undefined || label === null)) {
-					return;
-				}
-
-				var lineWidth, lineColor;
-				if (index === (typeof me.zeroLineIndex !== 'undefined' ? me.zeroLineIndex : 0)) {
-					// Draw the first index specially
-					lineWidth = gridLines.zeroLineWidth;
-					lineColor = gridLines.zeroLineColor;
-				} else {
-					lineWidth = helpers.getValueAtIndexOrDefault(gridLines.lineWidth, index);
-					lineColor = helpers.getValueAtIndexOrDefault(gridLines.color, index);
-				}
-
-				// Common properties
-				var tx1, ty1, tx2, ty2, x1, y1, x2, y2, labelX, labelY;
-				var textAlign = 'middle';
-				var textBaseline = 'middle';
-
-				if (isHorizontal) {
-					if (!isRotated) {
-						textBaseline = options.position === 'top' ? 'bottom' : 'top';
-					}
-
-					textAlign = isRotated ? 'right' : 'center';
-
-					var xLineValue = me.getPixelForTick(index) + helpers.aliasPixel(lineWidth); // xvalues for grid lines
-					labelX = me.getPixelForTick(index, gridLines.offsetGridLines) + optionTicks.labelOffset; // x values for optionTicks (need to consider offsetLabel option)
-					labelY = (isRotated) ? me.top + 12 : options.position === 'top' ? me.bottom - tl : me.top + tl;
-
-					tx1 = tx2 = x1 = x2 = xLineValue;
-					ty1 = yTickStart;
-					ty2 = yTickEnd;
-					y1 = chartArea.top;
-					y2 = chartArea.bottom;
-				} else {
-					if (options.position === 'left') {
-						if (optionTicks.mirror) {
-							labelX = me.right + optionTicks.padding;
-							textAlign = 'left';
-						} else {
-							labelX = me.right - optionTicks.padding;
-							textAlign = 'right';
-						}
-					// right side
-					} else if (optionTicks.mirror) {
-						labelX = me.left - optionTicks.padding;
-						textAlign = 'right';
-					} else {
-						labelX = me.left + optionTicks.padding;
-						textAlign = 'left';
-					}
-
-					var yLineValue = me.getPixelForTick(index); // xvalues for grid lines
-					yLineValue += helpers.aliasPixel(lineWidth);
-					labelY = me.getPixelForTick(index, gridLines.offsetGridLines);
-
-					tx1 = xTickStart;
-					tx2 = xTickEnd;
-					x1 = chartArea.left;
-					x2 = chartArea.right;
-					ty1 = ty2 = y1 = y2 = yLineValue;
-				}
-
-				itemsToDraw.push({
-					tx1: tx1,
-					ty1: ty1,
-					tx2: tx2,
-					ty2: ty2,
-					x1: x1,
-					y1: y1,
-					x2: x2,
-					y2: y2,
-					labelX: labelX,
-					labelY: labelY,
-					glWidth: lineWidth,
-					glColor: lineColor,
-					glBorderDash: borderDash,
-					glBorderDashOffset: borderDashOffset,
-					rotation: -1 * labelRotationRadians,
-					label: label,
-					textBaseline: textBaseline,
-					textAlign: textAlign
-				});
-			});
-
-			// Draw all of the tick labels, tick marks, and grid lines at the correct places
-			helpers.each(itemsToDraw, function(itemToDraw) {
-				if (gridLines.display) {
-					context.save();
-					context.lineWidth = itemToDraw.glWidth;
-					context.strokeStyle = itemToDraw.glColor;
-					if (context.setLineDash) {
-						context.setLineDash(itemToDraw.glBorderDash);
-						context.lineDashOffset = itemToDraw.glBorderDashOffset;
-					}
-
-					context.beginPath();
-
-					if (gridLines.drawTicks) {
-						context.moveTo(itemToDraw.tx1, itemToDraw.ty1);
-						context.lineTo(itemToDraw.tx2, itemToDraw.ty2);
-					}
-
-					if (gridLines.drawOnChartArea) {
-						context.moveTo(itemToDraw.x1, itemToDraw.y1);
-						context.lineTo(itemToDraw.x2, itemToDraw.y2);
-					}
-
-					context.stroke();
-					context.restore();
-				}
-
-				if (optionTicks.display) {
-					context.save();
-					context.translate(itemToDraw.labelX, itemToDraw.labelY);
-					context.rotate(itemToDraw.rotation);
-					context.font = tickLabelFont;
-					context.textBaseline = itemToDraw.textBaseline;
-					context.textAlign = itemToDraw.textAlign;
-
-					var label = itemToDraw.label;
-					if (helpers.isArray(label)) {
-						for (var i = 0, y = -(label.length - 1)*tickFontSize*0.75; i < label.length; ++i) {
-							// We just make sure the multiline element is a string here..
-							context.fillText('' + label[i], 0, y);
-							// apply same lineSpacing as calculated @ L#320
-							y += (tickFontSize * 1.5);
-						}
-					} else {
-						context.fillText(label, 0, 0);
-					}
-					context.restore();
-				}
-			});
-
-			if (scaleLabel.display) {
-				// Draw the scale label
-				var scaleLabelX;
-				var scaleLabelY;
-				var rotation = 0;
-
-				if (isHorizontal) {
-					scaleLabelX = me.left + ((me.right - me.left) / 2); // midpoint of the width
-					scaleLabelY = options.position === 'bottom' ? me.bottom - (scaleLabelFontSize / 2) : me.top + (scaleLabelFontSize / 2);
-				} else {
-					var isLeft = options.position === 'left';
-					scaleLabelX = isLeft ? me.left + (scaleLabelFontSize / 2) : me.right - (scaleLabelFontSize / 2);
-					scaleLabelY = me.top + ((me.bottom - me.top) / 2);
-					rotation = isLeft ? -0.5 * Math.PI : 0.5 * Math.PI;
-				}
-
-				context.save();
-				context.translate(scaleLabelX, scaleLabelY);
-				context.rotate(rotation);
-				context.textAlign = 'center';
-				context.textBaseline = 'middle';
-				context.fillStyle = scaleLabelFontColor; // render in correct colour
-				context.font = scaleLabelFont;
-				context.fillText(scaleLabel.labelString, 0, 0);
-				context.restore();
-			}
-
-			if (gridLines.drawBorder) {
-				// Draw the line at the edge of the axis
-				context.lineWidth = helpers.getValueAtIndexOrDefault(gridLines.lineWidth, 0);
-				context.strokeStyle = helpers.getValueAtIndexOrDefault(gridLines.color, 0);
-				var x1 = me.left,
-					x2 = me.right,
-					y1 = me.top,
-					y2 = me.bottom;
-
-				var aliasPixel = helpers.aliasPixel(context.lineWidth);
-				if (isHorizontal) {
-					y1 = y2 = options.position === 'top' ? me.bottom : me.top;
-					y1 += aliasPixel;
-					y2 += aliasPixel;
-				} else {
-					x1 = x2 = options.position === 'left' ? me.right : me.left;
-					x1 += aliasPixel;
-					x2 += aliasPixel;
-				}
-
-				context.beginPath();
-				context.moveTo(x1, y1);
-				context.lineTo(x2, y2);
-				context.stroke();
-			}
-		}
-	});
-};
-
-},{}],25:[function(require,module,exports){
-'use strict';
-
-module.exports = function(Chart) {
-
-	var helpers = Chart.helpers;
-
-	Chart.scaleService = {
-		// Scale registration object. Extensions can register new scale types (such as log or DB scales) and then
-		// use the new chart options to grab the correct scale
-		constructors: {},
-		// Use a registration function so that we can move to an ES6 map when we no longer need to support
-		// old browsers
-
-		// Scale config defaults
-		defaults: {},
-		registerScaleType: function(type, scaleConstructor, defaults) {
-			this.constructors[type] = scaleConstructor;
-			this.defaults[type] = helpers.clone(defaults);
-		},
-		getScaleConstructor: function(type) {
-			return this.constructors.hasOwnProperty(type) ? this.constructors[type] : undefined;
-		},
-		getScaleDefaults: function(type) {
-			// Return the scale defaults merged with the global settings so that we always use the latest ones
-			return this.defaults.hasOwnProperty(type) ? helpers.scaleMerge(Chart.defaults.scale, this.defaults[type]) : {};
-		},
-		updateScaleDefaults: function(type, additions) {
-			var defaults = this.defaults;
-			if (defaults.hasOwnProperty(type)) {
-				defaults[type] = helpers.extend(defaults[type], additions);
-			}
-		},
-		addScalesToLayout: function(chartInstance) {
-			// Adds each scale to the chart.boxes array to be sized accordingly
-			helpers.each(chartInstance.scales, function(scale) {
-				Chart.layoutService.addBox(chartInstance, scale);
-			});
-		}
-	};
-};
-
-},{}],26:[function(require,module,exports){
-'use strict';
-
-module.exports = function(Chart) {
-
-	var helpers = Chart.helpers;
+	var layout = Chart.layoutService;
+	var noop = helpers.noop;
 
 	Chart.defaults.global.title = {
 		display: false,
 		position: 'top',
-		fullWidth: true, // marks that this box should take the full width of the canvas (pushing down other boxes)
-
+		fullWidth: true,
+		weight: 2000,        // by default greater than legend (1000) to be above
 		fontStyle: 'bold',
 		padding: 10,
 
@@ -5990,26 +9164,18 @@ module.exports = function(Chart) {
 		text: ''
 	};
 
-	var noop = helpers.noop;
 	Chart.Title = Chart.Element.extend({
-
 		initialize: function(config) {
 			var me = this;
 			helpers.extend(me, config);
-			me.options = helpers.configMerge(Chart.defaults.global.title, config.options);
 
 			// Contains hit boxes for each dataset (in dataset order)
 			me.legendHitBoxes = [];
 		},
 
-		// These methods are ordered by lifecyle. Utilities then follow.
+		// These methods are ordered by lifecycle. Utilities then follow.
 
-		beforeUpdate: function() {
-			var chartOpts = this.chart.options;
-			if (chartOpts && chartOpts.title) {
-				this.options = helpers.configMerge(Chart.defaults.global.title, chartOpts.title);
-			}
-		},
+		beforeUpdate: noop,
 		update: function(maxWidth, maxHeight, margins) {
 			var me = this;
 
@@ -6113,7 +9279,7 @@ module.exports = function(Chart) {
 			return pos === 'top' || pos === 'bottom';
 		},
 
-		// Actualy draw the title block on the canvas
+		// Actually draw the title block on the canvas
 		draw: function() {
 			var me = this,
 				ctx = me.ctx,
@@ -6132,7 +9298,8 @@ module.exports = function(Chart) {
 					top = me.top,
 					left = me.left,
 					bottom = me.bottom,
-					right = me.right;
+					right = me.right,
+					maxWidth;
 
 				ctx.fillStyle = valueOrDefault(opts.fontColor, globalDefaults.defaultFontColor); // render in correct colour
 				ctx.font = titleFont;
@@ -6141,9 +9308,11 @@ module.exports = function(Chart) {
 				if (me.isHorizontal()) {
 					titleX = left + ((right - left) / 2); // midpoint of the width
 					titleY = top + ((bottom - top) / 2); // midpoint of the height
+					maxWidth = right - left;
 				} else {
 					titleX = opts.position === 'left' ? left + (fontSize / 2) : right - (fontSize / 2);
 					titleY = top + ((bottom - top) / 2);
+					maxWidth = bottom - top;
 					rotation = Math.PI * (opts.position === 'left' ? -0.5 : 0.5);
 				}
 
@@ -6152,1174 +9321,57 @@ module.exports = function(Chart) {
 				ctx.rotate(rotation);
 				ctx.textAlign = 'center';
 				ctx.textBaseline = 'middle';
-				ctx.fillText(opts.text, 0, 0);
+				ctx.fillText(opts.text, 0, 0, maxWidth);
 				ctx.restore();
 			}
 		}
 	});
 
-	// Register the title plugin
-	Chart.plugins.register({
-		beforeInit: function(chartInstance) {
-			var opts = chartInstance.options;
-			var titleOpts = opts.title;
+	function createNewTitleBlockAndAttach(chart, titleOpts) {
+		var title = new Chart.Title({
+			ctx: chart.ctx,
+			options: titleOpts,
+			chart: chart
+		});
+
+		layout.configure(chart, title, titleOpts);
+		layout.addBox(chart, title);
+		chart.titleBlock = title;
+	}
+
+	return {
+		id: 'title',
+
+		beforeInit: function(chart) {
+			var titleOpts = chart.options.title;
 
 			if (titleOpts) {
-				chartInstance.titleBlock = new Chart.Title({
-					ctx: chartInstance.chart.ctx,
-					options: titleOpts,
-					chart: chartInstance
-				});
-
-				Chart.layoutService.addBox(chartInstance, chartInstance.titleBlock);
+				createNewTitleBlockAndAttach(chart, titleOpts);
 			}
-		}
-	});
-};
+		},
 
-},{}],27:[function(require,module,exports){
-'use strict';
+		beforeUpdate: function(chart) {
+			var titleOpts = chart.options.title;
+			var titleBlock = chart.titleBlock;
 
-module.exports = function(Chart) {
+			if (titleOpts) {
+				titleOpts = helpers.configMerge(Chart.defaults.global.title, titleOpts);
 
-	var helpers = Chart.helpers;
-
-	Chart.defaults.global.tooltips = {
-		enabled: true,
-		custom: null,
-		mode: 'single',
-		backgroundColor: 'rgba(0,0,0,0.8)',
-		titleFontStyle: 'bold',
-		titleSpacing: 2,
-		titleMarginBottom: 6,
-		titleFontColor: '#fff',
-		titleAlign: 'left',
-		bodySpacing: 2,
-		bodyFontColor: '#fff',
-		bodyAlign: 'left',
-		footerFontStyle: 'bold',
-		footerSpacing: 2,
-		footerMarginTop: 6,
-		footerFontColor: '#fff',
-		footerAlign: 'left',
-		yPadding: 6,
-		xPadding: 6,
-		yAlign: 'center',
-		xAlign: 'center',
-		caretSize: 5,
-		cornerRadius: 6,
-		multiKeyBackground: '#fff',
-		callbacks: {
-			// Args are: (tooltipItems, data)
-			beforeTitle: helpers.noop,
-			title: function(tooltipItems, data) {
-				// Pick first xLabel for now
-				var title = '';
-				var labels = data.labels;
-				var labelCount = labels ? labels.length : 0;
-
-				if (tooltipItems.length > 0) {
-					var item = tooltipItems[0];
-
-					if (item.xLabel) {
-						title = item.xLabel;
-					} else if (labelCount > 0 && item.index < labelCount) {
-						title = labels[item.index];
-					}
+				if (titleBlock) {
+					layout.configure(chart, titleBlock, titleOpts);
+					titleBlock.options = titleOpts;
+				} else {
+					createNewTitleBlockAndAttach(chart, titleOpts);
 				}
-
-				return title;
-			},
-			afterTitle: helpers.noop,
-
-			// Args are: (tooltipItems, data)
-			beforeBody: helpers.noop,
-
-			// Args are: (tooltipItem, data)
-			beforeLabel: helpers.noop,
-			label: function(tooltipItem, data) {
-				var datasetLabel = data.datasets[tooltipItem.datasetIndex].label || '';
-				return datasetLabel + ': ' + tooltipItem.yLabel;
-			},
-			labelColor: function(tooltipItem, chartInstance) {
-				var meta = chartInstance.getDatasetMeta(tooltipItem.datasetIndex);
-				var activeElement = meta.data[tooltipItem.index];
-				var view = activeElement._view;
-				return {
-					borderColor: view.borderColor,
-					backgroundColor: view.backgroundColor
-				};
-			},
-			afterLabel: helpers.noop,
-
-			// Args are: (tooltipItems, data)
-			afterBody: helpers.noop,
-
-			// Args are: (tooltipItems, data)
-			beforeFooter: helpers.noop,
-			footer: helpers.noop,
-			afterFooter: helpers.noop
+			} else if (titleBlock) {
+				Chart.layoutService.removeBox(chart, titleBlock);
+				delete chart.titleBlock;
+			}
 		}
 	};
-
-	// Helper to push or concat based on if the 2nd parameter is an array or not
-	function pushOrConcat(base, toPush) {
-		if (toPush) {
-			if (helpers.isArray(toPush)) {
-				// base = base.concat(toPush);
-				Array.prototype.push.apply(base, toPush);
-			} else {
-				base.push(toPush);
-			}
-		}
-
-		return base;
-	}
-
-	function getAveragePosition(elements) {
-		if (!elements.length) {
-			return false;
-		}
-
-		var i, len;
-		var xPositions = [];
-		var yPositions = [];
-
-		for (i = 0, len = elements.length; i < len; ++i) {
-			var el = elements[i];
-			if (el && el.hasValue()) {
-				var pos = el.tooltipPosition();
-				xPositions.push(pos.x);
-				yPositions.push(pos.y);
-			}
-		}
-
-		var x = 0,
-			y = 0;
-		for (i = 0; i < xPositions.length; ++i) {
-			if (xPositions[i]) {
-				x += xPositions[i];
-				y += yPositions[i];
-			}
-		}
-
-		return {
-			x: Math.round(x / xPositions.length),
-			y: Math.round(y / xPositions.length)
-		};
-	}
-
-	// Private helper to create a tooltip iteam model
-	// @param element : the chart element (point, arc, bar) to create the tooltip item for
-	// @return : new tooltip item
-	function createTooltipItem(element) {
-		var xScale = element._xScale;
-		var yScale = element._yScale || element._scale; // handle radar || polarArea charts
-		var index = element._index,
-			datasetIndex = element._datasetIndex;
-
-		return {
-			xLabel: xScale ? xScale.getLabelForIndex(index, datasetIndex) : '',
-			yLabel: yScale ? yScale.getLabelForIndex(index, datasetIndex) : '',
-			index: index,
-			datasetIndex: datasetIndex
-		};
-	}
-
-	Chart.Tooltip = Chart.Element.extend({
-		initialize: function() {
-			var me = this;
-			var globalDefaults = Chart.defaults.global;
-			var tooltipOpts = me._options;
-			var getValueOrDefault = helpers.getValueOrDefault;
-
-			helpers.extend(me, {
-				_model: {
-					// Positioning
-					xPadding: tooltipOpts.xPadding,
-					yPadding: tooltipOpts.yPadding,
-					xAlign: tooltipOpts.xAlign,
-					yAlign: tooltipOpts.yAlign,
-
-					// Body
-					bodyFontColor: tooltipOpts.bodyFontColor,
-					_bodyFontFamily: getValueOrDefault(tooltipOpts.bodyFontFamily, globalDefaults.defaultFontFamily),
-					_bodyFontStyle: getValueOrDefault(tooltipOpts.bodyFontStyle, globalDefaults.defaultFontStyle),
-					_bodyAlign: tooltipOpts.bodyAlign,
-					bodyFontSize: getValueOrDefault(tooltipOpts.bodyFontSize, globalDefaults.defaultFontSize),
-					bodySpacing: tooltipOpts.bodySpacing,
-
-					// Title
-					titleFontColor: tooltipOpts.titleFontColor,
-					_titleFontFamily: getValueOrDefault(tooltipOpts.titleFontFamily, globalDefaults.defaultFontFamily),
-					_titleFontStyle: getValueOrDefault(tooltipOpts.titleFontStyle, globalDefaults.defaultFontStyle),
-					titleFontSize: getValueOrDefault(tooltipOpts.titleFontSize, globalDefaults.defaultFontSize),
-					_titleAlign: tooltipOpts.titleAlign,
-					titleSpacing: tooltipOpts.titleSpacing,
-					titleMarginBottom: tooltipOpts.titleMarginBottom,
-
-					// Footer
-					footerFontColor: tooltipOpts.footerFontColor,
-					_footerFontFamily: getValueOrDefault(tooltipOpts.footerFontFamily, globalDefaults.defaultFontFamily),
-					_footerFontStyle: getValueOrDefault(tooltipOpts.footerFontStyle, globalDefaults.defaultFontStyle),
-					footerFontSize: getValueOrDefault(tooltipOpts.footerFontSize, globalDefaults.defaultFontSize),
-					_footerAlign: tooltipOpts.footerAlign,
-					footerSpacing: tooltipOpts.footerSpacing,
-					footerMarginTop: tooltipOpts.footerMarginTop,
-
-					// Appearance
-					caretSize: tooltipOpts.caretSize,
-					cornerRadius: tooltipOpts.cornerRadius,
-					backgroundColor: tooltipOpts.backgroundColor,
-					opacity: 0,
-					legendColorBackground: tooltipOpts.multiKeyBackground
-				}
-			});
-		},
-
-		// Get the title
-		// Args are: (tooltipItem, data)
-		getTitle: function() {
-			var me = this;
-			var opts = me._options;
-			var callbacks = opts.callbacks;
-
-			var beforeTitle = callbacks.beforeTitle.apply(me, arguments),
-				title = callbacks.title.apply(me, arguments),
-				afterTitle = callbacks.afterTitle.apply(me, arguments);
-
-			var lines = [];
-			lines = pushOrConcat(lines, beforeTitle);
-			lines = pushOrConcat(lines, title);
-			lines = pushOrConcat(lines, afterTitle);
-
-			return lines;
-		},
-
-		// Args are: (tooltipItem, data)
-		getBeforeBody: function() {
-			var lines = this._options.callbacks.beforeBody.apply(this, arguments);
-			return helpers.isArray(lines) ? lines : lines !== undefined ? [lines] : [];
-		},
-
-		// Args are: (tooltipItem, data)
-		getBody: function(tooltipItems, data) {
-			var me = this;
-			var callbacks = me._options.callbacks;
-			var bodyItems = [];
-
-			helpers.each(tooltipItems, function(tooltipItem) {
-				var bodyItem = {
-					before: [],
-					lines: [],
-					after: []
-				};
-				pushOrConcat(bodyItem.before, callbacks.beforeLabel.call(me, tooltipItem, data));
-				pushOrConcat(bodyItem.lines, callbacks.label.call(me, tooltipItem, data));
-				pushOrConcat(bodyItem.after, callbacks.afterLabel.call(me, tooltipItem, data));
-
-				bodyItems.push(bodyItem);
-			});
-
-			return bodyItems;
-		},
-
-		// Args are: (tooltipItem, data)
-		getAfterBody: function() {
-			var lines = this._options.callbacks.afterBody.apply(this, arguments);
-			return helpers.isArray(lines) ? lines : lines !== undefined ? [lines] : [];
-		},
-
-		// Get the footer and beforeFooter and afterFooter lines
-		// Args are: (tooltipItem, data)
-		getFooter: function() {
-			var me = this;
-			var callbacks = me._options.callbacks;
-
-			var beforeFooter = callbacks.beforeFooter.apply(me, arguments);
-			var footer = callbacks.footer.apply(me, arguments);
-			var afterFooter = callbacks.afterFooter.apply(me, arguments);
-
-			var lines = [];
-			lines = pushOrConcat(lines, beforeFooter);
-			lines = pushOrConcat(lines, footer);
-			lines = pushOrConcat(lines, afterFooter);
-
-			return lines;
-		},
-
-		update: function(changed) {
-			var me = this;
-			var opts = me._options;
-			var model = me._model;
-			var active = me._active;
-
-			var data = me._data;
-			var chartInstance = me._chartInstance;
-
-			var i, len;
-
-			if (active.length) {
-				model.opacity = 1;
-
-				var labelColors = [],
-					tooltipPosition = getAveragePosition(active);
-
-				var tooltipItems = [];
-				for (i = 0, len = active.length; i < len; ++i) {
-					tooltipItems.push(createTooltipItem(active[i]));
-				}
-
-				// If the user provided a sorting function, use it to modify the tooltip items
-				if (opts.itemSort) {
-					tooltipItems = tooltipItems.sort(function(a, b) {
-						return opts.itemSort(a, b, data);
-					});
-				}
-
-				// If there is more than one item, show color items
-				if (active.length > 1) {
-					helpers.each(tooltipItems, function(tooltipItem) {
-						labelColors.push(opts.callbacks.labelColor.call(me, tooltipItem, chartInstance));
-					});
-				}
-
-				// Build the Text Lines
-				helpers.extend(model, {
-					title: me.getTitle(tooltipItems, data),
-					beforeBody: me.getBeforeBody(tooltipItems, data),
-					body: me.getBody(tooltipItems, data),
-					afterBody: me.getAfterBody(tooltipItems, data),
-					footer: me.getFooter(tooltipItems, data),
-					x: Math.round(tooltipPosition.x),
-					y: Math.round(tooltipPosition.y),
-					caretPadding: helpers.getValueOrDefault(tooltipPosition.padding, 2),
-					labelColors: labelColors
-				});
-
-				// We need to determine alignment of
-				var tooltipSize = me.getTooltipSize(model);
-				me.determineAlignment(tooltipSize); // Smart Tooltip placement to stay on the canvas
-
-				helpers.extend(model, me.getBackgroundPoint(model, tooltipSize));
-			} else {
-				me._model.opacity = 0;
-			}
-
-			if (changed && opts.custom) {
-				opts.custom.call(me, model);
-			}
-
-			return me;
-		},
-		getTooltipSize: function(vm) {
-			var ctx = this._chart.ctx;
-
-			var size = {
-				height: vm.yPadding * 2, // Tooltip Padding
-				width: 0
-			};
-
-			// Count of all lines in the body
-			var body = vm.body;
-			var combinedBodyLength = body.reduce(function(count, bodyItem) {
-				return count + bodyItem.before.length + bodyItem.lines.length + bodyItem.after.length;
-			}, 0);
-			combinedBodyLength += vm.beforeBody.length + vm.afterBody.length;
-
-			var titleLineCount = vm.title.length;
-			var footerLineCount = vm.footer.length;
-			var titleFontSize = vm.titleFontSize,
-				bodyFontSize = vm.bodyFontSize,
-				footerFontSize = vm.footerFontSize;
-
-			size.height += titleLineCount * titleFontSize; // Title Lines
-			size.height += (titleLineCount - 1) * vm.titleSpacing; // Title Line Spacing
-			size.height += titleLineCount ? vm.titleMarginBottom : 0; // Title's bottom Margin
-			size.height += combinedBodyLength * bodyFontSize; // Body Lines
-			size.height += combinedBodyLength ? (combinedBodyLength - 1) * vm.bodySpacing : 0; // Body Line Spacing
-			size.height += footerLineCount ? vm.footerMarginTop : 0; // Footer Margin
-			size.height += footerLineCount * (footerFontSize); // Footer Lines
-			size.height += footerLineCount ? (footerLineCount - 1) * vm.footerSpacing : 0; // Footer Line Spacing
-
-			// Title width
-			var widthPadding = 0;
-			var maxLineWidth = function(line) {
-				size.width = Math.max(size.width, ctx.measureText(line).width + widthPadding);
-			};
-
-			ctx.font = helpers.fontString(titleFontSize, vm._titleFontStyle, vm._titleFontFamily);
-			helpers.each(vm.title, maxLineWidth);
-
-			// Body width
-			ctx.font = helpers.fontString(bodyFontSize, vm._bodyFontStyle, vm._bodyFontFamily);
-			helpers.each(vm.beforeBody.concat(vm.afterBody), maxLineWidth);
-
-			// Body lines may include some extra width due to the color box
-			widthPadding = body.length > 1 ? (bodyFontSize + 2) : 0;
-			helpers.each(body, function(bodyItem) {
-				helpers.each(bodyItem.before, maxLineWidth);
-				helpers.each(bodyItem.lines, maxLineWidth);
-				helpers.each(bodyItem.after, maxLineWidth);
-			});
-
-			// Reset back to 0
-			widthPadding = 0;
-
-			// Footer width
-			ctx.font = helpers.fontString(footerFontSize, vm._footerFontStyle, vm._footerFontFamily);
-			helpers.each(vm.footer, maxLineWidth);
-
-			// Add padding
-			size.width += 2 * vm.xPadding;
-
-			return size;
-		},
-		determineAlignment: function(size) {
-			var me = this;
-			var model = me._model;
-			var chart = me._chart;
-			var chartArea = me._chartInstance.chartArea;
-
-			if (model.y < size.height) {
-				model.yAlign = 'top';
-			} else if (model.y > (chart.height - size.height)) {
-				model.yAlign = 'bottom';
-			}
-
-			var lf, rf; // functions to determine left, right alignment
-			var olf, orf; // functions to determine if left/right alignment causes tooltip to go outside chart
-			var yf; // function to get the y alignment if the tooltip goes outside of the left or right edges
-			var midX = (chartArea.left + chartArea.right) / 2;
-			var midY = (chartArea.top + chartArea.bottom) / 2;
-
-			if (model.yAlign === 'center') {
-				lf = function(x) {
-					return x <= midX;
-				};
-				rf = function(x) {
-					return x > midX;
-				};
-			} else {
-				lf = function(x) {
-					return x <= (size.width / 2);
-				};
-				rf = function(x) {
-					return x >= (chart.width - (size.width / 2));
-				};
-			}
-
-			olf = function(x) {
-				return x + size.width > chart.width;
-			};
-			orf = function(x) {
-				return x - size.width < 0;
-			};
-			yf = function(y) {
-				return y <= midY ? 'top' : 'bottom';
-			};
-
-			if (lf(model.x)) {
-				model.xAlign = 'left';
-
-				// Is tooltip too wide and goes over the right side of the chart.?
-				if (olf(model.x)) {
-					model.xAlign = 'center';
-					model.yAlign = yf(model.y);
-				}
-			} else if (rf(model.x)) {
-				model.xAlign = 'right';
-
-				// Is tooltip too wide and goes outside left edge of canvas?
-				if (orf(model.x)) {
-					model.xAlign = 'center';
-					model.yAlign = yf(model.y);
-				}
-			}
-		},
-		getBackgroundPoint: function(vm, size) {
-			// Background Position
-			var pt = {
-				x: vm.x,
-				y: vm.y
-			};
-
-			var caretSize = vm.caretSize,
-				caretPadding = vm.caretPadding,
-				cornerRadius = vm.cornerRadius,
-				xAlign = vm.xAlign,
-				yAlign = vm.yAlign,
-				paddingAndSize = caretSize + caretPadding,
-				radiusAndPadding = cornerRadius + caretPadding;
-
-			if (xAlign === 'right') {
-				pt.x -= size.width;
-			} else if (xAlign === 'center') {
-				pt.x -= (size.width / 2);
-			}
-
-			if (yAlign === 'top') {
-				pt.y += paddingAndSize;
-			} else if (yAlign === 'bottom') {
-				pt.y -= size.height + paddingAndSize;
-			} else {
-				pt.y -= (size.height / 2);
-			}
-
-			if (yAlign === 'center') {
-				if (xAlign === 'left') {
-					pt.x += paddingAndSize;
-				} else if (xAlign === 'right') {
-					pt.x -= paddingAndSize;
-				}
-			} else if (xAlign === 'left') {
-				pt.x -= radiusAndPadding;
-			} else if (xAlign === 'right') {
-				pt.x += radiusAndPadding;
-			}
-
-			return pt;
-		},
-		drawCaret: function(tooltipPoint, size, opacity) {
-			var vm = this._view;
-			var ctx = this._chart.ctx;
-			var x1, x2, x3;
-			var y1, y2, y3;
-			var caretSize = vm.caretSize;
-			var cornerRadius = vm.cornerRadius;
-			var xAlign = vm.xAlign,
-				yAlign = vm.yAlign;
-			var ptX = tooltipPoint.x,
-				ptY = tooltipPoint.y;
-			var width = size.width,
-				height = size.height;
-
-			if (yAlign === 'center') {
-				// Left or right side
-				if (xAlign === 'left') {
-					x1 = ptX;
-					x2 = x1 - caretSize;
-					x3 = x1;
-				} else {
-					x1 = ptX + width;
-					x2 = x1 + caretSize;
-					x3 = x1;
-				}
-
-				y2 = ptY + (height / 2);
-				y1 = y2 - caretSize;
-				y3 = y2 + caretSize;
-			} else {
-				if (xAlign === 'left') {
-					x1 = ptX + cornerRadius;
-					x2 = x1 + caretSize;
-					x3 = x2 + caretSize;
-				} else if (xAlign === 'right') {
-					x1 = ptX + width - cornerRadius;
-					x2 = x1 - caretSize;
-					x3 = x2 - caretSize;
-				} else {
-					x2 = ptX + (width / 2);
-					x1 = x2 - caretSize;
-					x3 = x2 + caretSize;
-				}
-
-				if (yAlign === 'top') {
-					y1 = ptY;
-					y2 = y1 - caretSize;
-					y3 = y1;
-				} else {
-					y1 = ptY + height;
-					y2 = y1 + caretSize;
-					y3 = y1;
-				}
-			}
-
-			var bgColor = helpers.color(vm.backgroundColor);
-			ctx.fillStyle = bgColor.alpha(opacity * bgColor.alpha()).rgbString();
-			ctx.beginPath();
-			ctx.moveTo(x1, y1);
-			ctx.lineTo(x2, y2);
-			ctx.lineTo(x3, y3);
-			ctx.closePath();
-			ctx.fill();
-		},
-		drawTitle: function(pt, vm, ctx, opacity) {
-			var title = vm.title;
-
-			if (title.length) {
-				ctx.textAlign = vm._titleAlign;
-				ctx.textBaseline = 'top';
-
-				var titleFontSize = vm.titleFontSize,
-					titleSpacing = vm.titleSpacing;
-
-				var titleFontColor = helpers.color(vm.titleFontColor);
-				ctx.fillStyle = titleFontColor.alpha(opacity * titleFontColor.alpha()).rgbString();
-				ctx.font = helpers.fontString(titleFontSize, vm._titleFontStyle, vm._titleFontFamily);
-
-				var i, len;
-				for (i = 0, len = title.length; i < len; ++i) {
-					ctx.fillText(title[i], pt.x, pt.y);
-					pt.y += titleFontSize + titleSpacing; // Line Height and spacing
-
-					if (i + 1 === title.length) {
-						pt.y += vm.titleMarginBottom - titleSpacing; // If Last, add margin, remove spacing
-					}
-				}
-			}
-		},
-		drawBody: function(pt, vm, ctx, opacity) {
-			var bodyFontSize = vm.bodyFontSize;
-			var bodySpacing = vm.bodySpacing;
-			var body = vm.body;
-
-			ctx.textAlign = vm._bodyAlign;
-			ctx.textBaseline = 'top';
-
-			var bodyFontColor = helpers.color(vm.bodyFontColor);
-			var textColor = bodyFontColor.alpha(opacity * bodyFontColor.alpha()).rgbString();
-			ctx.fillStyle = textColor;
-			ctx.font = helpers.fontString(bodyFontSize, vm._bodyFontStyle, vm._bodyFontFamily);
-
-			// Before Body
-			var xLinePadding = 0;
-			var fillLineOfText = function(line) {
-				ctx.fillText(line, pt.x + xLinePadding, pt.y);
-				pt.y += bodyFontSize + bodySpacing;
-			};
-
-			// Before body lines
-			helpers.each(vm.beforeBody, fillLineOfText);
-
-			var drawColorBoxes = body.length > 1;
-			xLinePadding = drawColorBoxes ? (bodyFontSize + 2) : 0;
-
-			// Draw body lines now
-			helpers.each(body, function(bodyItem, i) {
-				helpers.each(bodyItem.before, fillLineOfText);
-
-				helpers.each(bodyItem.lines, function(line) {
-					// Draw Legend-like boxes if needed
-					if (drawColorBoxes) {
-						// Fill a white rect so that colours merge nicely if the opacity is < 1
-						ctx.fillStyle = helpers.color(vm.legendColorBackground).alpha(opacity).rgbaString();
-						ctx.fillRect(pt.x, pt.y, bodyFontSize, bodyFontSize);
-
-						// Border
-						ctx.strokeStyle = helpers.color(vm.labelColors[i].borderColor).alpha(opacity).rgbaString();
-						ctx.strokeRect(pt.x, pt.y, bodyFontSize, bodyFontSize);
-
-						// Inner square
-						ctx.fillStyle = helpers.color(vm.labelColors[i].backgroundColor).alpha(opacity).rgbaString();
-						ctx.fillRect(pt.x + 1, pt.y + 1, bodyFontSize - 2, bodyFontSize - 2);
-
-						ctx.fillStyle = textColor;
-					}
-
-					fillLineOfText(line);
-				});
-
-				helpers.each(bodyItem.after, fillLineOfText);
-			});
-
-			// Reset back to 0 for after body
-			xLinePadding = 0;
-
-			// After body lines
-			helpers.each(vm.afterBody, fillLineOfText);
-			pt.y -= bodySpacing; // Remove last body spacing
-		},
-		drawFooter: function(pt, vm, ctx, opacity) {
-			var footer = vm.footer;
-
-			if (footer.length) {
-				pt.y += vm.footerMarginTop;
-
-				ctx.textAlign = vm._footerAlign;
-				ctx.textBaseline = 'top';
-
-				var footerFontColor = helpers.color(vm.footerFontColor);
-				ctx.fillStyle = footerFontColor.alpha(opacity * footerFontColor.alpha()).rgbString();
-				ctx.font = helpers.fontString(vm.footerFontSize, vm._footerFontStyle, vm._footerFontFamily);
-
-				helpers.each(footer, function(line) {
-					ctx.fillText(line, pt.x, pt.y);
-					pt.y += vm.footerFontSize + vm.footerSpacing;
-				});
-			}
-		},
-		draw: function() {
-			var ctx = this._chart.ctx;
-			var vm = this._view;
-
-			if (vm.opacity === 0) {
-				return;
-			}
-
-			var tooltipSize = this.getTooltipSize(vm);
-			var pt = {
-				x: vm.x,
-				y: vm.y
-			};
-
-			// IE11/Edge does not like very small opacities, so snap to 0
-			var opacity = Math.abs(vm.opacity < 1e-3) ? 0 : vm.opacity;
-
-			if (this._options.enabled) {
-				// Draw Background
-				var bgColor = helpers.color(vm.backgroundColor);
-				ctx.fillStyle = bgColor.alpha(opacity * bgColor.alpha()).rgbString();
-				helpers.drawRoundedRectangle(ctx, pt.x, pt.y, tooltipSize.width, tooltipSize.height, vm.cornerRadius);
-				ctx.fill();
-
-				// Draw Caret
-				this.drawCaret(pt, tooltipSize, opacity);
-
-				// Draw Title, Body, and Footer
-				pt.x += vm.xPadding;
-				pt.y += vm.yPadding;
-
-				// Titles
-				this.drawTitle(pt, vm, ctx, opacity);
-
-				// Body
-				this.drawBody(pt, vm, ctx, opacity);
-
-				// Footer
-				this.drawFooter(pt, vm, ctx, opacity);
-			}
-		}
-	});
 };
 
-},{}],28:[function(require,module,exports){
-'use strict';
-
-module.exports = function(Chart) {
-
-	var helpers = Chart.helpers,
-		globalOpts = Chart.defaults.global;
-
-	globalOpts.elements.arc = {
-		backgroundColor: globalOpts.defaultColor,
-		borderColor: '#fff',
-		borderWidth: 2
-	};
-
-	Chart.elements.Arc = Chart.Element.extend({
-		inLabelRange: function(mouseX) {
-			var vm = this._view;
-
-			if (vm) {
-				return (Math.pow(mouseX - vm.x, 2) < Math.pow(vm.radius + vm.hoverRadius, 2));
-			}
-			return false;
-		},
-		inRange: function(chartX, chartY) {
-			var vm = this._view;
-
-			if (vm) {
-				var pointRelativePosition = helpers.getAngleFromPoint(vm, {
-						x: chartX,
-						y: chartY
-					}),
-					angle = pointRelativePosition.angle,
-					distance = pointRelativePosition.distance;
-
-				// Sanitise angle range
-				var startAngle = vm.startAngle;
-				var endAngle = vm.endAngle;
-				while (endAngle < startAngle) {
-					endAngle += 2.0 * Math.PI;
-				}
-				while (angle > endAngle) {
-					angle -= 2.0 * Math.PI;
-				}
-				while (angle < startAngle) {
-					angle += 2.0 * Math.PI;
-				}
-
-				// Check if within the range of the open/close angle
-				var betweenAngles = (angle >= startAngle && angle <= endAngle),
-					withinRadius = (distance >= vm.innerRadius && distance <= vm.outerRadius);
-
-				return (betweenAngles && withinRadius);
-			}
-			return false;
-		},
-		tooltipPosition: function() {
-			var vm = this._view;
-
-			var centreAngle = vm.startAngle + ((vm.endAngle - vm.startAngle) / 2),
-				rangeFromCentre = (vm.outerRadius - vm.innerRadius) / 2 + vm.innerRadius;
-			return {
-				x: vm.x + (Math.cos(centreAngle) * rangeFromCentre),
-				y: vm.y + (Math.sin(centreAngle) * rangeFromCentre)
-			};
-		},
-		draw: function() {
-
-			var ctx = this._chart.ctx,
-				vm = this._view,
-				sA = vm.startAngle,
-				eA = vm.endAngle;
-
-			ctx.beginPath();
-
-			ctx.arc(vm.x, vm.y, vm.outerRadius, sA, eA);
-			ctx.arc(vm.x, vm.y, vm.innerRadius, eA, sA, true);
-
-			ctx.closePath();
-			ctx.strokeStyle = vm.borderColor;
-			ctx.lineWidth = vm.borderWidth;
-
-			ctx.fillStyle = vm.backgroundColor;
-
-			ctx.fill();
-			ctx.lineJoin = 'bevel';
-
-			if (vm.borderWidth) {
-				ctx.stroke();
-			}
-		}
-	});
-};
-
-},{}],29:[function(require,module,exports){
-'use strict';
-
-module.exports = function(Chart) {
-
-	var helpers = Chart.helpers;
-	var globalDefaults = Chart.defaults.global;
-
-	Chart.defaults.global.elements.line = {
-		tension: 0.4,
-		backgroundColor: globalDefaults.defaultColor,
-		borderWidth: 3,
-		borderColor: globalDefaults.defaultColor,
-		borderCapStyle: 'butt',
-		borderDash: [],
-		borderDashOffset: 0.0,
-		borderJoinStyle: 'miter',
-		capBezierPoints: true,
-		fill: true // do we fill in the area between the line and its base axis
-	};
-
-	Chart.elements.Line = Chart.Element.extend({
-		draw: function() {
-			var me = this;
-			var vm = me._view;
-			var spanGaps = vm.spanGaps;
-			var scaleZero = vm.scaleZero;
-			var loop = me._loop;
-
-			var ctx = me._chart.ctx;
-			ctx.save();
-
-			// Helper function to draw a line to a point
-			function lineToPoint(previousPoint, point) {
-				var pointVM = point._view;
-				if (point._view.steppedLine === true) {
-					ctx.lineTo(pointVM.x, previousPoint._view.y);
-					ctx.lineTo(pointVM.x, pointVM.y);
-				} else if (point._view.tension === 0) {
-					ctx.lineTo(pointVM.x, pointVM.y);
-				} else {
-					ctx.bezierCurveTo(
-						previousPoint._view.controlPointNextX,
-						previousPoint._view.controlPointNextY,
-						pointVM.controlPointPreviousX,
-						pointVM.controlPointPreviousY,
-						pointVM.x,
-						pointVM.y
-					);
-				}
-			}
-
-			var points = me._children.slice(); // clone array
-			var lastDrawnIndex = -1;
-
-			// If we are looping, adding the first point again
-			if (loop && points.length) {
-				points.push(points[0]);
-			}
-
-			var index, current, previous, currentVM;
-
-			// Fill Line
-			if (points.length && vm.fill) {
-				ctx.beginPath();
-
-				for (index = 0; index < points.length; ++index) {
-					current = points[index];
-					previous = helpers.previousItem(points, index);
-					currentVM = current._view;
-
-					// First point moves to it's starting position no matter what
-					if (index === 0) {
-						if (loop) {
-							ctx.moveTo(scaleZero.x, scaleZero.y);
-						} else {
-							ctx.moveTo(currentVM.x, scaleZero);
-						}
-
-						if (!currentVM.skip) {
-							lastDrawnIndex = index;
-							ctx.lineTo(currentVM.x, currentVM.y);
-						}
-					} else {
-						previous = lastDrawnIndex === -1 ? previous : points[lastDrawnIndex];
-
-						if (currentVM.skip) {
-							// Only do this if this is the first point that is skipped
-							if (!spanGaps && lastDrawnIndex === (index - 1)) {
-								if (loop) {
-									ctx.lineTo(scaleZero.x, scaleZero.y);
-								} else {
-									ctx.lineTo(previous._view.x, scaleZero);
-								}
-							}
-						} else {
-							if (lastDrawnIndex !== (index - 1)) {
-								// There was a gap and this is the first point after the gap. If we've never drawn a point, this is a special case.
-								// If the first data point is NaN, then there is no real gap to skip
-								if (spanGaps && lastDrawnIndex !== -1) {
-									// We are spanning the gap, so simple draw a line to this point
-									lineToPoint(previous, current);
-								} else if (loop) {
-									ctx.lineTo(currentVM.x, currentVM.y);
-								} else {
-									ctx.lineTo(currentVM.x, scaleZero);
-									ctx.lineTo(currentVM.x, currentVM.y);
-								}
-							} else {
-								// Line to next point
-								lineToPoint(previous, current);
-							}
-							lastDrawnIndex = index;
-						}
-					}
-				}
-
-				if (!loop && lastDrawnIndex !== -1) {
-					ctx.lineTo(points[lastDrawnIndex]._view.x, scaleZero);
-				}
-
-				ctx.fillStyle = vm.backgroundColor || globalDefaults.defaultColor;
-				ctx.closePath();
-				ctx.fill();
-			}
-
-			// Stroke Line Options
-			var globalOptionLineElements = globalDefaults.elements.line;
-			ctx.lineCap = vm.borderCapStyle || globalOptionLineElements.borderCapStyle;
-
-			// IE 9 and 10 do not support line dash
-			if (ctx.setLineDash) {
-				ctx.setLineDash(vm.borderDash || globalOptionLineElements.borderDash);
-			}
-
-			ctx.lineDashOffset = vm.borderDashOffset || globalOptionLineElements.borderDashOffset;
-			ctx.lineJoin = vm.borderJoinStyle || globalOptionLineElements.borderJoinStyle;
-			ctx.lineWidth = vm.borderWidth || globalOptionLineElements.borderWidth;
-			ctx.strokeStyle = vm.borderColor || globalDefaults.defaultColor;
-
-			// Stroke Line
-			ctx.beginPath();
-			lastDrawnIndex = -1;
-
-			for (index = 0; index < points.length; ++index) {
-				current = points[index];
-				previous = helpers.previousItem(points, index);
-				currentVM = current._view;
-
-				// First point moves to it's starting position no matter what
-				if (index === 0) {
-					if (!currentVM.skip) {
-						ctx.moveTo(currentVM.x, currentVM.y);
-						lastDrawnIndex = index;
-					}
-				} else {
-					previous = lastDrawnIndex === -1 ? previous : points[lastDrawnIndex];
-
-					if (!currentVM.skip) {
-						if ((lastDrawnIndex !== (index - 1) && !spanGaps) || lastDrawnIndex === -1) {
-							// There was a gap and this is the first point after the gap
-							ctx.moveTo(currentVM.x, currentVM.y);
-						} else {
-							// Line to next point
-							lineToPoint(previous, current);
-						}
-						lastDrawnIndex = index;
-					}
-				}
-			}
-
-			ctx.stroke();
-			ctx.restore();
-		}
-	});
-};
-
-},{}],30:[function(require,module,exports){
-'use strict';
-
-module.exports = function(Chart) {
-
-	var helpers = Chart.helpers,
-		globalOpts = Chart.defaults.global,
-		defaultColor = globalOpts.defaultColor;
-
-	globalOpts.elements.point = {
-		radius: 3,
-		pointStyle: 'circle',
-		backgroundColor: defaultColor,
-		borderWidth: 1,
-		borderColor: defaultColor,
-		// Hover
-		hitRadius: 1,
-		hoverRadius: 4,
-		hoverBorderWidth: 1
-	};
-
-	Chart.elements.Point = Chart.Element.extend({
-		inRange: function(mouseX, mouseY) {
-			var vm = this._view;
-			return vm ? ((Math.pow(mouseX - vm.x, 2) + Math.pow(mouseY - vm.y, 2)) < Math.pow(vm.hitRadius + vm.radius, 2)) : false;
-		},
-		inLabelRange: function(mouseX) {
-			var vm = this._view;
-			return vm ? (Math.pow(mouseX - vm.x, 2) < Math.pow(vm.radius + vm.hitRadius, 2)) : false;
-		},
-		tooltipPosition: function() {
-			var vm = this._view;
-			return {
-				x: vm.x,
-				y: vm.y,
-				padding: vm.radius + vm.borderWidth
-			};
-		},
-		draw: function() {
-			var vm = this._view;
-			var ctx = this._chart.ctx;
-			var pointStyle = vm.pointStyle;
-			var radius = vm.radius;
-			var x = vm.x;
-			var y = vm.y;
-
-			if (vm.skip) {
-				return;
-			}
-
-			ctx.strokeStyle = vm.borderColor || defaultColor;
-			ctx.lineWidth = helpers.getValueOrDefault(vm.borderWidth, globalOpts.elements.point.borderWidth);
-			ctx.fillStyle = vm.backgroundColor || defaultColor;
-
-			Chart.canvasHelpers.drawPoint(ctx, pointStyle, radius, x, y);
-		}
-	});
-};
-
-},{}],31:[function(require,module,exports){
-'use strict';
-
-module.exports = function(Chart) {
-
-	var globalOpts = Chart.defaults.global;
-
-	globalOpts.elements.rectangle = {
-		backgroundColor: globalOpts.defaultColor,
-		borderWidth: 0,
-		borderColor: globalOpts.defaultColor,
-		borderSkipped: 'bottom'
-	};
-
-	Chart.elements.Rectangle = Chart.Element.extend({
-		draw: function() {
-			var ctx = this._chart.ctx;
-			var vm = this._view;
-
-			var halfWidth = vm.width / 2,
-				leftX = vm.x - halfWidth,
-				rightX = vm.x + halfWidth,
-				top = vm.base - (vm.base - vm.y),
-				halfStroke = vm.borderWidth / 2;
-
-			// Canvas doesn't allow us to stroke inside the width so we can
-			// adjust the sizes to fit if we're setting a stroke on the line
-			if (vm.borderWidth) {
-				leftX += halfStroke;
-				rightX -= halfStroke;
-				top += halfStroke;
-			}
-
-			ctx.beginPath();
-			ctx.fillStyle = vm.backgroundColor;
-			ctx.strokeStyle = vm.borderColor;
-			ctx.lineWidth = vm.borderWidth;
-
-			// Corner points, from bottom-left to bottom-right clockwise
-			// | 1 2 |
-			// | 0 3 |
-			var corners = [
-				[leftX, vm.base],
-				[leftX, top],
-				[rightX, top],
-				[rightX, vm.base]
-			];
-
-			// Find first (starting) corner with fallback to 'bottom'
-			var borders = ['bottom', 'left', 'top', 'right'];
-			var startCorner = borders.indexOf(vm.borderSkipped, 0);
-			if (startCorner === -1) {
-				startCorner = 0;
-			}
-
-			function cornerAt(index) {
-				return corners[(startCorner + index) % 4];
-			}
-
-			// Draw rectangle from 'startCorner'
-			ctx.moveTo.apply(ctx, cornerAt(0));
-			for (var i = 1; i < 4; i++) {
-				ctx.lineTo.apply(ctx, cornerAt(i));
-			}
-
-			ctx.fill();
-			if (vm.borderWidth) {
-				ctx.stroke();
-			}
-		},
-		height: function() {
-			var vm = this._view;
-			return vm.base - vm.y;
-		},
-		inRange: function(mouseX, mouseY) {
-			var vm = this._view;
-			return vm ?
-					(vm.y < vm.base ?
-						(mouseX >= vm.x - vm.width / 2 && mouseX <= vm.x + vm.width / 2) && (mouseY >= vm.y && mouseY <= vm.base) :
-						(mouseX >= vm.x - vm.width / 2 && mouseX <= vm.x + vm.width / 2) && (mouseY >= vm.base && mouseY <= vm.y)) :
-					false;
-		},
-		inLabelRange: function(mouseX) {
-			var vm = this._view;
-			return vm ? (mouseX >= vm.x - vm.width / 2 && mouseX <= vm.x + vm.width / 2) : false;
-		},
-		tooltipPosition: function() {
-			var vm = this._view;
-			return {
-				x: vm.x,
-				y: vm.y
-			};
-		}
-	});
-
-};
-
-},{}],32:[function(require,module,exports){
+},{}],37:[function(require,module,exports){
 'use strict';
 
 module.exports = function(Chart) {
@@ -7332,7 +9384,7 @@ module.exports = function(Chart) {
 
 	var DatasetScale = Chart.Scale.extend({
 		/**
-		* Internal function to get the correct labels. If data.xLabels or data.yLabels are defined, use tose
+		* Internal function to get the correct labels. If data.xLabels or data.yLabels are defined, use those
 		* else fall back to data.labels
 		* @private
 		*/
@@ -7340,7 +9392,7 @@ module.exports = function(Chart) {
 			var data = this.chart.data;
 			return (this.isHorizontal() ? data.xLabels : data.yLabels) || data.labels;
 		},
-		// Implement this so that
+
 		determineDataLimits: function() {
 			var me = this;
 			var labels = me.getLabels();
@@ -7376,10 +9428,10 @@ module.exports = function(Chart) {
 			var data = me.chart.data;
 			var isHorizontal = me.isHorizontal();
 
-			if ((data.xLabels && isHorizontal) || (data.yLabels && !isHorizontal)) {
+			if (data.yLabels && !isHorizontal) {
 				return me.getRightValue(data.datasets[datasetIndex].data[index]);
 			}
-			return me.ticks[index];
+			return me.ticks[index - me.minIndex];
 		},
 
 		// Used to get data value locations.  Value can either be an index or a numerical value
@@ -7388,16 +9440,22 @@ module.exports = function(Chart) {
 			// 1 is added because we need the length but we have the indexes
 			var offsetAmt = Math.max((me.maxIndex + 1 - me.minIndex - ((me.options.gridLines.offsetGridLines) ? 0 : 1)), 1);
 
-			if (value !== undefined && isNaN(index)) {
+			// If value is a data object, then index is the index in the data array,
+			// not the index of the scale. We need to change that.
+			var valueCategory;
+			if (value !== undefined && value !== null) {
+				valueCategory = me.isHorizontal() ? value.x : value.y;
+			}
+			if (valueCategory !== undefined || (value !== undefined && isNaN(index))) {
 				var labels = me.getLabels();
+				value = valueCategory || value;
 				var idx = labels.indexOf(value);
 				index = idx !== -1 ? idx : index;
 			}
 
 			if (me.isHorizontal()) {
-				var innerWidth = me.width - (me.paddingLeft + me.paddingRight);
-				var valueWidth = innerWidth / offsetAmt;
-				var widthOffset = (valueWidth * (index - me.minIndex)) + me.paddingLeft;
+				var valueWidth = me.width / offsetAmt;
+				var widthOffset = (valueWidth * (index - me.minIndex));
 
 				if (me.options.gridLines.offsetGridLines && includeOffset || me.maxIndex === me.minIndex && includeOffset) {
 					widthOffset += (valueWidth / 2);
@@ -7405,9 +9463,8 @@ module.exports = function(Chart) {
 
 				return me.left + Math.round(widthOffset);
 			}
-			var innerHeight = me.height - (me.paddingTop + me.paddingBottom);
-			var valueHeight = innerHeight / offsetAmt;
-			var heightOffset = (valueHeight * (index - me.minIndex)) + me.paddingTop;
+			var valueHeight = me.height / offsetAmt;
+			var heightOffset = (valueHeight * (index - me.minIndex));
 
 			if (me.options.gridLines.offsetGridLines && includeOffset) {
 				heightOffset += (valueHeight / 2);
@@ -7423,15 +9480,13 @@ module.exports = function(Chart) {
 			var value;
 			var offsetAmt = Math.max((me.ticks.length - ((me.options.gridLines.offsetGridLines) ? 0 : 1)), 1);
 			var horz = me.isHorizontal();
-			var innerDimension = horz ? me.width - (me.paddingLeft + me.paddingRight) : me.height - (me.paddingTop + me.paddingBottom);
-			var valueDimension = innerDimension / offsetAmt;
+			var valueDimension = (horz ? me.width : me.height) / offsetAmt;
 
 			pixel -= horz ? me.left : me.top;
 
 			if (me.options.gridLines.offsetGridLines) {
 				pixel -= (valueDimension / 2);
 			}
-			pixel -= horz ? me.paddingLeft : me.paddingTop;
 
 			if (pixel <= 0) {
 				value = 0;
@@ -7450,7 +9505,7 @@ module.exports = function(Chart) {
 
 };
 
-},{}],33:[function(require,module,exports){
+},{}],38:[function(require,module,exports){
 'use strict';
 
 module.exports = function(Chart) {
@@ -7460,35 +9515,12 @@ module.exports = function(Chart) {
 	var defaultConfig = {
 		position: 'left',
 		ticks: {
-			callback: function(tickValue, index, ticks) {
-				// If we have lots of ticks, don't use the ones
-				var delta = ticks.length > 3 ? ticks[2] - ticks[1] : ticks[1] - ticks[0];
-
-				// If we have a number like 2.5 as the delta, figure out how many decimal places we need
-				if (Math.abs(delta) > 1) {
-					if (tickValue !== Math.floor(tickValue)) {
-						// not an integer
-						delta = tickValue - Math.floor(tickValue);
-					}
-				}
-
-				var logDelta = helpers.log10(Math.abs(delta));
-				var tickString = '';
-
-				if (tickValue !== 0) {
-					var numDecimal = -1 * Math.floor(logDelta);
-					numDecimal = Math.max(Math.min(numDecimal, 20), 0); // toFixed has a max of 20 decimal places
-					tickString = tickValue.toFixed(numDecimal);
-				} else {
-					tickString = '0'; // never show decimal places for 0
-				}
-
-				return tickString;
-			}
+			callback: Chart.Ticks.formatters.linear
 		}
 	};
 
 	var LinearScale = Chart.LinearScaleBase.extend({
+
 		determineDataLimits: function() {
 			var me = this;
 			var opts = me.options;
@@ -7496,6 +9528,8 @@ module.exports = function(Chart) {
 			var data = chart.data;
 			var datasets = data.datasets;
 			var isHorizontal = me.isHorizontal();
+			var DEFAULT_MIN = 0;
+			var DEFAULT_MAX = 1;
 
 			function IDMatches(meta) {
 				return isHorizontal ? meta.xAxisID === me.id : meta.yAxisID === me.id;
@@ -7505,21 +9539,43 @@ module.exports = function(Chart) {
 			me.min = null;
 			me.max = null;
 
-			if (opts.stacked) {
-				var valuesPerType = {};
+			var hasStacks = opts.stacked;
+			if (hasStacks === undefined) {
+				helpers.each(datasets, function(dataset, datasetIndex) {
+					if (hasStacks) {
+						return;
+					}
+
+					var meta = chart.getDatasetMeta(datasetIndex);
+					if (chart.isDatasetVisible(datasetIndex) && IDMatches(meta) &&
+						meta.stack !== undefined) {
+						hasStacks = true;
+					}
+				});
+			}
+
+			if (opts.stacked || hasStacks) {
+				var valuesPerStack = {};
 
 				helpers.each(datasets, function(dataset, datasetIndex) {
 					var meta = chart.getDatasetMeta(datasetIndex);
-					if (valuesPerType[meta.type] === undefined) {
-						valuesPerType[meta.type] = {
+					var key = [
+						meta.type,
+						// we have a separate stack for stack=undefined datasets when the opts.stacked is undefined
+						((opts.stacked === undefined && meta.stack === undefined) ? datasetIndex : ''),
+						meta.stack
+					].join('.');
+
+					if (valuesPerStack[key] === undefined) {
+						valuesPerStack[key] = {
 							positiveValues: [],
 							negativeValues: []
 						};
 					}
 
 					// Store these per type
-					var positiveValues = valuesPerType[meta.type].positiveValues;
-					var negativeValues = valuesPerType[meta.type].negativeValues;
+					var positiveValues = valuesPerStack[key].positiveValues;
+					var negativeValues = valuesPerStack[key].negativeValues;
 
 					if (chart.isDatasetVisible(datasetIndex) && IDMatches(meta)) {
 						helpers.each(dataset.data, function(rawValue, index) {
@@ -7542,7 +9598,7 @@ module.exports = function(Chart) {
 					}
 				});
 
-				helpers.each(valuesPerType, function(valuesForType) {
+				helpers.each(valuesPerStack, function(valuesForType) {
 					var values = valuesForType.positiveValues.concat(valuesForType.negativeValues);
 					var minVal = helpers.min(values);
 					var maxVal = helpers.max(values);
@@ -7575,6 +9631,9 @@ module.exports = function(Chart) {
 					}
 				});
 			}
+
+			me.min = isFinite(me.min) ? me.min : DEFAULT_MIN;
+			me.max = isFinite(me.max) ? me.max : DEFAULT_MAX;
 
 			// Common base implementation to handle ticks.min, ticks.max, ticks.beginAtZero
 			this.handleTickRangeOptions();
@@ -7609,31 +9668,25 @@ module.exports = function(Chart) {
 			// This must be called after fit has been run so that
 			// this.left, this.top, this.right, and this.bottom have been defined
 			var me = this;
-			var paddingLeft = me.paddingLeft;
-			var paddingBottom = me.paddingBottom;
 			var start = me.start;
 
 			var rightValue = +me.getRightValue(value);
 			var pixel;
-			var innerDimension;
 			var range = me.end - start;
 
 			if (me.isHorizontal()) {
-				innerDimension = me.width - (paddingLeft + me.paddingRight);
-				pixel = me.left + (innerDimension / range * (rightValue - start));
-				return Math.round(pixel + paddingLeft);
+				pixel = me.left + (me.width / range * (rightValue - start));
+				return Math.round(pixel);
 			}
-			innerDimension = me.height - (me.paddingTop + paddingBottom);
-			pixel = (me.bottom - paddingBottom) - (innerDimension / range * (rightValue - start));
+
+			pixel = me.bottom - (me.height / range * (rightValue - start));
 			return Math.round(pixel);
 		},
 		getValueForPixel: function(pixel) {
 			var me = this;
 			var isHorizontal = me.isHorizontal();
-			var paddingLeft = me.paddingLeft;
-			var paddingBottom = me.paddingBottom;
-			var innerDimension = isHorizontal ? me.width - (paddingLeft + me.paddingRight) : me.height - (me.paddingTop + paddingBottom);
-			var offset = (isHorizontal ? pixel - me.left - paddingLeft : me.bottom - paddingBottom - pixel) / innerDimension;
+			var innerDimension = isHorizontal ? me.width : me.height;
+			var offset = (isHorizontal ? pixel - me.left : me.bottom - pixel) / innerDimension;
 			return me.start + ((me.end - me.start) * offset);
 		},
 		getPixelForTick: function(index) {
@@ -7644,7 +9697,7 @@ module.exports = function(Chart) {
 
 };
 
-},{}],34:[function(require,module,exports){
+},{}],39:[function(require,module,exports){
 'use strict';
 
 module.exports = function(Chart) {
@@ -7669,7 +9722,7 @@ module.exports = function(Chart) {
 					// move the top up to 0
 					me.max = 0;
 				} else if (minSign > 0 && maxSign > 0) {
-					// move the botttom down to 0
+					// move the bottom down to 0
 					me.min = 0;
 				}
 			}
@@ -7677,13 +9730,21 @@ module.exports = function(Chart) {
 			if (tickOpts.min !== undefined) {
 				me.min = tickOpts.min;
 			} else if (tickOpts.suggestedMin !== undefined) {
-				me.min = Math.min(me.min, tickOpts.suggestedMin);
+				if (me.min === null) {
+					me.min = tickOpts.suggestedMin;
+				} else {
+					me.min = Math.min(me.min, tickOpts.suggestedMin);
+				}
 			}
 
 			if (tickOpts.max !== undefined) {
 				me.max = tickOpts.max;
 			} else if (tickOpts.suggestedMax !== undefined) {
-				me.max = Math.max(me.max, tickOpts.suggestedMax);
+				if (me.max === null) {
+					me.max = tickOpts.suggestedMax;
+				} else {
+					me.max = Math.max(me.max, tickOpts.suggestedMax);
+				}
 			}
 
 			if (me.min === me.max) {
@@ -7700,49 +9761,22 @@ module.exports = function(Chart) {
 		buildTicks: function() {
 			var me = this;
 			var opts = me.options;
-			var ticks = me.ticks = [];
 			var tickOpts = opts.ticks;
-			var getValueOrDefault = helpers.getValueOrDefault;
 
 			// Figure out what the max number of ticks we can support it is based on the size of
 			// the axis area. For now, we say that the minimum tick spacing in pixels must be 50
 			// We also limit the maximum number of ticks to 11 which gives a nice 10 squares on
-			// the graph
-
+			// the graph. Make sure we always have at least 2 ticks
 			var maxTicks = me.getTickLimit();
-
-			// Make sure we always have at least 2 ticks
 			maxTicks = Math.max(2, maxTicks);
 
-			// To get a "nice" value for the tick spacing, we will use the appropriately named
-			// "nice number" algorithm. See http://stackoverflow.com/questions/8506881/nice-label-algorithm-for-charts-with-minimum-ticks
-			// for details.
-
-			var spacing;
-			var fixedStepSizeSet = (tickOpts.fixedStepSize && tickOpts.fixedStepSize > 0) || (tickOpts.stepSize && tickOpts.stepSize > 0);
-			if (fixedStepSizeSet) {
-				spacing = getValueOrDefault(tickOpts.fixedStepSize, tickOpts.stepSize);
-			} else {
-				var niceRange = helpers.niceNum(me.max - me.min, false);
-				spacing = helpers.niceNum(niceRange / (maxTicks - 1), true);
-			}
-			var niceMin = Math.floor(me.min / spacing) * spacing;
-			var niceMax = Math.ceil(me.max / spacing) * spacing;
-			var numSpaces = (niceMax - niceMin) / spacing;
-
-			// If very close to our rounded value, use it.
-			if (helpers.almostEquals(numSpaces, Math.round(numSpaces), spacing / 1000)) {
-				numSpaces = Math.round(numSpaces);
-			} else {
-				numSpaces = Math.ceil(numSpaces);
-			}
-
-			// Put the values into the ticks array
-			ticks.push(tickOpts.min !== undefined ? tickOpts.min : niceMin);
-			for (var j = 1; j < numSpaces; ++j) {
-				ticks.push(niceMin + (j * spacing));
-			}
-			ticks.push(tickOpts.max !== undefined ? tickOpts.max : niceMax);
+			var numericGeneratorOptions = {
+				maxTicks: maxTicks,
+				min: tickOpts.min,
+				max: tickOpts.max,
+				stepSize: helpers.getValueOrDefault(tickOpts.fixedStepSize, tickOpts.stepSize)
+			};
+			var ticks = me.ticks = Chart.Ticks.generators.linear(numericGeneratorOptions, me);
 
 			me.handleDirectionalChanges();
 
@@ -7771,7 +9805,7 @@ module.exports = function(Chart) {
 	});
 };
 
-},{}],35:[function(require,module,exports){
+},{}],40:[function(require,module,exports){
 'use strict';
 
 module.exports = function(Chart) {
@@ -7783,16 +9817,7 @@ module.exports = function(Chart) {
 
 		// label settings
 		ticks: {
-			callback: function(value, index, arr) {
-				var remain = value / (Math.pow(10, Math.floor(helpers.log10(value))));
-
-				if (value === 0) {
-					return '0';
-				} else if (remain === 1 || remain === 2 || remain === 5 || index === 0 || index === arr.length - 1) {
-					return value.toExponential();
-				}
-				return '';
-			}
+			callback: Chart.Ticks.formatters.logarithmic
 		}
 	};
 
@@ -7815,18 +9840,40 @@ module.exports = function(Chart) {
 			me.max = null;
 			me.minNotZero = null;
 
-			if (opts.stacked) {
-				var valuesPerType = {};
+			var hasStacks = opts.stacked;
+			if (hasStacks === undefined) {
+				helpers.each(datasets, function(dataset, datasetIndex) {
+					if (hasStacks) {
+						return;
+					}
+
+					var meta = chart.getDatasetMeta(datasetIndex);
+					if (chart.isDatasetVisible(datasetIndex) && IDMatches(meta) &&
+						meta.stack !== undefined) {
+						hasStacks = true;
+					}
+				});
+			}
+
+			if (opts.stacked || hasStacks) {
+				var valuesPerStack = {};
 
 				helpers.each(datasets, function(dataset, datasetIndex) {
 					var meta = chart.getDatasetMeta(datasetIndex);
+					var key = [
+						meta.type,
+						// we have a separate stack for stack=undefined datasets when the opts.stacked is undefined
+						((opts.stacked === undefined && meta.stack === undefined) ? datasetIndex : ''),
+						meta.stack
+					].join('.');
+
 					if (chart.isDatasetVisible(datasetIndex) && IDMatches(meta)) {
-						if (valuesPerType[meta.type] === undefined) {
-							valuesPerType[meta.type] = [];
+						if (valuesPerStack[key] === undefined) {
+							valuesPerStack[key] = [];
 						}
 
 						helpers.each(dataset.data, function(rawValue, index) {
-							var values = valuesPerType[meta.type];
+							var values = valuesPerStack[key];
 							var value = +me.getRightValue(rawValue);
 							if (isNaN(value) || meta.data[index].hidden) {
 								return;
@@ -7844,7 +9891,7 @@ module.exports = function(Chart) {
 					}
 				});
 
-				helpers.each(valuesPerType, function(valuesForType) {
+				helpers.each(valuesPerStack, function(valuesForType) {
 					var minVal = helpers.min(valuesForType);
 					var maxVal = helpers.max(valuesForType);
 					me.min = me.min === null ? minVal : Math.min(me.min, minVal);
@@ -7898,43 +9945,12 @@ module.exports = function(Chart) {
 			var me = this;
 			var opts = me.options;
 			var tickOpts = opts.ticks;
-			var getValueOrDefault = helpers.getValueOrDefault;
 
-			// Reset the ticks array. Later on, we will draw a grid line at these positions
-			// The array simply contains the numerical value of the spots where ticks will be
-			var ticks = me.ticks = [];
-
-			// Figure out what the max number of ticks we can support it is based on the size of
-			// the axis area. For now, we say that the minimum tick spacing in pixels must be 50
-			// We also limit the maximum number of ticks to 11 which gives a nice 10 squares on
-			// the graph
-
-			var tickVal = getValueOrDefault(tickOpts.min, Math.pow(10, Math.floor(helpers.log10(me.min))));
-
-			while (tickVal < me.max) {
-				ticks.push(tickVal);
-
-				var exp;
-				var significand;
-
-				if (tickVal === 0) {
-					exp = Math.floor(helpers.log10(me.minNotZero));
-					significand = Math.round(me.minNotZero / Math.pow(10, exp));
-				} else {
-					exp = Math.floor(helpers.log10(tickVal));
-					significand = Math.floor(tickVal / Math.pow(10, exp)) + 1;
-				}
-
-				if (significand === 10) {
-					significand = 1;
-					++exp;
-				}
-
-				tickVal = significand * Math.pow(10, exp);
-			}
-
-			var lastTick = getValueOrDefault(tickOpts.max, tickVal);
-			ticks.push(lastTick);
+			var generationOptions = {
+				min: tickOpts.min,
+				max: tickOpts.max
+			};
+			var ticks = me.ticks = Chart.Ticks.generators.logarithmic(generationOptions, me);
 
 			if (!me.isHorizontal()) {
 				// We are in a vertical orientation. The top value is the highest. So reverse the array
@@ -7976,46 +9992,44 @@ module.exports = function(Chart) {
 			var start = me.start;
 			var newVal = +me.getRightValue(value);
 			var range;
-			var paddingTop = me.paddingTop;
-			var paddingBottom = me.paddingBottom;
-			var paddingLeft = me.paddingLeft;
 			var opts = me.options;
 			var tickOpts = opts.ticks;
 
 			if (me.isHorizontal()) {
 				range = helpers.log10(me.end) - helpers.log10(start); // todo: if start === 0
 				if (newVal === 0) {
-					pixel = me.left + paddingLeft;
+					pixel = me.left;
 				} else {
-					innerDimension = me.width - (paddingLeft + me.paddingRight);
+					innerDimension = me.width;
 					pixel = me.left + (innerDimension / range * (helpers.log10(newVal) - helpers.log10(start)));
-					pixel += paddingLeft;
 				}
 			} else {
-				// Bottom - top since pixels increase downard on a screen
-				innerDimension = me.height - (paddingTop + paddingBottom);
+				// Bottom - top since pixels increase downward on a screen
+				innerDimension = me.height;
 				if (start === 0 && !tickOpts.reverse) {
 					range = helpers.log10(me.end) - helpers.log10(me.minNotZero);
 					if (newVal === start) {
-						pixel = me.bottom - paddingBottom;
+						pixel = me.bottom;
 					} else if (newVal === me.minNotZero) {
-						pixel = me.bottom - paddingBottom - innerDimension * 0.02;
+						pixel = me.bottom - innerDimension * 0.02;
 					} else {
-						pixel = me.bottom - paddingBottom - innerDimension * 0.02 - (innerDimension * 0.98/ range * (helpers.log10(newVal)-helpers.log10(me.minNotZero)));
+						pixel = me.bottom - innerDimension * 0.02 - (innerDimension * 0.98/ range * (helpers.log10(newVal)-helpers.log10(me.minNotZero)));
 					}
 				} else if (me.end === 0 && tickOpts.reverse) {
 					range = helpers.log10(me.start) - helpers.log10(me.minNotZero);
 					if (newVal === me.end) {
-						pixel = me.top + paddingTop;
+						pixel = me.top;
 					} else if (newVal === me.minNotZero) {
-						pixel = me.top + paddingTop + innerDimension * 0.02;
+						pixel = me.top + innerDimension * 0.02;
 					} else {
-						pixel = me.top + paddingTop + innerDimension * 0.02 + (innerDimension * 0.98/ range * (helpers.log10(newVal)-helpers.log10(me.minNotZero)));
+						pixel = me.top + innerDimension * 0.02 + (innerDimension * 0.98/ range * (helpers.log10(newVal)-helpers.log10(me.minNotZero)));
 					}
+				} else if (newVal === 0) {
+					pixel = tickOpts.reverse ? me.top : me.bottom;
 				} else {
 					range = helpers.log10(me.end) - helpers.log10(start);
-					innerDimension = me.height - (paddingTop + paddingBottom);
-					pixel = (me.bottom - paddingBottom) - (innerDimension / range * (helpers.log10(newVal) - helpers.log10(start)));
+					innerDimension = me.height;
+					pixel = me.bottom - (innerDimension / range * (helpers.log10(newVal) - helpers.log10(start)));
 				}
 			}
 			return pixel;
@@ -8026,11 +10040,11 @@ module.exports = function(Chart) {
 			var value, innerDimension;
 
 			if (me.isHorizontal()) {
-				innerDimension = me.width - (me.paddingLeft + me.paddingRight);
-				value = me.start * Math.pow(10, (pixel - me.left - me.paddingLeft) * range / innerDimension);
+				innerDimension = me.width;
+				value = me.start * Math.pow(10, (pixel - me.left) * range / innerDimension);
 			} else {  // todo: if start === 0
-				innerDimension = me.height - (me.paddingTop + me.paddingBottom);
-				value = Math.pow(10, (me.bottom - me.paddingBottom - pixel) * range / innerDimension) / me.start;
+				innerDimension = me.height;
+				value = Math.pow(10, (me.bottom - pixel) * range / innerDimension) / me.start;
 			}
 			return value;
 		}
@@ -8039,7 +10053,7 @@ module.exports = function(Chart) {
 
 };
 
-},{}],36:[function(require,module,exports){
+},{}],41:[function(require,module,exports){
 'use strict';
 
 module.exports = function(Chart) {
@@ -8052,13 +10066,16 @@ module.exports = function(Chart) {
 
 		// Boolean - Whether to animate scaling the chart from the centre
 		animate: true,
-		lineArc: false,
 		position: 'chartArea',
 
 		angleLines: {
 			display: true,
 			color: 'rgba(0, 0, 0, 0.1)',
 			lineWidth: 1
+		},
+
+		gridLines: {
+			circular: false
 		},
 
 		// label settings
@@ -8073,10 +10090,15 @@ module.exports = function(Chart) {
 			backdropPaddingY: 2,
 
 			// Number - The backdrop padding to the side of the label in pixels
-			backdropPaddingX: 2
+			backdropPaddingX: 2,
+
+			callback: Chart.Ticks.formatters.linear
 		},
 
 		pointLabels: {
+			// Boolean - if true, show point labels
+			display: true,
+
 			// Number - Point label font size in pixels
 			fontSize: 10,
 
@@ -8087,10 +10109,270 @@ module.exports = function(Chart) {
 		}
 	};
 
+	function getValueCount(scale) {
+		var opts = scale.options;
+		return opts.angleLines.display || opts.pointLabels.display ? scale.chart.data.labels.length : 0;
+	}
+
+	function getPointLabelFontOptions(scale) {
+		var pointLabelOptions = scale.options.pointLabels;
+		var fontSize = helpers.getValueOrDefault(pointLabelOptions.fontSize, globalDefaults.defaultFontSize);
+		var fontStyle = helpers.getValueOrDefault(pointLabelOptions.fontStyle, globalDefaults.defaultFontStyle);
+		var fontFamily = helpers.getValueOrDefault(pointLabelOptions.fontFamily, globalDefaults.defaultFontFamily);
+		var font = helpers.fontString(fontSize, fontStyle, fontFamily);
+
+		return {
+			size: fontSize,
+			style: fontStyle,
+			family: fontFamily,
+			font: font
+		};
+	}
+
+	function measureLabelSize(ctx, fontSize, label) {
+		if (helpers.isArray(label)) {
+			return {
+				w: helpers.longestText(ctx, ctx.font, label),
+				h: (label.length * fontSize) + ((label.length - 1) * 1.5 * fontSize)
+			};
+		}
+
+		return {
+			w: ctx.measureText(label).width,
+			h: fontSize
+		};
+	}
+
+	function determineLimits(angle, pos, size, min, max) {
+		if (angle === min || angle === max) {
+			return {
+				start: pos - (size / 2),
+				end: pos + (size / 2)
+			};
+		} else if (angle < min || angle > max) {
+			return {
+				start: pos - size - 5,
+				end: pos
+			};
+		}
+
+		return {
+			start: pos,
+			end: pos + size + 5
+		};
+	}
+
+	/**
+	 * Helper function to fit a radial linear scale with point labels
+	 */
+	function fitWithPointLabels(scale) {
+		/*
+		 * Right, this is really confusing and there is a lot of maths going on here
+		 * The gist of the problem is here: https://gist.github.com/nnnick/696cc9c55f4b0beb8fe9
+		 *
+		 * Reaction: https://dl.dropboxusercontent.com/u/34601363/toomuchscience.gif
+		 *
+		 * Solution:
+		 *
+		 * We assume the radius of the polygon is half the size of the canvas at first
+		 * at each index we check if the text overlaps.
+		 *
+		 * Where it does, we store that angle and that index.
+		 *
+		 * After finding the largest index and angle we calculate how much we need to remove
+		 * from the shape radius to move the point inwards by that x.
+		 *
+		 * We average the left and right distances to get the maximum shape radius that can fit in the box
+		 * along with labels.
+		 *
+		 * Once we have that, we can find the centre point for the chart, by taking the x text protrusion
+		 * on each side, removing that from the size, halving it and adding the left x protrusion width.
+		 *
+		 * This will mean we have a shape fitted to the canvas, as large as it can be with the labels
+		 * and position it in the most space efficient manner
+		 *
+		 * https://dl.dropboxusercontent.com/u/34601363/yeahscience.gif
+		 */
+
+		var plFont = getPointLabelFontOptions(scale);
+
+		// Get maximum radius of the polygon. Either half the height (minus the text width) or half the width.
+		// Use this to calculate the offset + change. - Make sure L/R protrusion is at least 0 to stop issues with centre points
+		var largestPossibleRadius = Math.min(scale.height / 2, scale.width / 2);
+		var furthestLimits = {
+			r: scale.width,
+			l: 0,
+			t: scale.height,
+			b: 0
+		};
+		var furthestAngles = {};
+		var i;
+		var textSize;
+		var pointPosition;
+
+		scale.ctx.font = plFont.font;
+		scale._pointLabelSizes = [];
+
+		var valueCount = getValueCount(scale);
+		for (i = 0; i < valueCount; i++) {
+			pointPosition = scale.getPointPosition(i, largestPossibleRadius);
+			textSize = measureLabelSize(scale.ctx, plFont.size, scale.pointLabels[i] || '');
+			scale._pointLabelSizes[i] = textSize;
+
+			// Add quarter circle to make degree 0 mean top of circle
+			var angleRadians = scale.getIndexAngle(i);
+			var angle = helpers.toDegrees(angleRadians) % 360;
+			var hLimits = determineLimits(angle, pointPosition.x, textSize.w, 0, 180);
+			var vLimits = determineLimits(angle, pointPosition.y, textSize.h, 90, 270);
+
+			if (hLimits.start < furthestLimits.l) {
+				furthestLimits.l = hLimits.start;
+				furthestAngles.l = angleRadians;
+			}
+
+			if (hLimits.end > furthestLimits.r) {
+				furthestLimits.r = hLimits.end;
+				furthestAngles.r = angleRadians;
+			}
+
+			if (vLimits.start < furthestLimits.t) {
+				furthestLimits.t = vLimits.start;
+				furthestAngles.t = angleRadians;
+			}
+
+			if (vLimits.end > furthestLimits.b) {
+				furthestLimits.b = vLimits.end;
+				furthestAngles.b = angleRadians;
+			}
+		}
+
+		scale.setReductions(largestPossibleRadius, furthestLimits, furthestAngles);
+	}
+
+	/**
+	 * Helper function to fit a radial linear scale with no point labels
+	 */
+	function fit(scale) {
+		var largestPossibleRadius = Math.min(scale.height / 2, scale.width / 2);
+		scale.drawingArea = Math.round(largestPossibleRadius);
+		scale.setCenterPoint(0, 0, 0, 0);
+	}
+
+	function getTextAlignForAngle(angle) {
+		if (angle === 0 || angle === 180) {
+			return 'center';
+		} else if (angle < 180) {
+			return 'left';
+		}
+
+		return 'right';
+	}
+
+	function fillText(ctx, text, position, fontSize) {
+		if (helpers.isArray(text)) {
+			var y = position.y;
+			var spacing = 1.5 * fontSize;
+
+			for (var i = 0; i < text.length; ++i) {
+				ctx.fillText(text[i], position.x, y);
+				y+= spacing;
+			}
+		} else {
+			ctx.fillText(text, position.x, position.y);
+		}
+	}
+
+	function adjustPointPositionForLabelHeight(angle, textSize, position) {
+		if (angle === 90 || angle === 270) {
+			position.y -= (textSize.h / 2);
+		} else if (angle > 270 || angle < 90) {
+			position.y -= textSize.h;
+		}
+	}
+
+	function drawPointLabels(scale) {
+		var ctx = scale.ctx;
+		var getValueOrDefault = helpers.getValueOrDefault;
+		var opts = scale.options;
+		var angleLineOpts = opts.angleLines;
+		var pointLabelOpts = opts.pointLabels;
+
+		ctx.lineWidth = angleLineOpts.lineWidth;
+		ctx.strokeStyle = angleLineOpts.color;
+
+		var outerDistance = scale.getDistanceFromCenterForValue(opts.reverse ? scale.min : scale.max);
+
+		// Point Label Font
+		var plFont = getPointLabelFontOptions(scale);
+
+		ctx.textBaseline = 'top';
+
+		for (var i = getValueCount(scale) - 1; i >= 0; i--) {
+			if (angleLineOpts.display) {
+				var outerPosition = scale.getPointPosition(i, outerDistance);
+				ctx.beginPath();
+				ctx.moveTo(scale.xCenter, scale.yCenter);
+				ctx.lineTo(outerPosition.x, outerPosition.y);
+				ctx.stroke();
+				ctx.closePath();
+			}
+
+			if (pointLabelOpts.display) {
+				// Extra 3px out for some label spacing
+				var pointLabelPosition = scale.getPointPosition(i, outerDistance + 5);
+
+				// Keep this in loop since we may support array properties here
+				var pointLabelFontColor = getValueOrDefault(pointLabelOpts.fontColor, globalDefaults.defaultFontColor);
+				ctx.font = plFont.font;
+				ctx.fillStyle = pointLabelFontColor;
+
+				var angleRadians = scale.getIndexAngle(i);
+				var angle = helpers.toDegrees(angleRadians);
+				ctx.textAlign = getTextAlignForAngle(angle);
+				adjustPointPositionForLabelHeight(angle, scale._pointLabelSizes[i], pointLabelPosition);
+				fillText(ctx, scale.pointLabels[i] || '', pointLabelPosition, plFont.size);
+			}
+		}
+	}
+
+	function drawRadiusLine(scale, gridLineOpts, radius, index) {
+		var ctx = scale.ctx;
+		ctx.strokeStyle = helpers.getValueAtIndexOrDefault(gridLineOpts.color, index - 1);
+		ctx.lineWidth = helpers.getValueAtIndexOrDefault(gridLineOpts.lineWidth, index - 1);
+
+		if (scale.options.gridLines.circular) {
+			// Draw circular arcs between the points
+			ctx.beginPath();
+			ctx.arc(scale.xCenter, scale.yCenter, radius, 0, Math.PI * 2);
+			ctx.closePath();
+			ctx.stroke();
+		} else {
+			// Draw straight lines connecting each index
+			var valueCount = getValueCount(scale);
+
+			if (valueCount === 0) {
+				return;
+			}
+
+			ctx.beginPath();
+			var pointPosition = scale.getPointPosition(0, radius);
+			ctx.moveTo(pointPosition.x, pointPosition.y);
+
+			for (var i = 1; i < valueCount; i++) {
+				pointPosition = scale.getPointPosition(i, radius);
+				ctx.lineTo(pointPosition.x, pointPosition.y);
+			}
+
+			ctx.closePath();
+			ctx.stroke();
+		}
+	}
+
+	function numberOrZero(param) {
+		return helpers.isNumber(param) ? param : 0;
+	}
+
 	var LinearRadialScale = Chart.LinearScaleBase.extend({
-		getValueCount: function() {
-			return this.chart.data.labels.length;
-		},
 		setDimensions: function() {
 			var me = this;
 			var opts = me.options;
@@ -8108,9 +10390,8 @@ module.exports = function(Chart) {
 		determineDataLimits: function() {
 			var me = this;
 			var chart = me.chart;
-			me.min = null;
-			me.max = null;
-
+			var min = Number.POSITIVE_INFINITY;
+			var max = Number.NEGATIVE_INFINITY;
 
 			helpers.each(chart.data.datasets, function(dataset, datasetIndex) {
 				if (chart.isDatasetVisible(datasetIndex)) {
@@ -8122,20 +10403,14 @@ module.exports = function(Chart) {
 							return;
 						}
 
-						if (me.min === null) {
-							me.min = value;
-						} else if (value < me.min) {
-							me.min = value;
-						}
-
-						if (me.max === null) {
-							me.max = value;
-						} else if (value > me.max) {
-							me.max = value;
-						}
+						min = Math.min(value, min);
+						max = Math.max(value, max);
 					});
 				}
 			});
+
+			me.min = (min === Number.POSITIVE_INFINITY ? 0 : min);
+			me.max = (max === Number.NEGATIVE_INFINITY ? 0 : max);
 
 			// Common base implementation to handle ticks.min, ticks.max, ticks.beginAtZero
 			me.handleTickRangeOptions();
@@ -8156,122 +10431,46 @@ module.exports = function(Chart) {
 			return +this.getRightValue(this.chart.data.datasets[datasetIndex].data[index]);
 		},
 		fit: function() {
-			/*
-			 * Right, this is really confusing and there is a lot of maths going on here
-			 * The gist of the problem is here: https://gist.github.com/nnnick/696cc9c55f4b0beb8fe9
-			 *
-			 * Reaction: https://dl.dropboxusercontent.com/u/34601363/toomuchscience.gif
-			 *
-			 * Solution:
-			 *
-			 * We assume the radius of the polygon is half the size of the canvas at first
-			 * at each index we check if the text overlaps.
-			 *
-			 * Where it does, we store that angle and that index.
-			 *
-			 * After finding the largest index and angle we calculate how much we need to remove
-			 * from the shape radius to move the point inwards by that x.
-			 *
-			 * We average the left and right distances to get the maximum shape radius that can fit in the box
-			 * along with labels.
-			 *
-			 * Once we have that, we can find the centre point for the chart, by taking the x text protrusion
-			 * on each side, removing that from the size, halving it and adding the left x protrusion width.
-			 *
-			 * This will mean we have a shape fitted to the canvas, as large as it can be with the labels
-			 * and position it in the most space efficient manner
-			 *
-			 * https://dl.dropboxusercontent.com/u/34601363/yeahscience.gif
-			 */
-
-			var pointLabels = this.options.pointLabels;
-			var pointLabelFontSize = helpers.getValueOrDefault(pointLabels.fontSize, globalDefaults.defaultFontSize);
-			var pointLabeFontStyle = helpers.getValueOrDefault(pointLabels.fontStyle, globalDefaults.defaultFontStyle);
-			var pointLabeFontFamily = helpers.getValueOrDefault(pointLabels.fontFamily, globalDefaults.defaultFontFamily);
-			var pointLabeFont = helpers.fontString(pointLabelFontSize, pointLabeFontStyle, pointLabeFontFamily);
-
-			// Get maximum radius of the polygon. Either half the height (minus the text width) or half the width.
-			// Use this to calculate the offset + change. - Make sure L/R protrusion is at least 0 to stop issues with centre points
-			var largestPossibleRadius = helpers.min([(this.height / 2 - pointLabelFontSize - 5), this.width / 2]),
-				pointPosition,
-				i,
-				textWidth,
-				halfTextWidth,
-				furthestRight = this.width,
-				furthestRightIndex,
-				furthestRightAngle,
-				furthestLeft = 0,
-				furthestLeftIndex,
-				furthestLeftAngle,
-				xProtrusionLeft,
-				xProtrusionRight,
-				radiusReductionRight,
-				radiusReductionLeft;
-			this.ctx.font = pointLabeFont;
-
-			for (i = 0; i < this.getValueCount(); i++) {
-				// 5px to space the text slightly out - similar to what we do in the draw function.
-				pointPosition = this.getPointPosition(i, largestPossibleRadius);
-				textWidth = this.ctx.measureText(this.pointLabels[i] ? this.pointLabels[i] : '').width + 5;
-
-				// Add quarter circle to make degree 0 mean top of circle
-				var angleRadians = this.getIndexAngle(i) + (Math.PI / 2);
-				var angle = (angleRadians * 360 / (2 * Math.PI)) % 360;
-
-				if (angle === 0 || angle === 180) {
-					// At angle 0 and 180, we're at exactly the top/bottom
-					// of the radar chart, so text will be aligned centrally, so we'll half it and compare
-					// w/left and right text sizes
-					halfTextWidth = textWidth / 2;
-					if (pointPosition.x + halfTextWidth > furthestRight) {
-						furthestRight = pointPosition.x + halfTextWidth;
-						furthestRightIndex = i;
-					}
-					if (pointPosition.x - halfTextWidth < furthestLeft) {
-						furthestLeft = pointPosition.x - halfTextWidth;
-						furthestLeftIndex = i;
-					}
-				} else if (angle < 180) {
-					// Less than half the values means we'll left align the text
-					if (pointPosition.x + textWidth > furthestRight) {
-						furthestRight = pointPosition.x + textWidth;
-						furthestRightIndex = i;
-					}
-				// More than half the values means we'll right align the text
-				} else if (pointPosition.x - textWidth < furthestLeft) {
-					furthestLeft = pointPosition.x - textWidth;
-					furthestLeftIndex = i;
-				}
+			if (this.options.pointLabels.display) {
+				fitWithPointLabels(this);
+			} else {
+				fit(this);
 			}
-
-			xProtrusionLeft = furthestLeft;
-			xProtrusionRight = Math.ceil(furthestRight - this.width);
-
-			furthestRightAngle = this.getIndexAngle(furthestRightIndex);
-			furthestLeftAngle = this.getIndexAngle(furthestLeftIndex);
-
-			radiusReductionRight = xProtrusionRight / Math.sin(furthestRightAngle + Math.PI / 2);
-			radiusReductionLeft = xProtrusionLeft / Math.sin(furthestLeftAngle + Math.PI / 2);
-
-			// Ensure we actually need to reduce the size of the chart
-			radiusReductionRight = (helpers.isNumber(radiusReductionRight)) ? radiusReductionRight : 0;
-			radiusReductionLeft = (helpers.isNumber(radiusReductionLeft)) ? radiusReductionLeft : 0;
-
-			this.drawingArea = Math.round(largestPossibleRadius - (radiusReductionLeft + radiusReductionRight) / 2);
-			this.setCenterPoint(radiusReductionLeft, radiusReductionRight);
 		},
-		setCenterPoint: function(leftMovement, rightMovement) {
+		/**
+		 * Set radius reductions and determine new radius and center point
+		 * @private
+		 */
+		setReductions: function(largestPossibleRadius, furthestLimits, furthestAngles) {
+			var me = this;
+			var radiusReductionLeft = furthestLimits.l / Math.sin(furthestAngles.l);
+			var radiusReductionRight = Math.max(furthestLimits.r - me.width, 0) / Math.sin(furthestAngles.r);
+			var radiusReductionTop = -furthestLimits.t / Math.cos(furthestAngles.t);
+			var radiusReductionBottom = -Math.max(furthestLimits.b - me.height, 0) / Math.cos(furthestAngles.b);
+
+			radiusReductionLeft = numberOrZero(radiusReductionLeft);
+			radiusReductionRight = numberOrZero(radiusReductionRight);
+			radiusReductionTop = numberOrZero(radiusReductionTop);
+			radiusReductionBottom = numberOrZero(radiusReductionBottom);
+
+			me.drawingArea = Math.min(
+				Math.round(largestPossibleRadius - (radiusReductionLeft + radiusReductionRight) / 2),
+				Math.round(largestPossibleRadius - (radiusReductionTop + radiusReductionBottom) / 2));
+			me.setCenterPoint(radiusReductionLeft, radiusReductionRight, radiusReductionTop, radiusReductionBottom);
+		},
+		setCenterPoint: function(leftMovement, rightMovement, topMovement, bottomMovement) {
 			var me = this;
 			var maxRight = me.width - rightMovement - me.drawingArea,
-				maxLeft = leftMovement + me.drawingArea;
+				maxLeft = leftMovement + me.drawingArea,
+				maxTop = topMovement + me.drawingArea,
+				maxBottom = me.height - bottomMovement - me.drawingArea;
 
 			me.xCenter = Math.round(((maxLeft + maxRight) / 2) + me.left);
-			// Always vertically in the centre as the text height doesn't change
-			me.yCenter = Math.round((me.height / 2) + me.top);
+			me.yCenter = Math.round(((maxTop + maxBottom) / 2) + me.top);
 		},
 
 		getIndexAngle: function(index) {
-			var angleMultiplier = (Math.PI * 2) / this.getValueCount();
+			var angleMultiplier = (Math.PI * 2) / getValueCount(this);
 			var startAngle = this.chart.options && this.chart.options.startAngle ?
 				this.chart.options.startAngle :
 				0;
@@ -8279,7 +10478,7 @@ module.exports = function(Chart) {
 			var startAngleRadians = startAngle * Math.PI * 2 / 360;
 
 			// Start from the top instead of right, so remove a quarter of the circle
-			return index * angleMultiplier - (Math.PI / 2) + startAngleRadians;
+			return index * angleMultiplier + startAngleRadians;
 		},
 		getDistanceFromCenterForValue: function(value) {
 			var me = this;
@@ -8297,7 +10496,7 @@ module.exports = function(Chart) {
 		},
 		getPointPosition: function(index, distanceFromCenter) {
 			var me = this;
-			var thisAngle = me.getIndexAngle(index);
+			var thisAngle = me.getIndexAngle(index) - (Math.PI / 2);
 			return {
 				x: Math.round(Math.cos(thisAngle) * distanceFromCenter) + me.xCenter,
 				y: Math.round(Math.sin(thisAngle) * distanceFromCenter) + me.yCenter
@@ -8324,8 +10523,6 @@ module.exports = function(Chart) {
 			var opts = me.options;
 			var gridLineOpts = opts.gridLines;
 			var tickOpts = opts.ticks;
-			var angleLineOpts = opts.angleLines;
-			var pointLabelOpts = opts.pointLabels;
 			var getValueOrDefault = helpers.getValueOrDefault;
 
 			if (opts.display) {
@@ -8345,29 +10542,7 @@ module.exports = function(Chart) {
 
 						// Draw circular lines around the scale
 						if (gridLineOpts.display && index !== 0) {
-							ctx.strokeStyle = helpers.getValueAtIndexOrDefault(gridLineOpts.color, index - 1);
-							ctx.lineWidth = helpers.getValueAtIndexOrDefault(gridLineOpts.lineWidth, index - 1);
-
-							if (opts.lineArc) {
-								// Draw circular arcs between the points
-								ctx.beginPath();
-								ctx.arc(me.xCenter, me.yCenter, yCenterOffset, 0, Math.PI * 2);
-								ctx.closePath();
-								ctx.stroke();
-							} else {
-								// Draw straight lines connecting each index
-								ctx.beginPath();
-								for (var i = 0; i < me.getValueCount(); i++) {
-									var pointPosition = me.getPointPosition(i, yCenterOffset);
-									if (i === 0) {
-										ctx.moveTo(pointPosition.x, pointPosition.y);
-									} else {
-										ctx.lineTo(pointPosition.x, pointPosition.y);
-									}
-								}
-								ctx.closePath();
-								ctx.stroke();
-							}
+							drawRadiusLine(me, gridLineOpts, yCenterOffset, index);
 						}
 
 						if (tickOpts.display) {
@@ -8393,60 +10568,8 @@ module.exports = function(Chart) {
 					}
 				});
 
-				if (!opts.lineArc) {
-					ctx.lineWidth = angleLineOpts.lineWidth;
-					ctx.strokeStyle = angleLineOpts.color;
-
-					var outerDistance = me.getDistanceFromCenterForValue(opts.reverse ? me.min : me.max);
-
-					// Point Label Font
-					var pointLabelFontSize = getValueOrDefault(pointLabelOpts.fontSize, globalDefaults.defaultFontSize);
-					var pointLabeFontStyle = getValueOrDefault(pointLabelOpts.fontStyle, globalDefaults.defaultFontStyle);
-					var pointLabeFontFamily = getValueOrDefault(pointLabelOpts.fontFamily, globalDefaults.defaultFontFamily);
-					var pointLabeFont = helpers.fontString(pointLabelFontSize, pointLabeFontStyle, pointLabeFontFamily);
-
-					for (var i = me.getValueCount() - 1; i >= 0; i--) {
-						if (angleLineOpts.display) {
-							var outerPosition = me.getPointPosition(i, outerDistance);
-							ctx.beginPath();
-							ctx.moveTo(me.xCenter, me.yCenter);
-							ctx.lineTo(outerPosition.x, outerPosition.y);
-							ctx.stroke();
-							ctx.closePath();
-						}
-						// Extra 3px out for some label spacing
-						var pointLabelPosition = me.getPointPosition(i, outerDistance + 5);
-
-						// Keep this in loop since we may support array properties here
-						var pointLabelFontColor = getValueOrDefault(pointLabelOpts.fontColor, globalDefaults.defaultFontColor);
-						ctx.font = pointLabeFont;
-						ctx.fillStyle = pointLabelFontColor;
-
-						var pointLabels = me.pointLabels;
-
-						// Add quarter circle to make degree 0 mean top of circle
-						var angleRadians = this.getIndexAngle(i) + (Math.PI / 2);
-						var angle = (angleRadians * 360 / (2 * Math.PI)) % 360;
-
-						if (angle === 0 || angle === 180) {
-							ctx.textAlign = 'center';
-						} else if (angle < 180) {
-							ctx.textAlign = 'left';
-						} else {
-							ctx.textAlign = 'right';
-						}
-
-						// Set the correct text baseline based on outer positioning
-						if (angle === 90 || angle === 270) {
-							ctx.textBaseline = 'middle';
-						} else if (angle > 270 || angle < 90) {
-							ctx.textBaseline = 'bottom';
-						} else {
-							ctx.textBaseline = 'top';
-						}
-
-						ctx.fillText(pointLabels[i] ? pointLabels[i] : '', pointLabelPosition.x, pointLabelPosition.y);
-					}
+				if (opts.angleLines.display || opts.pointLabels.display) {
+					drawPointLabels(me);
 				}
 			}
 		}
@@ -8455,7 +10578,7 @@ module.exports = function(Chart) {
 
 };
 
-},{}],37:[function(require,module,exports){
+},{}],42:[function(require,module,exports){
 /* global window: false */
 'use strict';
 
@@ -8465,35 +10588,43 @@ moment = typeof(moment) === 'function' ? moment : window.moment;
 module.exports = function(Chart) {
 
 	var helpers = Chart.helpers;
-	var time = {
-		units: [{
-			name: 'millisecond',
+	var interval = {
+		millisecond: {
+			size: 1,
 			steps: [1, 2, 5, 10, 20, 50, 100, 250, 500]
-		}, {
-			name: 'second',
+		},
+		second: {
+			size: 1000,
 			steps: [1, 2, 5, 10, 30]
-		}, {
-			name: 'minute',
+		},
+		minute: {
+			size: 60000,
 			steps: [1, 2, 5, 10, 30]
-		}, {
-			name: 'hour',
+		},
+		hour: {
+			size: 3600000,
 			steps: [1, 2, 3, 6, 12]
-		}, {
-			name: 'day',
+		},
+		day: {
+			size: 86400000,
 			steps: [1, 2, 5]
-		}, {
-			name: 'week',
+		},
+		week: {
+			size: 604800000,
 			maxStep: 4
-		}, {
-			name: 'month',
+		},
+		month: {
+			size: 2.628e9,
 			maxStep: 3
-		}, {
-			name: 'quarter',
+		},
+		quarter: {
+			size: 7.884e9,
 			maxStep: 4
-		}, {
-			name: 'year',
+		},
+		year: {
+			size: 3.154e10,
 			maxStep: false
-		}]
+		}
 	};
 
 	var defaultConfig = {
@@ -8519,11 +10650,154 @@ module.exports = function(Chart) {
 				month: 'MMM YYYY', // Sept 2015
 				quarter: '[Q]Q - YYYY', // Q3
 				year: 'YYYY' // 2015
-			}
+			},
 		},
 		ticks: {
 			autoSkip: false
 		}
+	};
+
+	/**
+	 * Helper function to parse time to a moment object
+	 * @param axis {TimeAxis} the time axis
+	 * @param label {Date|string|number|Moment} The thing to parse
+	 * @return {Moment} parsed time
+	 */
+	function parseTime(axis, label) {
+		var timeOpts = axis.options.time;
+		if (typeof timeOpts.parser === 'string') {
+			return moment(label, timeOpts.parser);
+		}
+		if (typeof timeOpts.parser === 'function') {
+			return timeOpts.parser(label);
+		}
+		if (typeof label.getMonth === 'function' || typeof label === 'number') {
+			// Date objects
+			return moment(label);
+		}
+		if (label.isValid && label.isValid()) {
+			// Moment support
+			return label;
+		}
+		var format = timeOpts.format;
+		if (typeof format !== 'string' && format.call) {
+			// Custom parsing (return an instance of moment)
+			console.warn('options.time.format is deprecated and replaced by options.time.parser.');
+			return format(label);
+		}
+		// Moment format parsing
+		return moment(label, format);
+	}
+
+	/**
+	 * Figure out which is the best unit for the scale
+	 * @param minUnit {String} minimum unit to use
+	 * @param min {Number} scale minimum
+	 * @param max {Number} scale maximum
+	 * @return {String} the unit to use
+	 */
+	function determineUnit(minUnit, min, max, maxTicks) {
+		var units = Object.keys(interval);
+		var unit;
+		var numUnits = units.length;
+
+		for (var i = units.indexOf(minUnit); i < numUnits; i++) {
+			unit = units[i];
+			var unitDetails = interval[unit];
+			var steps = (unitDetails.steps && unitDetails.steps[unitDetails.steps.length - 1]) || unitDetails.maxStep;
+			if (steps === undefined || Math.ceil((max - min) / (steps * unitDetails.size)) <= maxTicks) {
+				break;
+			}
+		}
+
+		return unit;
+	}
+
+	/**
+	 * Determines how we scale the unit
+	 * @param min {Number} the scale minimum
+	 * @param max {Number} the scale maximum
+	 * @param unit {String} the unit determined by the {@see determineUnit} method
+	 * @return {Number} the axis step size as a multiple of unit
+	 */
+	function determineStepSize(min, max, unit, maxTicks) {
+		// Using our unit, figoure out what we need to scale as
+		var unitDefinition = interval[unit];
+		var unitSizeInMilliSeconds = unitDefinition.size;
+		var sizeInUnits = Math.ceil((max - min) / unitSizeInMilliSeconds);
+		var multiplier = 1;
+		var range = max - min;
+
+		if (unitDefinition.steps) {
+			// Have an array of steps
+			var numSteps = unitDefinition.steps.length;
+			for (var i = 0; i < numSteps && sizeInUnits > maxTicks; i++) {
+				multiplier = unitDefinition.steps[i];
+				sizeInUnits = Math.ceil(range / (unitSizeInMilliSeconds * multiplier));
+			}
+		} else {
+			while (sizeInUnits > maxTicks && maxTicks > 0) {
+				++multiplier;
+				sizeInUnits = Math.ceil(range / (unitSizeInMilliSeconds * multiplier));
+			}
+		}
+
+		return multiplier;
+	}
+
+	/**
+	 * Helper for generating axis labels.
+	 * @param options {ITimeGeneratorOptions} the options for generation
+	 * @param dataRange {IRange} the data range
+	 * @param niceRange {IRange} the pretty range to display
+	 * @return {Number[]} ticks
+	 */
+	function generateTicks(options, dataRange, niceRange) {
+		var ticks = [];
+		if (options.maxTicks) {
+			var stepSize = options.stepSize;
+			ticks.push(options.min !== undefined ? options.min : niceRange.min);
+			var cur = moment(niceRange.min);
+			while (cur.add(stepSize, options.unit).valueOf() < niceRange.max) {
+				ticks.push(cur.valueOf());
+			}
+			var realMax = options.max || niceRange.max;
+			if (ticks[ticks.length - 1] !== realMax) {
+				ticks.push(realMax);
+			}
+		}
+		return ticks;
+	}
+
+	/**
+	 * @function Chart.Ticks.generators.time
+	 * @param options {ITimeGeneratorOptions} the options for generation
+	 * @param dataRange {IRange} the data range
+	 * @return {Number[]} ticks
+	 */
+	Chart.Ticks.generators.time = function(options, dataRange) {
+		var niceMin;
+		var niceMax;
+		var isoWeekday = options.isoWeekday;
+		if (options.unit === 'week' && isoWeekday !== false) {
+			niceMin = moment(dataRange.min).startOf('isoWeek').isoWeekday(isoWeekday).valueOf();
+			niceMax = moment(dataRange.max).startOf('isoWeek').isoWeekday(isoWeekday);
+			if (dataRange.max - niceMax > 0) {
+				niceMax.add(1, 'week');
+			}
+			niceMax = niceMax.valueOf();
+		} else {
+			niceMin = moment(dataRange.min).startOf(options.unit).valueOf();
+			niceMax = moment(dataRange.max).startOf(options.unit);
+			if (dataRange.max - niceMax > 0) {
+				niceMax.add(1, options.unit);
+			}
+			niceMax = niceMax.valueOf();
+		}
+		return generateTicks(options, dataRange, {
+			min: niceMin,
+			max: niceMax
+		});
 	};
 
 	var TimeScale = Chart.Scale.extend({
@@ -8534,298 +10808,127 @@ module.exports = function(Chart) {
 
 			Chart.Scale.prototype.initialize.call(this);
 		},
-		getLabelMoment: function(datasetIndex, index) {
-			if (datasetIndex === null || index === null) {
-				return null;
-			}
-
-			if (typeof this.labelMoments[datasetIndex] !== 'undefined') {
-				return this.labelMoments[datasetIndex][index];
-			}
-
-			return null;
-		},
-		getLabelDiff: function(datasetIndex, index) {
-			var me = this;
-			if (datasetIndex === null || index === null) {
-				return null;
-			}
-
-			if (me.labelDiffs === undefined) {
-				me.buildLabelDiffs();
-			}
-
-			if (typeof me.labelDiffs[datasetIndex] !== 'undefined') {
-				return me.labelDiffs[datasetIndex][index];
-			}
-
-			return null;
-		},
-		getMomentStartOf: function(tick) {
-			var me = this;
-			if (me.options.time.unit === 'week' && me.options.time.isoWeekday !== false) {
-				return tick.clone().startOf('isoWeek').isoWeekday(me.options.time.isoWeekday);
-			}
-			return tick.clone().startOf(me.tickUnit);
-		},
 		determineDataLimits: function() {
 			var me = this;
-			me.labelMoments = [];
+			var timeOpts = me.options.time;
 
-			// Only parse these once. If the dataset does not have data as x,y pairs, we will use
-			// these
-			var scaleLabelMoments = [];
-			if (me.chart.data.labels && me.chart.data.labels.length > 0) {
-				helpers.each(me.chart.data.labels, function(label) {
-					var labelMoment = me.parseTime(label);
+			// We store the data range as unix millisecond timestamps so dataMin and dataMax will always be integers.
+			var dataMin = Number.MAX_SAFE_INTEGER;
+			var dataMax = Number.MIN_SAFE_INTEGER;
 
-					if (labelMoment.isValid()) {
-						if (me.options.time.round) {
-							labelMoment.startOf(me.options.time.round);
-						}
-						scaleLabelMoments.push(labelMoment);
+			var chartData = me.chart.data;
+			var parsedData = {
+				labels: [],
+				datasets: []
+			};
+
+			var timestamp;
+
+			helpers.each(chartData.labels, function(label, labelIndex) {
+				var labelMoment = parseTime(me, label);
+
+				if (labelMoment.isValid()) {
+					// We need to round the time
+					if (timeOpts.round) {
+						labelMoment.startOf(timeOpts.round);
 					}
-				}, me);
 
-				me.firstTick = moment.min.call(me, scaleLabelMoments);
-				me.lastTick = moment.max.call(me, scaleLabelMoments);
-			} else {
-				me.firstTick = null;
-				me.lastTick = null;
-			}
+					timestamp = labelMoment.valueOf();
+					dataMin = Math.min(timestamp, dataMin);
+					dataMax = Math.max(timestamp, dataMax);
 
-			helpers.each(me.chart.data.datasets, function(dataset, datasetIndex) {
-				var momentsForDataset = [];
-				var datasetVisible = me.chart.isDatasetVisible(datasetIndex);
+					// Store this value for later
+					parsedData.labels[labelIndex] = timestamp;
+				}
+			});
 
-				if (typeof dataset.data[0] === 'object' && dataset.data[0] !== null) {
-					helpers.each(dataset.data, function(value) {
-						var labelMoment = me.parseTime(me.getRightValue(value));
+			helpers.each(chartData.datasets, function(dataset, datasetIndex) {
+				var timestamps = [];
 
-						if (labelMoment.isValid()) {
-							if (me.options.time.round) {
-								labelMoment.startOf(me.options.time.round);
+				if (typeof dataset.data[0] === 'object' && dataset.data[0] !== null && me.chart.isDatasetVisible(datasetIndex)) {
+					// We have potential point data, so we need to parse this
+					helpers.each(dataset.data, function(value, dataIndex) {
+						var dataMoment = parseTime(me, me.getRightValue(value));
+
+						if (dataMoment.isValid()) {
+							if (timeOpts.round) {
+								dataMoment.startOf(timeOpts.round);
 							}
-							momentsForDataset.push(labelMoment);
 
-							if (datasetVisible) {
-								// May have gone outside the scale ranges, make sure we keep the first and last ticks updated
-								me.firstTick = me.firstTick !== null ? moment.min(me.firstTick, labelMoment) : labelMoment;
-								me.lastTick = me.lastTick !== null ? moment.max(me.lastTick, labelMoment) : labelMoment;
-							}
+							timestamp = dataMoment.valueOf();
+							dataMin = Math.min(timestamp, dataMin);
+							dataMax = Math.max(timestamp, dataMax);
+							timestamps[dataIndex] = timestamp;
 						}
-					}, me);
+					});
 				} else {
-					// We have no labels. Use the ones from the scale
-					momentsForDataset = scaleLabelMoments;
+					// We have no x coordinates, so use the ones from the labels
+					timestamps = parsedData.labels.slice();
 				}
 
-				me.labelMoments.push(momentsForDataset);
-			}, me);
+				parsedData.datasets[datasetIndex] = timestamps;
+			});
 
-			// Set these after we've done all the data
-			if (me.options.time.min) {
-				me.firstTick = me.parseTime(me.options.time.min);
-			}
-
-			if (me.options.time.max) {
-				me.lastTick = me.parseTime(me.options.time.max);
-			}
-
-			// We will modify these, so clone for later
-			me.firstTick = (me.firstTick || moment()).clone();
-			me.lastTick = (me.lastTick || moment()).clone();
-		},
-		buildLabelDiffs: function() {
-			var me = this;
-			me.labelDiffs = [];
-			var scaleLabelDiffs = [];
-			// Parse common labels once
-			if (me.chart.data.labels && me.chart.data.labels.length > 0) {
-				helpers.each(me.chart.data.labels, function(label) {
-					var labelMoment = me.parseTime(label);
-
-					if (labelMoment.isValid()) {
-						if (me.options.time.round) {
-							labelMoment.startOf(me.options.time.round);
-						}
-						scaleLabelDiffs.push(labelMoment.diff(me.firstTick, me.tickUnit, true));
-					}
-				}, me);
-			}
-
-			helpers.each(me.chart.data.datasets, function(dataset) {
-				var diffsForDataset = [];
-
-				if (typeof dataset.data[0] === 'object' && dataset.data[0] !== null) {
-					helpers.each(dataset.data, function(value) {
-						var labelMoment = me.parseTime(me.getRightValue(value));
-
-						if (labelMoment.isValid()) {
-							if (me.options.time.round) {
-								labelMoment.startOf(me.options.time.round);
-							}
-							diffsForDataset.push(labelMoment.diff(me.firstTick, me.tickUnit, true));
-						}
-					}, me);
-				} else {
-					// We have no labels. Use common ones
-					diffsForDataset = scaleLabelDiffs;
-				}
-
-				me.labelDiffs.push(diffsForDataset);
-			}, me);
+			me.dataMin = dataMin;
+			me.dataMax = dataMax;
+			me._parsedData = parsedData;
 		},
 		buildTicks: function() {
 			var me = this;
+			var timeOpts = me.options.time;
 
-			me.ctx.save();
-			var tickFontSize = helpers.getValueOrDefault(me.options.ticks.fontSize, Chart.defaults.global.defaultFontSize);
-			var tickFontStyle = helpers.getValueOrDefault(me.options.ticks.fontStyle, Chart.defaults.global.defaultFontStyle);
-			var tickFontFamily = helpers.getValueOrDefault(me.options.ticks.fontFamily, Chart.defaults.global.defaultFontFamily);
-			var tickLabelFont = helpers.fontString(tickFontSize, tickFontStyle, tickFontFamily);
-			me.ctx.font = tickLabelFont;
+			var minTimestamp;
+			var maxTimestamp;
+			var dataMin = me.dataMin;
+			var dataMax = me.dataMax;
 
-			me.ticks = [];
-			me.unitScale = 1; // How much we scale the unit by, ie 2 means 2x unit per step
-			me.scaleSizeInUnits = 0; // How large the scale is in the base unit (seconds, minutes, etc)
-
-			// Set unit override if applicable
-			if (me.options.time.unit) {
-				me.tickUnit = me.options.time.unit || 'day';
-				me.displayFormat = me.options.time.displayFormats[me.tickUnit];
-				me.scaleSizeInUnits = me.lastTick.diff(me.firstTick, me.tickUnit, true);
-				me.unitScale = helpers.getValueOrDefault(me.options.time.unitStepSize, 1);
-			} else {
-				// Determine the smallest needed unit of the time
-				var innerWidth = me.isHorizontal() ? me.width - (me.paddingLeft + me.paddingRight) : me.height - (me.paddingTop + me.paddingBottom);
-
-				// Crude approximation of what the label length might be
-				var tempFirstLabel = me.tickFormatFunction(me.firstTick, 0, []);
-				var tickLabelWidth = me.ctx.measureText(tempFirstLabel).width;
-				var cosRotation = Math.cos(helpers.toRadians(me.options.ticks.maxRotation));
-				var sinRotation = Math.sin(helpers.toRadians(me.options.ticks.maxRotation));
-				tickLabelWidth = (tickLabelWidth * cosRotation) + (tickFontSize * sinRotation);
-				var labelCapacity = innerWidth / (tickLabelWidth);
-
-				// Start as small as possible
-				me.tickUnit = me.options.time.minUnit;
-				me.scaleSizeInUnits = me.lastTick.diff(me.firstTick, me.tickUnit, true);
-				me.displayFormat = me.options.time.displayFormats[me.tickUnit];
-
-				var unitDefinitionIndex = 0;
-				var unitDefinition = time.units[unitDefinitionIndex];
-
-				// While we aren't ideal and we don't have units left
-				while (unitDefinitionIndex < time.units.length) {
-					// Can we scale this unit. If `false` we can scale infinitely
-					me.unitScale = 1;
-
-					if (helpers.isArray(unitDefinition.steps) && Math.ceil(me.scaleSizeInUnits / labelCapacity) < helpers.max(unitDefinition.steps)) {
-						// Use one of the prefedined steps
-						for (var idx = 0; idx < unitDefinition.steps.length; ++idx) {
-							if (unitDefinition.steps[idx] >= Math.ceil(me.scaleSizeInUnits / labelCapacity)) {
-								me.unitScale = helpers.getValueOrDefault(me.options.time.unitStepSize, unitDefinition.steps[idx]);
-								break;
-							}
-						}
-
-						break;
-					} else if ((unitDefinition.maxStep === false) || (Math.ceil(me.scaleSizeInUnits / labelCapacity) < unitDefinition.maxStep)) {
-						// We have a max step. Scale this unit
-						me.unitScale = helpers.getValueOrDefault(me.options.time.unitStepSize, Math.ceil(me.scaleSizeInUnits / labelCapacity));
-						break;
-					} else {
-						// Move to the next unit up
-						++unitDefinitionIndex;
-						unitDefinition = time.units[unitDefinitionIndex];
-
-						me.tickUnit = unitDefinition.name;
-						var leadingUnitBuffer = me.firstTick.diff(me.getMomentStartOf(me.firstTick), me.tickUnit, true);
-						var trailingUnitBuffer = me.getMomentStartOf(me.lastTick.clone().add(1, me.tickUnit)).diff(me.lastTick, me.tickUnit, true);
-						me.scaleSizeInUnits = me.lastTick.diff(me.firstTick, me.tickUnit, true) + leadingUnitBuffer + trailingUnitBuffer;
-						me.displayFormat = me.options.time.displayFormats[unitDefinition.name];
-					}
+			if (timeOpts.min) {
+				var minMoment = parseTime(me, timeOpts.min);
+				if (timeOpts.round) {
+					minMoment.round(timeOpts.round);
 				}
+				minTimestamp = minMoment.valueOf();
 			}
 
-			var roundedStart;
-
-			// Only round the first tick if we have no hard minimum
-			if (!me.options.time.min) {
-				me.firstTick = me.getMomentStartOf(me.firstTick);
-				roundedStart = me.firstTick;
-			} else {
-				roundedStart = me.getMomentStartOf(me.firstTick);
+			if (timeOpts.max) {
+				maxTimestamp = parseTime(me, timeOpts.max).valueOf();
 			}
 
-			// Only round the last tick if we have no hard maximum
-			if (!me.options.time.max) {
-				var roundedEnd = me.getMomentStartOf(me.lastTick);
-				var delta = roundedEnd.diff(me.lastTick, me.tickUnit, true);
-				if (delta < 0) {
-					// Do not use end of because we need me to be in the next time unit
-					me.lastTick = me.getMomentStartOf(me.lastTick.add(1, me.tickUnit));
-				} else if (delta >= 0) {
-					me.lastTick = roundedEnd;
-				}
+			var maxTicks = me.getLabelCapacity(minTimestamp || dataMin);
+			var unit = timeOpts.unit || determineUnit(timeOpts.minUnit, minTimestamp || dataMin, maxTimestamp || dataMax, maxTicks);
+			me.displayFormat = timeOpts.displayFormats[unit];
 
-				me.scaleSizeInUnits = me.lastTick.diff(me.firstTick, me.tickUnit, true);
-			}
+			var stepSize = timeOpts.stepSize || determineStepSize(minTimestamp || dataMin, maxTimestamp || dataMax, unit, maxTicks);
+			me.ticks = Chart.Ticks.generators.time({
+				maxTicks: maxTicks,
+				min: minTimestamp,
+				max: maxTimestamp,
+				stepSize: stepSize,
+				unit: unit,
+				isoWeekday: timeOpts.isoWeekday
+			}, {
+				min: dataMin,
+				max: dataMax
+			});
 
-			// Tick displayFormat override
-			if (me.options.time.displayFormat) {
-				me.displayFormat = me.options.time.displayFormat;
-			}
-
-			// first tick. will have been rounded correctly if options.time.min is not specified
-			me.ticks.push(me.firstTick.clone());
-
-			// For every unit in between the first and last moment, create a moment and add it to the ticks tick
-			for (var i = 1; i <= me.scaleSizeInUnits; ++i) {
-				var newTick = roundedStart.clone().add(i, me.tickUnit);
-
-				// Are we greater than the max time
-				if (me.options.time.max && newTick.diff(me.lastTick, me.tickUnit, true) >= 0) {
-					break;
-				}
-
-				if (i % me.unitScale === 0) {
-					me.ticks.push(newTick);
-				}
-			}
-
-			// Always show the right tick
-			var diff = me.ticks[me.ticks.length - 1].diff(me.lastTick, me.tickUnit);
-			if (diff !== 0 || me.scaleSizeInUnits === 0) {
-				// this is a weird case. If the <max> option is the same as the end option, we can't just diff the times because the tick was created from the roundedStart
-				// but the last tick was not rounded.
-				if (me.options.time.max) {
-					me.ticks.push(me.lastTick.clone());
-					me.scaleSizeInUnits = me.lastTick.diff(me.ticks[0], me.tickUnit, true);
-				} else {
-					me.ticks.push(me.lastTick.clone());
-					me.scaleSizeInUnits = me.lastTick.diff(me.firstTick, me.tickUnit, true);
-				}
-			}
-
-			me.ctx.restore();
-
-			// Invalidate label diffs cache
-			me.labelDiffs = undefined;
+			// At this point, we need to update our max and min given the tick values since we have expanded the
+			// range of the scale
+			me.max = helpers.max(me.ticks);
+			me.min = helpers.min(me.ticks);
 		},
 		// Get tooltip label
 		getLabelForIndex: function(index, datasetIndex) {
 			var me = this;
 			var label = me.chart.data.labels && index < me.chart.data.labels.length ? me.chart.data.labels[index] : '';
+			var value = me.chart.data.datasets[datasetIndex].data[index];
 
-			if (typeof me.chart.data.datasets[datasetIndex].data[0] === 'object') {
-				label = me.getRightValue(me.chart.data.datasets[datasetIndex].data[index]);
+			if (value !== null && typeof value === 'object') {
+				label = me.getRightValue(value);
 			}
 
 			// Format nicely
 			if (me.options.time.tooltipFormat) {
-				label = me.parseTime(label).format(me.options.time.tooltipFormat);
+				label = parseTime(me, label).format(me.options.time.tooltipFormat);
 			}
 
 			return label;
@@ -8843,81 +10946,83 @@ module.exports = function(Chart) {
 		},
 		convertTicksToLabels: function() {
 			var me = this;
-			me.tickMoments = me.ticks;
-			me.ticks = me.ticks.map(me.tickFormatFunction, me);
+			me.ticksAsTimestamps = me.ticks;
+			me.ticks = me.ticks.map(function(tick) {
+				return moment(tick);
+			}).map(me.tickFormatFunction, me);
+		},
+		getPixelForOffset: function(offset) {
+			var me = this;
+			var epochWidth = me.max - me.min;
+			var decimal = epochWidth ? (offset - me.min) / epochWidth : 0;
+
+			if (me.isHorizontal()) {
+				var valueOffset = (me.width * decimal);
+				return me.left + Math.round(valueOffset);
+			}
+
+			var heightOffset = (me.height * decimal);
+			return me.top + Math.round(heightOffset);
 		},
 		getPixelForValue: function(value, index, datasetIndex) {
 			var me = this;
 			var offset = null;
 			if (index !== undefined && datasetIndex !== undefined) {
-				offset = me.getLabelDiff(datasetIndex, index);
+				offset = me._parsedData.datasets[datasetIndex][index];
 			}
 
 			if (offset === null) {
 				if (!value || !value.isValid) {
 					// not already a moment object
-					value = me.parseTime(me.getRightValue(value));
+					value = parseTime(me, me.getRightValue(value));
 				}
+
 				if (value && value.isValid && value.isValid()) {
-					offset = value.diff(me.firstTick, me.tickUnit, true);
+					offset = value.valueOf();
 				}
 			}
 
 			if (offset !== null) {
-				var decimal = offset !== 0 ? offset / me.scaleSizeInUnits : offset;
-
-				if (me.isHorizontal()) {
-					var innerWidth = me.width - (me.paddingLeft + me.paddingRight);
-					var valueOffset = (innerWidth * decimal) + me.paddingLeft;
-
-					return me.left + Math.round(valueOffset);
-				}
-				var innerHeight = me.height - (me.paddingTop + me.paddingBottom);
-				var heightOffset = (innerHeight * decimal) + me.paddingTop;
-
-				return me.top + Math.round(heightOffset);
+				return me.getPixelForOffset(offset);
 			}
 		},
 		getPixelForTick: function(index) {
-			return this.getPixelForValue(this.tickMoments[index], null, null);
+			return this.getPixelForOffset(this.ticksAsTimestamps[index]);
 		},
 		getValueForPixel: function(pixel) {
 			var me = this;
-			var innerDimension = me.isHorizontal() ? me.width - (me.paddingLeft + me.paddingRight) : me.height - (me.paddingTop + me.paddingBottom);
-			var offset = (pixel - (me.isHorizontal() ? me.left + me.paddingLeft : me.top + me.paddingTop)) / innerDimension;
-			offset *= me.scaleSizeInUnits;
-			return me.firstTick.clone().add(moment.duration(offset, me.tickUnit).asSeconds(), 'seconds');
+			var innerDimension = me.isHorizontal() ? me.width : me.height;
+			var offset = (pixel - (me.isHorizontal() ? me.left : me.top)) / innerDimension;
+			return moment(me.min + (offset * (me.max - me.min)));
 		},
-		parseTime: function(label) {
+		// Crude approximation of what the label width might be
+		getLabelWidth: function(label) {
 			var me = this;
-			if (typeof me.options.time.parser === 'string') {
-				return moment(label, me.options.time.parser);
-			}
-			if (typeof me.options.time.parser === 'function') {
-				return me.options.time.parser(label);
-			}
-			// Date objects
-			if (typeof label.getMonth === 'function' || typeof label === 'number') {
-				return moment(label);
-			}
-			// Moment support
-			if (label.isValid && label.isValid()) {
-				return label;
-			}
-			// Custom parsing (return an instance of moment)
-			if (typeof me.options.time.format !== 'string' && me.options.time.format.call) {
-				console.warn('options.time.format is deprecated and replaced by options.time.parser. See http://nnnick.github.io/Chart.js/docs-v2/#scales-time-scale');
-				return me.options.time.format(label);
-			}
-			// Moment format parsing
-			return moment(label, me.options.time.format);
+			var ticks = me.options.ticks;
+
+			var tickLabelWidth = me.ctx.measureText(label).width;
+			var cosRotation = Math.cos(helpers.toRadians(ticks.maxRotation));
+			var sinRotation = Math.sin(helpers.toRadians(ticks.maxRotation));
+			var tickFontSize = helpers.getValueOrDefault(ticks.fontSize, Chart.defaults.global.defaultFontSize);
+			return (tickLabelWidth * cosRotation) + (tickFontSize * sinRotation);
+		},
+		getLabelCapacity: function(exampleTime) {
+			var me = this;
+
+			me.displayFormat = me.options.time.displayFormats.millisecond;	// Pick the longest format for guestimation
+			var exampleLabel = me.tickFormatFunction(moment(exampleTime), 0, []);
+			var tickLabelWidth = me.getLabelWidth(exampleLabel);
+
+			var innerWidth = me.isHorizontal() ? me.width : me.height;
+			var labelCapacity = innerWidth / tickLabelWidth;
+			return labelCapacity;
 		}
 	});
 	Chart.scaleService.registerScaleType('time', TimeScale, defaultConfig);
 
 };
 
-},{"moment":66}],38:[function(require,module,exports){
+},{"moment":72}],43:[function(require,module,exports){
 /* MIT license */
 var colorNames = require('color-name');
 
@@ -9140,7 +11245,7 @@ for (var name in colorNames) {
    reverseNames[colorNames[name]] = name;
 }
 
-},{"color-name":42}],39:[function(require,module,exports){
+},{"color-name":47}],44:[function(require,module,exports){
 /* MIT license */
 var convert = require('color-convert');
 var string = require('chartjs-color-string');
@@ -9153,6 +11258,7 @@ var Color = function (obj) {
 		return new Color(obj);
 	}
 
+	this.valid = false;
 	this.values = {
 		rgb: [0, 0, 0],
 		hsl: [0, 0, 0],
@@ -9172,8 +11278,6 @@ var Color = function (obj) {
 			this.setValues('hsl', vals);
 		} else if (vals = string.getHwb(obj)) {
 			this.setValues('hwb', vals);
-		} else {
-			throw new Error('Unable to parse color from string "' + obj + '"');
 		}
 	} else if (typeof obj === 'object') {
 		vals = obj;
@@ -9187,13 +11291,14 @@ var Color = function (obj) {
 			this.setValues('hwb', vals);
 		} else if (vals.c !== undefined || vals.cyan !== undefined) {
 			this.setValues('cmyk', vals);
-		} else {
-			throw new Error('Unable to parse color from object ' + JSON.stringify(obj));
 		}
 	}
 };
 
 Color.prototype = {
+	isValid: function () {
+		return this.valid;
+	},
 	rgb: function () {
 		return this.setSpace('rgb', arguments);
 	},
@@ -9537,6 +11642,8 @@ Color.prototype.setValues = function (space, vals) {
 	var alpha = 1;
 	var i;
 
+	this.valid = true;
+
 	if (space === 'alpha') {
 		alpha = vals;
 	} else if (vals.length) {
@@ -9625,7 +11732,7 @@ if (typeof window !== 'undefined') {
 
 module.exports = Color;
 
-},{"chartjs-color-string":38,"color-convert":41}],40:[function(require,module,exports){
+},{"chartjs-color-string":43,"color-convert":46}],45:[function(require,module,exports){
 /* MIT license */
 
 module.exports = {
@@ -10325,7 +12432,7 @@ for (var key in cssKeywords) {
   reverseKeywords[JSON.stringify(cssKeywords[key])] = key;
 }
 
-},{}],41:[function(require,module,exports){
+},{}],46:[function(require,module,exports){
 var conversions = require("./conversions");
 
 var convert = function() {
@@ -10418,7 +12525,7 @@ Converter.prototype.getValues = function(space) {
 });
 
 module.exports = convert;
-},{"./conversions":40}],42:[function(require,module,exports){
+},{"./conversions":45}],47:[function(require,module,exports){
 module.exports = {
 	"aliceblue": [240, 248, 255],
 	"antiquewhite": [250, 235, 215],
@@ -10569,7 +12676,884 @@ module.exports = {
 	"yellow": [255, 255, 0],
 	"yellowgreen": [154, 205, 50]
 };
-},{}],43:[function(require,module,exports){
+},{}],48:[function(require,module,exports){
+(function (process){
+/**
+ * Copyright 2013-present, Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ *
+ */
+
+'use strict';
+
+var _assign = require('object-assign');
+
+var emptyObject = require('fbjs/lib/emptyObject');
+var _invariant = require('fbjs/lib/invariant');
+
+if (process.env.NODE_ENV !== 'production') {
+  var warning = require('fbjs/lib/warning');
+}
+
+var MIXINS_KEY = 'mixins';
+
+// Helper function to allow the creation of anonymous functions which do not
+// have .name set to the name of the variable being assigned to.
+function identity(fn) {
+  return fn;
+}
+
+var ReactPropTypeLocationNames;
+if (process.env.NODE_ENV !== 'production') {
+  ReactPropTypeLocationNames = {
+    prop: 'prop',
+    context: 'context',
+    childContext: 'child context'
+  };
+} else {
+  ReactPropTypeLocationNames = {};
+}
+
+function factory(ReactComponent, isValidElement, ReactNoopUpdateQueue) {
+  /**
+   * Policies that describe methods in `ReactClassInterface`.
+   */
+
+  var injectedMixins = [];
+
+  /**
+   * Composite components are higher-level components that compose other composite
+   * or host components.
+   *
+   * To create a new type of `ReactClass`, pass a specification of
+   * your new class to `React.createClass`. The only requirement of your class
+   * specification is that you implement a `render` method.
+   *
+   *   var MyComponent = React.createClass({
+   *     render: function() {
+   *       return <div>Hello World</div>;
+   *     }
+   *   });
+   *
+   * The class specification supports a specific protocol of methods that have
+   * special meaning (e.g. `render`). See `ReactClassInterface` for
+   * more the comprehensive protocol. Any other properties and methods in the
+   * class specification will be available on the prototype.
+   *
+   * @interface ReactClassInterface
+   * @internal
+   */
+  var ReactClassInterface = {
+    /**
+     * An array of Mixin objects to include when defining your component.
+     *
+     * @type {array}
+     * @optional
+     */
+    mixins: 'DEFINE_MANY',
+
+    /**
+     * An object containing properties and methods that should be defined on
+     * the component's constructor instead of its prototype (static methods).
+     *
+     * @type {object}
+     * @optional
+     */
+    statics: 'DEFINE_MANY',
+
+    /**
+     * Definition of prop types for this component.
+     *
+     * @type {object}
+     * @optional
+     */
+    propTypes: 'DEFINE_MANY',
+
+    /**
+     * Definition of context types for this component.
+     *
+     * @type {object}
+     * @optional
+     */
+    contextTypes: 'DEFINE_MANY',
+
+    /**
+     * Definition of context types this component sets for its children.
+     *
+     * @type {object}
+     * @optional
+     */
+    childContextTypes: 'DEFINE_MANY',
+
+    // ==== Definition methods ====
+
+    /**
+     * Invoked when the component is mounted. Values in the mapping will be set on
+     * `this.props` if that prop is not specified (i.e. using an `in` check).
+     *
+     * This method is invoked before `getInitialState` and therefore cannot rely
+     * on `this.state` or use `this.setState`.
+     *
+     * @return {object}
+     * @optional
+     */
+    getDefaultProps: 'DEFINE_MANY_MERGED',
+
+    /**
+     * Invoked once before the component is mounted. The return value will be used
+     * as the initial value of `this.state`.
+     *
+     *   getInitialState: function() {
+     *     return {
+     *       isOn: false,
+     *       fooBaz: new BazFoo()
+     *     }
+     *   }
+     *
+     * @return {object}
+     * @optional
+     */
+    getInitialState: 'DEFINE_MANY_MERGED',
+
+    /**
+     * @return {object}
+     * @optional
+     */
+    getChildContext: 'DEFINE_MANY_MERGED',
+
+    /**
+     * Uses props from `this.props` and state from `this.state` to render the
+     * structure of the component.
+     *
+     * No guarantees are made about when or how often this method is invoked, so
+     * it must not have side effects.
+     *
+     *   render: function() {
+     *     var name = this.props.name;
+     *     return <div>Hello, {name}!</div>;
+     *   }
+     *
+     * @return {ReactComponent}
+     * @required
+     */
+    render: 'DEFINE_ONCE',
+
+    // ==== Delegate methods ====
+
+    /**
+     * Invoked when the component is initially created and about to be mounted.
+     * This may have side effects, but any external subscriptions or data created
+     * by this method must be cleaned up in `componentWillUnmount`.
+     *
+     * @optional
+     */
+    componentWillMount: 'DEFINE_MANY',
+
+    /**
+     * Invoked when the component has been mounted and has a DOM representation.
+     * However, there is no guarantee that the DOM node is in the document.
+     *
+     * Use this as an opportunity to operate on the DOM when the component has
+     * been mounted (initialized and rendered) for the first time.
+     *
+     * @param {DOMElement} rootNode DOM element representing the component.
+     * @optional
+     */
+    componentDidMount: 'DEFINE_MANY',
+
+    /**
+     * Invoked before the component receives new props.
+     *
+     * Use this as an opportunity to react to a prop transition by updating the
+     * state using `this.setState`. Current props are accessed via `this.props`.
+     *
+     *   componentWillReceiveProps: function(nextProps, nextContext) {
+     *     this.setState({
+     *       likesIncreasing: nextProps.likeCount > this.props.likeCount
+     *     });
+     *   }
+     *
+     * NOTE: There is no equivalent `componentWillReceiveState`. An incoming prop
+     * transition may cause a state change, but the opposite is not true. If you
+     * need it, you are probably looking for `componentWillUpdate`.
+     *
+     * @param {object} nextProps
+     * @optional
+     */
+    componentWillReceiveProps: 'DEFINE_MANY',
+
+    /**
+     * Invoked while deciding if the component should be updated as a result of
+     * receiving new props, state and/or context.
+     *
+     * Use this as an opportunity to `return false` when you're certain that the
+     * transition to the new props/state/context will not require a component
+     * update.
+     *
+     *   shouldComponentUpdate: function(nextProps, nextState, nextContext) {
+     *     return !equal(nextProps, this.props) ||
+     *       !equal(nextState, this.state) ||
+     *       !equal(nextContext, this.context);
+     *   }
+     *
+     * @param {object} nextProps
+     * @param {?object} nextState
+     * @param {?object} nextContext
+     * @return {boolean} True if the component should update.
+     * @optional
+     */
+    shouldComponentUpdate: 'DEFINE_ONCE',
+
+    /**
+     * Invoked when the component is about to update due to a transition from
+     * `this.props`, `this.state` and `this.context` to `nextProps`, `nextState`
+     * and `nextContext`.
+     *
+     * Use this as an opportunity to perform preparation before an update occurs.
+     *
+     * NOTE: You **cannot** use `this.setState()` in this method.
+     *
+     * @param {object} nextProps
+     * @param {?object} nextState
+     * @param {?object} nextContext
+     * @param {ReactReconcileTransaction} transaction
+     * @optional
+     */
+    componentWillUpdate: 'DEFINE_MANY',
+
+    /**
+     * Invoked when the component's DOM representation has been updated.
+     *
+     * Use this as an opportunity to operate on the DOM when the component has
+     * been updated.
+     *
+     * @param {object} prevProps
+     * @param {?object} prevState
+     * @param {?object} prevContext
+     * @param {DOMElement} rootNode DOM element representing the component.
+     * @optional
+     */
+    componentDidUpdate: 'DEFINE_MANY',
+
+    /**
+     * Invoked when the component is about to be removed from its parent and have
+     * its DOM representation destroyed.
+     *
+     * Use this as an opportunity to deallocate any external resources.
+     *
+     * NOTE: There is no `componentDidUnmount` since your component will have been
+     * destroyed by that point.
+     *
+     * @optional
+     */
+    componentWillUnmount: 'DEFINE_MANY',
+
+    // ==== Advanced methods ====
+
+    /**
+     * Updates the component's currently mounted DOM representation.
+     *
+     * By default, this implements React's rendering and reconciliation algorithm.
+     * Sophisticated clients may wish to override this.
+     *
+     * @param {ReactReconcileTransaction} transaction
+     * @internal
+     * @overridable
+     */
+    updateComponent: 'OVERRIDE_BASE'
+  };
+
+  /**
+   * Mapping from class specification keys to special processing functions.
+   *
+   * Although these are declared like instance properties in the specification
+   * when defining classes using `React.createClass`, they are actually static
+   * and are accessible on the constructor instead of the prototype. Despite
+   * being static, they must be defined outside of the "statics" key under
+   * which all other static methods are defined.
+   */
+  var RESERVED_SPEC_KEYS = {
+    displayName: function(Constructor, displayName) {
+      Constructor.displayName = displayName;
+    },
+    mixins: function(Constructor, mixins) {
+      if (mixins) {
+        for (var i = 0; i < mixins.length; i++) {
+          mixSpecIntoComponent(Constructor, mixins[i]);
+        }
+      }
+    },
+    childContextTypes: function(Constructor, childContextTypes) {
+      if (process.env.NODE_ENV !== 'production') {
+        validateTypeDef(Constructor, childContextTypes, 'childContext');
+      }
+      Constructor.childContextTypes = _assign(
+        {},
+        Constructor.childContextTypes,
+        childContextTypes
+      );
+    },
+    contextTypes: function(Constructor, contextTypes) {
+      if (process.env.NODE_ENV !== 'production') {
+        validateTypeDef(Constructor, contextTypes, 'context');
+      }
+      Constructor.contextTypes = _assign(
+        {},
+        Constructor.contextTypes,
+        contextTypes
+      );
+    },
+    /**
+     * Special case getDefaultProps which should move into statics but requires
+     * automatic merging.
+     */
+    getDefaultProps: function(Constructor, getDefaultProps) {
+      if (Constructor.getDefaultProps) {
+        Constructor.getDefaultProps = createMergedResultFunction(
+          Constructor.getDefaultProps,
+          getDefaultProps
+        );
+      } else {
+        Constructor.getDefaultProps = getDefaultProps;
+      }
+    },
+    propTypes: function(Constructor, propTypes) {
+      if (process.env.NODE_ENV !== 'production') {
+        validateTypeDef(Constructor, propTypes, 'prop');
+      }
+      Constructor.propTypes = _assign({}, Constructor.propTypes, propTypes);
+    },
+    statics: function(Constructor, statics) {
+      mixStaticSpecIntoComponent(Constructor, statics);
+    },
+    autobind: function() {}
+  };
+
+  function validateTypeDef(Constructor, typeDef, location) {
+    for (var propName in typeDef) {
+      if (typeDef.hasOwnProperty(propName)) {
+        // use a warning instead of an _invariant so components
+        // don't show up in prod but only in __DEV__
+        if (process.env.NODE_ENV !== 'production') {
+          warning(
+            typeof typeDef[propName] === 'function',
+            '%s: %s type `%s` is invalid; it must be a function, usually from ' +
+              'React.PropTypes.',
+            Constructor.displayName || 'ReactClass',
+            ReactPropTypeLocationNames[location],
+            propName
+          );
+        }
+      }
+    }
+  }
+
+  function validateMethodOverride(isAlreadyDefined, name) {
+    var specPolicy = ReactClassInterface.hasOwnProperty(name)
+      ? ReactClassInterface[name]
+      : null;
+
+    // Disallow overriding of base class methods unless explicitly allowed.
+    if (ReactClassMixin.hasOwnProperty(name)) {
+      _invariant(
+        specPolicy === 'OVERRIDE_BASE',
+        'ReactClassInterface: You are attempting to override ' +
+          '`%s` from your class specification. Ensure that your method names ' +
+          'do not overlap with React methods.',
+        name
+      );
+    }
+
+    // Disallow defining methods more than once unless explicitly allowed.
+    if (isAlreadyDefined) {
+      _invariant(
+        specPolicy === 'DEFINE_MANY' || specPolicy === 'DEFINE_MANY_MERGED',
+        'ReactClassInterface: You are attempting to define ' +
+          '`%s` on your component more than once. This conflict may be due ' +
+          'to a mixin.',
+        name
+      );
+    }
+  }
+
+  /**
+   * Mixin helper which handles policy validation and reserved
+   * specification keys when building React classes.
+   */
+  function mixSpecIntoComponent(Constructor, spec) {
+    if (!spec) {
+      if (process.env.NODE_ENV !== 'production') {
+        var typeofSpec = typeof spec;
+        var isMixinValid = typeofSpec === 'object' && spec !== null;
+
+        if (process.env.NODE_ENV !== 'production') {
+          warning(
+            isMixinValid,
+            "%s: You're attempting to include a mixin that is either null " +
+              'or not an object. Check the mixins included by the component, ' +
+              'as well as any mixins they include themselves. ' +
+              'Expected object but got %s.',
+            Constructor.displayName || 'ReactClass',
+            spec === null ? null : typeofSpec
+          );
+        }
+      }
+
+      return;
+    }
+
+    _invariant(
+      typeof spec !== 'function',
+      "ReactClass: You're attempting to " +
+        'use a component class or function as a mixin. Instead, just use a ' +
+        'regular object.'
+    );
+    _invariant(
+      !isValidElement(spec),
+      "ReactClass: You're attempting to " +
+        'use a component as a mixin. Instead, just use a regular object.'
+    );
+
+    var proto = Constructor.prototype;
+    var autoBindPairs = proto.__reactAutoBindPairs;
+
+    // By handling mixins before any other properties, we ensure the same
+    // chaining order is applied to methods with DEFINE_MANY policy, whether
+    // mixins are listed before or after these methods in the spec.
+    if (spec.hasOwnProperty(MIXINS_KEY)) {
+      RESERVED_SPEC_KEYS.mixins(Constructor, spec.mixins);
+    }
+
+    for (var name in spec) {
+      if (!spec.hasOwnProperty(name)) {
+        continue;
+      }
+
+      if (name === MIXINS_KEY) {
+        // We have already handled mixins in a special case above.
+        continue;
+      }
+
+      var property = spec[name];
+      var isAlreadyDefined = proto.hasOwnProperty(name);
+      validateMethodOverride(isAlreadyDefined, name);
+
+      if (RESERVED_SPEC_KEYS.hasOwnProperty(name)) {
+        RESERVED_SPEC_KEYS[name](Constructor, property);
+      } else {
+        // Setup methods on prototype:
+        // The following member methods should not be automatically bound:
+        // 1. Expected ReactClass methods (in the "interface").
+        // 2. Overridden methods (that were mixed in).
+        var isReactClassMethod = ReactClassInterface.hasOwnProperty(name);
+        var isFunction = typeof property === 'function';
+        var shouldAutoBind =
+          isFunction &&
+          !isReactClassMethod &&
+          !isAlreadyDefined &&
+          spec.autobind !== false;
+
+        if (shouldAutoBind) {
+          autoBindPairs.push(name, property);
+          proto[name] = property;
+        } else {
+          if (isAlreadyDefined) {
+            var specPolicy = ReactClassInterface[name];
+
+            // These cases should already be caught by validateMethodOverride.
+            _invariant(
+              isReactClassMethod &&
+                (specPolicy === 'DEFINE_MANY_MERGED' ||
+                  specPolicy === 'DEFINE_MANY'),
+              'ReactClass: Unexpected spec policy %s for key %s ' +
+                'when mixing in component specs.',
+              specPolicy,
+              name
+            );
+
+            // For methods which are defined more than once, call the existing
+            // methods before calling the new property, merging if appropriate.
+            if (specPolicy === 'DEFINE_MANY_MERGED') {
+              proto[name] = createMergedResultFunction(proto[name], property);
+            } else if (specPolicy === 'DEFINE_MANY') {
+              proto[name] = createChainedFunction(proto[name], property);
+            }
+          } else {
+            proto[name] = property;
+            if (process.env.NODE_ENV !== 'production') {
+              // Add verbose displayName to the function, which helps when looking
+              // at profiling tools.
+              if (typeof property === 'function' && spec.displayName) {
+                proto[name].displayName = spec.displayName + '_' + name;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  function mixStaticSpecIntoComponent(Constructor, statics) {
+    if (!statics) {
+      return;
+    }
+    for (var name in statics) {
+      var property = statics[name];
+      if (!statics.hasOwnProperty(name)) {
+        continue;
+      }
+
+      var isReserved = name in RESERVED_SPEC_KEYS;
+      _invariant(
+        !isReserved,
+        'ReactClass: You are attempting to define a reserved ' +
+          'property, `%s`, that shouldn\'t be on the "statics" key. Define it ' +
+          'as an instance property instead; it will still be accessible on the ' +
+          'constructor.',
+        name
+      );
+
+      var isInherited = name in Constructor;
+      _invariant(
+        !isInherited,
+        'ReactClass: You are attempting to define ' +
+          '`%s` on your component more than once. This conflict may be ' +
+          'due to a mixin.',
+        name
+      );
+      Constructor[name] = property;
+    }
+  }
+
+  /**
+   * Merge two objects, but throw if both contain the same key.
+   *
+   * @param {object} one The first object, which is mutated.
+   * @param {object} two The second object
+   * @return {object} one after it has been mutated to contain everything in two.
+   */
+  function mergeIntoWithNoDuplicateKeys(one, two) {
+    _invariant(
+      one && two && typeof one === 'object' && typeof two === 'object',
+      'mergeIntoWithNoDuplicateKeys(): Cannot merge non-objects.'
+    );
+
+    for (var key in two) {
+      if (two.hasOwnProperty(key)) {
+        _invariant(
+          one[key] === undefined,
+          'mergeIntoWithNoDuplicateKeys(): ' +
+            'Tried to merge two objects with the same key: `%s`. This conflict ' +
+            'may be due to a mixin; in particular, this may be caused by two ' +
+            'getInitialState() or getDefaultProps() methods returning objects ' +
+            'with clashing keys.',
+          key
+        );
+        one[key] = two[key];
+      }
+    }
+    return one;
+  }
+
+  /**
+   * Creates a function that invokes two functions and merges their return values.
+   *
+   * @param {function} one Function to invoke first.
+   * @param {function} two Function to invoke second.
+   * @return {function} Function that invokes the two argument functions.
+   * @private
+   */
+  function createMergedResultFunction(one, two) {
+    return function mergedResult() {
+      var a = one.apply(this, arguments);
+      var b = two.apply(this, arguments);
+      if (a == null) {
+        return b;
+      } else if (b == null) {
+        return a;
+      }
+      var c = {};
+      mergeIntoWithNoDuplicateKeys(c, a);
+      mergeIntoWithNoDuplicateKeys(c, b);
+      return c;
+    };
+  }
+
+  /**
+   * Creates a function that invokes two functions and ignores their return vales.
+   *
+   * @param {function} one Function to invoke first.
+   * @param {function} two Function to invoke second.
+   * @return {function} Function that invokes the two argument functions.
+   * @private
+   */
+  function createChainedFunction(one, two) {
+    return function chainedFunction() {
+      one.apply(this, arguments);
+      two.apply(this, arguments);
+    };
+  }
+
+  /**
+   * Binds a method to the component.
+   *
+   * @param {object} component Component whose method is going to be bound.
+   * @param {function} method Method to be bound.
+   * @return {function} The bound method.
+   */
+  function bindAutoBindMethod(component, method) {
+    var boundMethod = method.bind(component);
+    if (process.env.NODE_ENV !== 'production') {
+      boundMethod.__reactBoundContext = component;
+      boundMethod.__reactBoundMethod = method;
+      boundMethod.__reactBoundArguments = null;
+      var componentName = component.constructor.displayName;
+      var _bind = boundMethod.bind;
+      boundMethod.bind = function(newThis) {
+        for (
+          var _len = arguments.length,
+            args = Array(_len > 1 ? _len - 1 : 0),
+            _key = 1;
+          _key < _len;
+          _key++
+        ) {
+          args[_key - 1] = arguments[_key];
+        }
+
+        // User is trying to bind() an autobound method; we effectively will
+        // ignore the value of "this" that the user is trying to use, so
+        // let's warn.
+        if (newThis !== component && newThis !== null) {
+          if (process.env.NODE_ENV !== 'production') {
+            warning(
+              false,
+              'bind(): React component methods may only be bound to the ' +
+                'component instance. See %s',
+              componentName
+            );
+          }
+        } else if (!args.length) {
+          if (process.env.NODE_ENV !== 'production') {
+            warning(
+              false,
+              'bind(): You are binding a component method to the component. ' +
+                'React does this for you automatically in a high-performance ' +
+                'way, so you can safely remove this call. See %s',
+              componentName
+            );
+          }
+          return boundMethod;
+        }
+        var reboundMethod = _bind.apply(boundMethod, arguments);
+        reboundMethod.__reactBoundContext = component;
+        reboundMethod.__reactBoundMethod = method;
+        reboundMethod.__reactBoundArguments = args;
+        return reboundMethod;
+      };
+    }
+    return boundMethod;
+  }
+
+  /**
+   * Binds all auto-bound methods in a component.
+   *
+   * @param {object} component Component whose method is going to be bound.
+   */
+  function bindAutoBindMethods(component) {
+    var pairs = component.__reactAutoBindPairs;
+    for (var i = 0; i < pairs.length; i += 2) {
+      var autoBindKey = pairs[i];
+      var method = pairs[i + 1];
+      component[autoBindKey] = bindAutoBindMethod(component, method);
+    }
+  }
+
+  var IsMountedPreMixin = {
+    componentDidMount: function() {
+      this.__isMounted = true;
+    }
+  };
+
+  var IsMountedPostMixin = {
+    componentWillUnmount: function() {
+      this.__isMounted = false;
+    }
+  };
+
+  /**
+   * Add more to the ReactClass base class. These are all legacy features and
+   * therefore not already part of the modern ReactComponent.
+   */
+  var ReactClassMixin = {
+    /**
+     * TODO: This will be deprecated because state should always keep a consistent
+     * type signature and the only use case for this, is to avoid that.
+     */
+    replaceState: function(newState, callback) {
+      this.updater.enqueueReplaceState(this, newState, callback);
+    },
+
+    /**
+     * Checks whether or not this composite component is mounted.
+     * @return {boolean} True if mounted, false otherwise.
+     * @protected
+     * @final
+     */
+    isMounted: function() {
+      if (process.env.NODE_ENV !== 'production') {
+        warning(
+          this.__didWarnIsMounted,
+          '%s: isMounted is deprecated. Instead, make sure to clean up ' +
+            'subscriptions and pending requests in componentWillUnmount to ' +
+            'prevent memory leaks.',
+          (this.constructor && this.constructor.displayName) ||
+            this.name ||
+            'Component'
+        );
+        this.__didWarnIsMounted = true;
+      }
+      return !!this.__isMounted;
+    }
+  };
+
+  var ReactClassComponent = function() {};
+  _assign(
+    ReactClassComponent.prototype,
+    ReactComponent.prototype,
+    ReactClassMixin
+  );
+
+  /**
+   * Creates a composite component class given a class specification.
+   * See https://facebook.github.io/react/docs/top-level-api.html#react.createclass
+   *
+   * @param {object} spec Class specification (which must define `render`).
+   * @return {function} Component constructor function.
+   * @public
+   */
+  function createClass(spec) {
+    // To keep our warnings more understandable, we'll use a little hack here to
+    // ensure that Constructor.name !== 'Constructor'. This makes sure we don't
+    // unnecessarily identify a class without displayName as 'Constructor'.
+    var Constructor = identity(function(props, context, updater) {
+      // This constructor gets overridden by mocks. The argument is used
+      // by mocks to assert on what gets mounted.
+
+      if (process.env.NODE_ENV !== 'production') {
+        warning(
+          this instanceof Constructor,
+          'Something is calling a React component directly. Use a factory or ' +
+            'JSX instead. See: https://fb.me/react-legacyfactory'
+        );
+      }
+
+      // Wire up auto-binding
+      if (this.__reactAutoBindPairs.length) {
+        bindAutoBindMethods(this);
+      }
+
+      this.props = props;
+      this.context = context;
+      this.refs = emptyObject;
+      this.updater = updater || ReactNoopUpdateQueue;
+
+      this.state = null;
+
+      // ReactClasses doesn't have constructors. Instead, they use the
+      // getInitialState and componentWillMount methods for initialization.
+
+      var initialState = this.getInitialState ? this.getInitialState() : null;
+      if (process.env.NODE_ENV !== 'production') {
+        // We allow auto-mocks to proceed as if they're returning null.
+        if (
+          initialState === undefined &&
+          this.getInitialState._isMockFunction
+        ) {
+          // This is probably bad practice. Consider warning here and
+          // deprecating this convenience.
+          initialState = null;
+        }
+      }
+      _invariant(
+        typeof initialState === 'object' && !Array.isArray(initialState),
+        '%s.getInitialState(): must return an object or null',
+        Constructor.displayName || 'ReactCompositeComponent'
+      );
+
+      this.state = initialState;
+    });
+    Constructor.prototype = new ReactClassComponent();
+    Constructor.prototype.constructor = Constructor;
+    Constructor.prototype.__reactAutoBindPairs = [];
+
+    injectedMixins.forEach(mixSpecIntoComponent.bind(null, Constructor));
+
+    mixSpecIntoComponent(Constructor, IsMountedPreMixin);
+    mixSpecIntoComponent(Constructor, spec);
+    mixSpecIntoComponent(Constructor, IsMountedPostMixin);
+
+    // Initialize the defaultProps property after all mixins have been merged.
+    if (Constructor.getDefaultProps) {
+      Constructor.defaultProps = Constructor.getDefaultProps();
+    }
+
+    if (process.env.NODE_ENV !== 'production') {
+      // This is a tag to indicate that the use of these method names is ok,
+      // since it's used with createClass. If it's not, then it's likely a
+      // mistake so we'll warn you to use the static property, property
+      // initializer or constructor respectively.
+      if (Constructor.getDefaultProps) {
+        Constructor.getDefaultProps.isReactClassApproved = {};
+      }
+      if (Constructor.prototype.getInitialState) {
+        Constructor.prototype.getInitialState.isReactClassApproved = {};
+      }
+    }
+
+    _invariant(
+      Constructor.prototype.render,
+      'createClass(...): Class specification must implement a `render` method.'
+    );
+
+    if (process.env.NODE_ENV !== 'production') {
+      warning(
+        !Constructor.prototype.componentShouldUpdate,
+        '%s has a method called ' +
+          'componentShouldUpdate(). Did you mean shouldComponentUpdate()? ' +
+          'The name is phrased as a question because the function is ' +
+          'expected to return a value.',
+        spec.displayName || 'A component'
+      );
+      warning(
+        !Constructor.prototype.componentWillRecieveProps,
+        '%s has a method called ' +
+          'componentWillRecieveProps(). Did you mean componentWillReceiveProps()?',
+        spec.displayName || 'A component'
+      );
+    }
+
+    // Reduce time spent doing lookups by setting these on the prototype.
+    for (var methodName in ReactClassInterface) {
+      if (!Constructor.prototype[methodName]) {
+        Constructor.prototype[methodName] = null;
+      }
+    }
+
+    return Constructor;
+  }
+
+  return createClass;
+}
+
+module.exports = factory;
+
+}).call(this,require('_process'))
+},{"_process":74,"fbjs/lib/emptyObject":57,"fbjs/lib/invariant":64,"fbjs/lib/warning":71,"object-assign":73}],49:[function(require,module,exports){
+(function (process){
 'use strict';
 
 /**
@@ -10640,7 +13624,7 @@ var EventListener = {
         }
       };
     } else {
-      if ("production" !== 'production') {
+      if (process.env.NODE_ENV !== 'production') {
         console.error('Attempted to listen to events during the capture phase on a ' + 'browser that does not support the capture phase. Your application ' + 'will not receive some events.');
       }
       return {
@@ -10653,7 +13637,8 @@ var EventListener = {
 };
 
 module.exports = EventListener;
-},{"./emptyFunction":50}],44:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./emptyFunction":56,"_process":74}],50:[function(require,module,exports){
 /**
  * Copyright (c) 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -10689,7 +13674,7 @@ var ExecutionEnvironment = {
 };
 
 module.exports = ExecutionEnvironment;
-},{}],45:[function(require,module,exports){
+},{}],51:[function(require,module,exports){
 "use strict";
 
 /**
@@ -10721,7 +13706,7 @@ function camelize(string) {
 }
 
 module.exports = camelize;
-},{}],46:[function(require,module,exports){
+},{}],52:[function(require,module,exports){
 /**
  * Copyright (c) 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -10761,7 +13746,7 @@ function camelizeStyleName(string) {
 }
 
 module.exports = camelizeStyleName;
-},{"./camelize":45}],47:[function(require,module,exports){
+},{"./camelize":51}],53:[function(require,module,exports){
 'use strict';
 
 /**
@@ -10801,7 +13786,8 @@ function containsNode(outerNode, innerNode) {
 }
 
 module.exports = containsNode;
-},{"./isTextNode":60}],48:[function(require,module,exports){
+},{"./isTextNode":66}],54:[function(require,module,exports){
+(function (process){
 'use strict';
 
 /**
@@ -10831,13 +13817,13 @@ function toArray(obj) {
 
   // Some browsers builtin objects can report typeof 'function' (e.g. NodeList
   // in old versions of Safari).
-  !(!Array.isArray(obj) && (typeof obj === 'object' || typeof obj === 'function')) ? "production" !== 'production' ? invariant(false, 'toArray: Array-like object expected') : invariant(false) : void 0;
+  !(!Array.isArray(obj) && (typeof obj === 'object' || typeof obj === 'function')) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'toArray: Array-like object expected') : invariant(false) : void 0;
 
-  !(typeof length === 'number') ? "production" !== 'production' ? invariant(false, 'toArray: Object needs a length property') : invariant(false) : void 0;
+  !(typeof length === 'number') ? process.env.NODE_ENV !== 'production' ? invariant(false, 'toArray: Object needs a length property') : invariant(false) : void 0;
 
-  !(length === 0 || length - 1 in obj) ? "production" !== 'production' ? invariant(false, 'toArray: Object should have keys for indices') : invariant(false) : void 0;
+  !(length === 0 || length - 1 in obj) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'toArray: Object should have keys for indices') : invariant(false) : void 0;
 
-  !(typeof obj.callee !== 'function') ? "production" !== 'production' ? invariant(false, 'toArray: Object can\'t be `arguments`. Use rest params ' + '(function(...args) {}) or Array.from() instead.') : invariant(false) : void 0;
+  !(typeof obj.callee !== 'function') ? process.env.NODE_ENV !== 'production' ? invariant(false, 'toArray: Object can\'t be `arguments`. Use rest params ' + '(function(...args) {}) or Array.from() instead.') : invariant(false) : void 0;
 
   // Old IE doesn't give collections access to hasOwnProperty. Assume inputs
   // without method will throw during the slice call and skip straight to the
@@ -10928,7 +13914,9 @@ function createArrayFromMixed(obj) {
 }
 
 module.exports = createArrayFromMixed;
-},{"./invariant":58}],49:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./invariant":64,"_process":74}],55:[function(require,module,exports){
+(function (process){
 'use strict';
 
 /**
@@ -10983,7 +13971,7 @@ function getNodeName(markup) {
  */
 function createNodesFromMarkup(markup, handleScript) {
   var node = dummyNode;
-  !!!dummyNode ? "production" !== 'production' ? invariant(false, 'createNodesFromMarkup dummy not initialized') : invariant(false) : void 0;
+  !!!dummyNode ? process.env.NODE_ENV !== 'production' ? invariant(false, 'createNodesFromMarkup dummy not initialized') : invariant(false) : void 0;
   var nodeName = getNodeName(markup);
 
   var wrap = nodeName && getMarkupWrap(nodeName);
@@ -11000,7 +13988,7 @@ function createNodesFromMarkup(markup, handleScript) {
 
   var scripts = node.getElementsByTagName('script');
   if (scripts.length) {
-    !handleScript ? "production" !== 'production' ? invariant(false, 'createNodesFromMarkup(...): Unexpected <script> element rendered.') : invariant(false) : void 0;
+    !handleScript ? process.env.NODE_ENV !== 'production' ? invariant(false, 'createNodesFromMarkup(...): Unexpected <script> element rendered.') : invariant(false) : void 0;
     createArrayFromMixed(scripts).forEach(handleScript);
   }
 
@@ -11012,7 +14000,8 @@ function createNodesFromMarkup(markup, handleScript) {
 }
 
 module.exports = createNodesFromMarkup;
-},{"./ExecutionEnvironment":44,"./createArrayFromMixed":48,"./getMarkupWrap":54,"./invariant":58}],50:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./ExecutionEnvironment":50,"./createArrayFromMixed":54,"./getMarkupWrap":60,"./invariant":64,"_process":74}],56:[function(require,module,exports){
 "use strict";
 
 /**
@@ -11051,7 +14040,8 @@ emptyFunction.thatReturnsArgument = function (arg) {
 };
 
 module.exports = emptyFunction;
-},{}],51:[function(require,module,exports){
+},{}],57:[function(require,module,exports){
+(function (process){
 /**
  * Copyright (c) 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -11066,12 +14056,13 @@ module.exports = emptyFunction;
 
 var emptyObject = {};
 
-if ("production" !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
   Object.freeze(emptyObject);
 }
 
 module.exports = emptyObject;
-},{}],52:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"_process":74}],58:[function(require,module,exports){
 /**
  * Copyright (c) 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -11098,7 +14089,7 @@ function focusNode(node) {
 }
 
 module.exports = focusNode;
-},{}],53:[function(require,module,exports){
+},{}],59:[function(require,module,exports){
 'use strict';
 
 /**
@@ -11120,20 +14111,25 @@ module.exports = focusNode;
  *
  * The activeElement will be null only if the document or document body is not
  * yet defined.
+ *
+ * @param {?DOMDocument} doc Defaults to current document.
+ * @return {?DOMElement}
  */
-function getActiveElement() /*?DOMElement*/{
-  if (typeof document === 'undefined') {
+function getActiveElement(doc) /*?DOMElement*/{
+  doc = doc || (typeof document !== 'undefined' ? document : undefined);
+  if (typeof doc === 'undefined') {
     return null;
   }
   try {
-    return document.activeElement || document.body;
+    return doc.activeElement || doc.body;
   } catch (e) {
-    return document.body;
+    return doc.body;
   }
 }
 
 module.exports = getActiveElement;
-},{}],54:[function(require,module,exports){
+},{}],60:[function(require,module,exports){
+(function (process){
 'use strict';
 
 /**
@@ -11212,7 +14208,7 @@ svgElements.forEach(function (nodeName) {
  * @return {?array} Markup wrap configuration, if applicable.
  */
 function getMarkupWrap(nodeName) {
-  !!!dummyNode ? "production" !== 'production' ? invariant(false, 'Markup wrapping node not initialized') : invariant(false) : void 0;
+  !!!dummyNode ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Markup wrapping node not initialized') : invariant(false) : void 0;
   if (!markupWrap.hasOwnProperty(nodeName)) {
     nodeName = '*';
   }
@@ -11228,7 +14224,8 @@ function getMarkupWrap(nodeName) {
 }
 
 module.exports = getMarkupWrap;
-},{"./ExecutionEnvironment":44,"./invariant":58}],55:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./ExecutionEnvironment":50,"./invariant":64,"_process":74}],61:[function(require,module,exports){
 /**
  * Copyright (c) 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -11254,10 +14251,10 @@ module.exports = getMarkupWrap;
  */
 
 function getUnboundedScrollPosition(scrollable) {
-  if (scrollable === window) {
+  if (scrollable.Window && scrollable instanceof scrollable.Window) {
     return {
-      x: window.pageXOffset || document.documentElement.scrollLeft,
-      y: window.pageYOffset || document.documentElement.scrollTop
+      x: scrollable.pageXOffset || scrollable.document.documentElement.scrollLeft,
+      y: scrollable.pageYOffset || scrollable.document.documentElement.scrollTop
     };
   }
   return {
@@ -11267,7 +14264,7 @@ function getUnboundedScrollPosition(scrollable) {
 }
 
 module.exports = getUnboundedScrollPosition;
-},{}],56:[function(require,module,exports){
+},{}],62:[function(require,module,exports){
 'use strict';
 
 /**
@@ -11300,7 +14297,7 @@ function hyphenate(string) {
 }
 
 module.exports = hyphenate;
-},{}],57:[function(require,module,exports){
+},{}],63:[function(require,module,exports){
 /**
  * Copyright (c) 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -11339,7 +14336,8 @@ function hyphenateStyleName(string) {
 }
 
 module.exports = hyphenateStyleName;
-},{"./hyphenate":56}],58:[function(require,module,exports){
+},{"./hyphenate":62}],64:[function(require,module,exports){
+(function (process){
 /**
  * Copyright (c) 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -11363,12 +14361,18 @@ module.exports = hyphenateStyleName;
  * will remain to ensure logic does not differ in production.
  */
 
-function invariant(condition, format, a, b, c, d, e, f) {
-  if ("production" !== 'production') {
+var validateFormat = function validateFormat(format) {};
+
+if (process.env.NODE_ENV !== 'production') {
+  validateFormat = function validateFormat(format) {
     if (format === undefined) {
       throw new Error('invariant requires an error message argument');
     }
-  }
+  };
+}
+
+function invariant(condition, format, a, b, c, d, e, f) {
+  validateFormat(format);
 
   if (!condition) {
     var error;
@@ -11389,7 +14393,8 @@ function invariant(condition, format, a, b, c, d, e, f) {
 }
 
 module.exports = invariant;
-},{}],59:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"_process":74}],65:[function(require,module,exports){
 'use strict';
 
 /**
@@ -11408,11 +14413,13 @@ module.exports = invariant;
  * @return {boolean} Whether or not the object is a DOM node.
  */
 function isNode(object) {
-  return !!(object && (typeof Node === 'function' ? object instanceof Node : typeof object === 'object' && typeof object.nodeType === 'number' && typeof object.nodeName === 'string'));
+  var doc = object ? object.ownerDocument || object : document;
+  var defaultView = doc.defaultView || window;
+  return !!(object && (typeof defaultView.Node === 'function' ? object instanceof defaultView.Node : typeof object === 'object' && typeof object.nodeType === 'number' && typeof object.nodeName === 'string'));
 }
 
 module.exports = isNode;
-},{}],60:[function(require,module,exports){
+},{}],66:[function(require,module,exports){
 'use strict';
 
 /**
@@ -11437,7 +14444,7 @@ function isTextNode(object) {
 }
 
 module.exports = isTextNode;
-},{"./isNode":59}],61:[function(require,module,exports){
+},{"./isNode":65}],67:[function(require,module,exports){
 /**
  * Copyright (c) 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -11467,7 +14474,7 @@ function memoizeStringOnly(callback) {
 }
 
 module.exports = memoizeStringOnly;
-},{}],62:[function(require,module,exports){
+},{}],68:[function(require,module,exports){
 /**
  * Copyright (c) 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -11490,7 +14497,7 @@ if (ExecutionEnvironment.canUseDOM) {
 }
 
 module.exports = performance || {};
-},{"./ExecutionEnvironment":44}],63:[function(require,module,exports){
+},{"./ExecutionEnvironment":50}],69:[function(require,module,exports){
 'use strict';
 
 /**
@@ -11524,7 +14531,7 @@ if (performance.now) {
 }
 
 module.exports = performanceNow;
-},{"./performance":62}],64:[function(require,module,exports){
+},{"./performance":68}],70:[function(require,module,exports){
 /**
  * Copyright (c) 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -11592,7 +14599,8 @@ function shallowEqual(objA, objB) {
 }
 
 module.exports = shallowEqual;
-},{}],65:[function(require,module,exports){
+},{}],71:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2014-2015, Facebook, Inc.
  * All rights reserved.
@@ -11616,7 +14624,7 @@ var emptyFunction = require('./emptyFunction');
 
 var warning = emptyFunction;
 
-if ("production" !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
   (function () {
     var printWarning = function printWarning(format) {
       for (var _len = arguments.length, args = Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++) {
@@ -11659,9 +14667,10 @@ if ("production" !== 'production') {
 }
 
 module.exports = warning;
-},{"./emptyFunction":50}],66:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./emptyFunction":56,"_process":74}],72:[function(require,module,exports){
 //! moment.js
-//! version : 2.17.1
+//! version : 2.18.1
 //! authors : Tim Wood, Iskren Chernev, Moment.js contributors
 //! license : MIT
 //! momentjs.com
@@ -11701,6 +14710,10 @@ function isObjectEmpty(obj) {
         return false;
     }
     return true;
+}
+
+function isUndefined(input) {
+    return input === void 0;
 }
 
 function isNumber(input) {
@@ -11759,7 +14772,9 @@ function defaultParsingFlags() {
         userInvalidated : false,
         iso             : false,
         parsedDateParts : [],
-        meridiem        : null
+        meridiem        : null,
+        rfc2822         : false,
+        weekdayMismatch : false
     };
 }
 
@@ -11835,10 +14850,6 @@ function createInvalid (flags) {
     return m;
 }
 
-function isUndefined(input) {
-    return input === void 0;
-}
-
 // Plugins that add properties should also add the key here (null value),
 // so we can properly clone ourselves.
 var momentProperties = hooks.momentProperties = [];
@@ -11878,7 +14889,7 @@ function copyConfig(to, from) {
     }
 
     if (momentProperties.length > 0) {
-        for (i in momentProperties) {
+        for (i = 0; i < momentProperties.length; i++) {
             prop = momentProperties[i];
             val = from[prop];
             if (!isUndefined(val)) {
@@ -12015,8 +15026,11 @@ function set (config) {
     }
     this._config = config;
     // Lenient ordinal parsing accepts just a number in addition to
-    // number + (possibly) stuff coming from _ordinalParseLenient.
-    this._ordinalParseLenient = new RegExp(this._ordinalParse.source + '|' + (/\d{1,2}/).source);
+    // number + (possibly) stuff coming from _dayOfMonthOrdinalParse.
+    // TODO: Remove "ordinalParse" fallback in next major release.
+    this._dayOfMonthOrdinalParseLenient = new RegExp(
+        (this._dayOfMonthOrdinalParse.source || this._ordinalParse.source) +
+            '|' + (/\d{1,2}/).source);
 }
 
 function mergeConfigs(parentConfig, childConfig) {
@@ -12114,7 +15128,7 @@ function invalidDate () {
 }
 
 var defaultOrdinal = '%d';
-var defaultOrdinalParse = /\d{1,2}/;
+var defaultDayOfMonthOrdinalParse = /\d{1,2}/;
 
 function ordinal (number) {
     return this._ordinal.replace('%d', number);
@@ -12124,6 +15138,7 @@ var defaultRelativeTime = {
     future : 'in %s',
     past   : '%s ago',
     s  : 'a few seconds',
+    ss : '%d seconds',
     m  : 'a minute',
     mm : '%d minutes',
     h  : 'an hour',
@@ -12306,7 +15321,7 @@ function makeFormatFunction(format) {
     return function (mom) {
         var output = '', i;
         for (i = 0; i < length; i++) {
-            output += array[i] instanceof Function ? array[i].call(mom, format) : array[i];
+            output += isFunction(array[i]) ? array[i].call(mom, format) : array[i];
         }
         return output;
     };
@@ -12509,7 +15524,8 @@ var MONTHS_IN_FORMAT = /D[oD]?(\[[^\[\]]*\]|\s)+MMMM?/;
 var defaultLocaleMonths = 'January_February_March_April_May_June_July_August_September_October_November_December'.split('_');
 function localeMonths (m, format) {
     if (!m) {
-        return this._months;
+        return isArray(this._months) ? this._months :
+            this._months['standalone'];
     }
     return isArray(this._months) ? this._months[m.month()] :
         this._months[(this._months.isFormat || MONTHS_IN_FORMAT).test(format) ? 'format' : 'standalone'][m.month()];
@@ -12518,7 +15534,8 @@ function localeMonths (m, format) {
 var defaultLocaleMonthsShort = 'Jan_Feb_Mar_Apr_May_Jun_Jul_Aug_Sep_Oct_Nov_Dec'.split('_');
 function localeMonthsShort (m, format) {
     if (!m) {
-        return this._monthsShort;
+        return isArray(this._monthsShort) ? this._monthsShort :
+            this._monthsShort['standalone'];
     }
     return isArray(this._monthsShort) ? this._monthsShort[m.month()] :
         this._monthsShort[MONTHS_IN_FORMAT.test(format) ? 'format' : 'standalone'][m.month()];
@@ -12785,11 +15802,11 @@ function getIsLeapYear () {
 }
 
 function createDate (y, m, d, h, M, s, ms) {
-    //can't just apply() to create a date:
-    //http://stackoverflow.com/questions/181348/instantiating-a-javascript-object-by-calling-prototype-constructor-apply
+    // can't just apply() to create a date:
+    // https://stackoverflow.com/q/181348
     var date = new Date(y, m, d, h, M, s, ms);
 
-    //the date constructor remaps years 0-99 to 1900-1999
+    // the date constructor remaps years 0-99 to 1900-1999
     if (y < 100 && y >= 0 && isFinite(date.getFullYear())) {
         date.setFullYear(y);
     }
@@ -12799,7 +15816,7 @@ function createDate (y, m, d, h, M, s, ms) {
 function createUTCDate (y) {
     var date = new Date(Date.UTC.apply(null, arguments));
 
-    //the Date.UTC function remaps years 0-99 to 1900-1999
+    // the Date.UTC function remaps years 0-99 to 1900-1999
     if (y < 100 && y >= 0 && isFinite(date.getUTCFullYear())) {
         date.setUTCFullYear(y);
     }
@@ -12816,7 +15833,7 @@ function firstWeekOffset(year, dow, doy) {
     return -fwdlw + fwd - 1;
 }
 
-//http://en.wikipedia.org/wiki/ISO_week_date#Calculating_a_date_given_the_year.2C_week_number_and_weekday
+// https://en.wikipedia.org/wiki/ISO_week_date#Calculating_a_date_given_the_year.2C_week_number_and_weekday
 function dayOfYearFromWeeks(year, week, weekday, dow, doy) {
     var localWeekday = (7 + weekday - dow) % 7,
         weekOffset = firstWeekOffset(year, dow, doy),
@@ -13017,7 +16034,8 @@ function parseIsoWeekday(input, locale) {
 var defaultLocaleWeekdays = 'Sunday_Monday_Tuesday_Wednesday_Thursday_Friday_Saturday'.split('_');
 function localeWeekdays (m, format) {
     if (!m) {
-        return this._weekdays;
+        return isArray(this._weekdays) ? this._weekdays :
+            this._weekdays['standalone'];
     }
     return isArray(this._weekdays) ? this._weekdays[m.day()] :
         this._weekdays[this._weekdays.isFormat.test(format) ? 'format' : 'standalone'][m.day()];
@@ -13337,8 +16355,10 @@ addRegexToken('a',  matchMeridiem);
 addRegexToken('A',  matchMeridiem);
 addRegexToken('H',  match1to2);
 addRegexToken('h',  match1to2);
+addRegexToken('k',  match1to2);
 addRegexToken('HH', match1to2, match2);
 addRegexToken('hh', match1to2, match2);
+addRegexToken('kk', match1to2, match2);
 
 addRegexToken('hmm', match3to4);
 addRegexToken('hmmss', match5to6);
@@ -13346,6 +16366,10 @@ addRegexToken('Hmm', match3to4);
 addRegexToken('Hmmss', match5to6);
 
 addParseToken(['H', 'HH'], HOUR);
+addParseToken(['k', 'kk'], function (input, array, config) {
+    var kInput = toInt(input);
+    array[HOUR] = kInput === 24 ? 0 : kInput;
+});
 addParseToken(['a', 'A'], function (input, array, config) {
     config._isPm = config._locale.isPM(input);
     config._meridiem = input;
@@ -13416,7 +16440,7 @@ var baseConfig = {
     longDateFormat: defaultLongDateFormat,
     invalidDate: defaultInvalidDate,
     ordinal: defaultOrdinal,
-    ordinalParse: defaultOrdinalParse,
+    dayOfMonthOrdinalParse: defaultDayOfMonthOrdinalParse,
     relativeTime: defaultRelativeTime,
 
     months: defaultLocaleMonths,
@@ -13727,6 +16751,77 @@ function configFromISO(config) {
     }
 }
 
+// RFC 2822 regex: For details see https://tools.ietf.org/html/rfc2822#section-3.3
+var basicRfcRegex = /^((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),?\s)?(\d?\d\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s(?:\d\d)?\d\d\s)(\d\d:\d\d)(\:\d\d)?(\s(?:UT|GMT|[ECMP][SD]T|[A-IK-Za-ik-z]|[+-]\d{4}))$/;
+
+// date and time from ref 2822 format
+function configFromRFC2822(config) {
+    var string, match, dayFormat,
+        dateFormat, timeFormat, tzFormat;
+    var timezones = {
+        ' GMT': ' +0000',
+        ' EDT': ' -0400',
+        ' EST': ' -0500',
+        ' CDT': ' -0500',
+        ' CST': ' -0600',
+        ' MDT': ' -0600',
+        ' MST': ' -0700',
+        ' PDT': ' -0700',
+        ' PST': ' -0800'
+    };
+    var military = 'YXWVUTSRQPONZABCDEFGHIKLM';
+    var timezone, timezoneIndex;
+
+    string = config._i
+        .replace(/\([^\)]*\)|[\n\t]/g, ' ') // Remove comments and folding whitespace
+        .replace(/(\s\s+)/g, ' ') // Replace multiple-spaces with a single space
+        .replace(/^\s|\s$/g, ''); // Remove leading and trailing spaces
+    match = basicRfcRegex.exec(string);
+
+    if (match) {
+        dayFormat = match[1] ? 'ddd' + ((match[1].length === 5) ? ', ' : ' ') : '';
+        dateFormat = 'D MMM ' + ((match[2].length > 10) ? 'YYYY ' : 'YY ');
+        timeFormat = 'HH:mm' + (match[4] ? ':ss' : '');
+
+        // TODO: Replace the vanilla JS Date object with an indepentent day-of-week check.
+        if (match[1]) { // day of week given
+            var momentDate = new Date(match[2]);
+            var momentDay = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][momentDate.getDay()];
+
+            if (match[1].substr(0,3) !== momentDay) {
+                getParsingFlags(config).weekdayMismatch = true;
+                config._isValid = false;
+                return;
+            }
+        }
+
+        switch (match[5].length) {
+            case 2: // military
+                if (timezoneIndex === 0) {
+                    timezone = ' +0000';
+                } else {
+                    timezoneIndex = military.indexOf(match[5][1].toUpperCase()) - 12;
+                    timezone = ((timezoneIndex < 0) ? ' -' : ' +') +
+                        (('' + timezoneIndex).replace(/^-?/, '0')).match(/..$/)[0] + '00';
+                }
+                break;
+            case 4: // Zone
+                timezone = timezones[match[5]];
+                break;
+            default: // UT or +/-9999
+                timezone = timezones[' GMT'];
+        }
+        match[5] = timezone;
+        config._i = match.splice(1).join('');
+        tzFormat = ' ZZ';
+        config._f = dayFormat + dateFormat + timeFormat + tzFormat;
+        configFromStringAndFormat(config);
+        getParsingFlags(config).rfc2822 = true;
+    } else {
+        config._isValid = false;
+    }
+}
+
 // date from iso format or fallback
 function configFromString(config) {
     var matched = aspNetJsonRegex.exec(config._i);
@@ -13739,13 +16834,24 @@ function configFromString(config) {
     configFromISO(config);
     if (config._isValid === false) {
         delete config._isValid;
-        hooks.createFromInputFallback(config);
+    } else {
+        return;
     }
+
+    configFromRFC2822(config);
+    if (config._isValid === false) {
+        delete config._isValid;
+    } else {
+        return;
+    }
+
+    // Final attempt, use Input Fallback
+    hooks.createFromInputFallback(config);
 }
 
 hooks.createFromInputFallback = deprecate(
-    'value provided is not in a recognized ISO format. moment construction falls back to js Date(), ' +
-    'which is not reliable across all browsers and versions. Non ISO date formats are ' +
+    'value provided is not in a recognized RFC2822 or ISO format. moment construction falls back to js Date(), ' +
+    'which is not reliable across all browsers and versions. Non RFC2822/ISO date formats are ' +
     'discouraged and will be removed in an upcoming major release. Please refer to ' +
     'http://momentjs.com/guides/#/warnings/js-date/ for more info.',
     function (config) {
@@ -13792,10 +16898,10 @@ function configFromArray (config) {
     }
 
     //if the day of the year is set, figure out what it is
-    if (config._dayOfYear) {
+    if (config._dayOfYear != null) {
         yearToUse = defaults(config._a[YEAR], currentDate[YEAR]);
 
-        if (config._dayOfYear > daysInYear(yearToUse)) {
+        if (config._dayOfYear > daysInYear(yearToUse) || config._dayOfYear === 0) {
             getParsingFlags(config)._overflowDayOfYear = true;
         }
 
@@ -13899,6 +17005,9 @@ function dayOfYearFromWeekInfo(config) {
 // constant that refers to the ISO standard
 hooks.ISO_8601 = function () {};
 
+// constant that refers to the RFC 2822 form
+hooks.RFC_2822 = function () {};
+
 // date from string and format string
 function configFromStringAndFormat(config) {
     // TODO: Move this to another part of the creation flow to prevent circular deps
@@ -13906,7 +17015,10 @@ function configFromStringAndFormat(config) {
         configFromISO(config);
         return;
     }
-
+    if (config._f === hooks.RFC_2822) {
+        configFromRFC2822(config);
+        return;
+    }
     config._a = [];
     getParsingFlags(config).empty = true;
 
@@ -14098,7 +17210,7 @@ function prepareConfig (config) {
 
 function configFromInput(config) {
     var input = config._i;
-    if (input === undefined) {
+    if (isUndefined(input)) {
         config._d = new Date(hooks.now());
     } else if (isDate(input)) {
         config._d = new Date(input.valueOf());
@@ -14109,7 +17221,7 @@ function configFromInput(config) {
             return parseInt(obj, 10);
         });
         configFromArray(config);
-    } else if (typeof(input) === 'object') {
+    } else if (isObject(input)) {
         configFromObject(config);
     } else if (isNumber(input)) {
         // from milliseconds
@@ -14210,6 +17322,38 @@ var now = function () {
     return Date.now ? Date.now() : +(new Date());
 };
 
+var ordering = ['year', 'quarter', 'month', 'week', 'day', 'hour', 'minute', 'second', 'millisecond'];
+
+function isDurationValid(m) {
+    for (var key in m) {
+        if (!(ordering.indexOf(key) !== -1 && (m[key] == null || !isNaN(m[key])))) {
+            return false;
+        }
+    }
+
+    var unitHasDecimal = false;
+    for (var i = 0; i < ordering.length; ++i) {
+        if (m[ordering[i]]) {
+            if (unitHasDecimal) {
+                return false; // only allow non-integers for smallest unit
+            }
+            if (parseFloat(m[ordering[i]]) !== toInt(m[ordering[i]])) {
+                unitHasDecimal = true;
+            }
+        }
+    }
+
+    return true;
+}
+
+function isValid$1() {
+    return this._isValid;
+}
+
+function createInvalid$1() {
+    return createDuration(NaN);
+}
+
 function Duration (duration) {
     var normalizedInput = normalizeObjectUnits(duration),
         years = normalizedInput.year || 0,
@@ -14221,6 +17365,8 @@ function Duration (duration) {
         minutes = normalizedInput.minute || 0,
         seconds = normalizedInput.second || 0,
         milliseconds = normalizedInput.millisecond || 0;
+
+    this._isValid = isDurationValid(normalizedInput);
 
     // representation for dateAddRemove
     this._milliseconds = +milliseconds +
@@ -14345,7 +17491,7 @@ hooks.updateOffset = function () {};
 // a second time. In case it wants us to change the offset again
 // _changeInProgress == true case, then we have to adjust, because
 // there is no such time in the given timezone.
-function getSetOffset (input, keepLocalTime) {
+function getSetOffset (input, keepLocalTime, keepMinutes) {
     var offset = this._offset || 0,
         localAdjust;
     if (!this.isValid()) {
@@ -14357,7 +17503,7 @@ function getSetOffset (input, keepLocalTime) {
             if (input === null) {
                 return this;
             }
-        } else if (Math.abs(input) < 16) {
+        } else if (Math.abs(input) < 16 && !keepMinutes) {
             input = input * 60;
         }
         if (!this._isUTC && keepLocalTime) {
@@ -14415,7 +17561,7 @@ function setOffsetToLocal (keepLocalTime) {
 
 function setOffsetToParsedOffset () {
     if (this._tzm != null) {
-        this.utcOffset(this._tzm);
+        this.utcOffset(this._tzm, false, true);
     } else if (typeof this._i === 'string') {
         var tZone = offsetFromString(matchOffset, this._i);
         if (tZone != null) {
@@ -14547,6 +17693,7 @@ function createDuration (input, key) {
 }
 
 createDuration.fn = Duration.prototype;
+createDuration.invalid = createInvalid$1;
 
 function parseIso (inp, sign) {
     // We'd normally use ~~inp for this, but unfortunately it also
@@ -14783,18 +17930,19 @@ function toString () {
     return this.clone().locale('en').format('ddd MMM DD YYYY HH:mm:ss [GMT]ZZ');
 }
 
-function toISOString () {
+function toISOString() {
+    if (!this.isValid()) {
+        return null;
+    }
     var m = this.clone().utc();
-    if (0 < m.year() && m.year() <= 9999) {
-        if (isFunction(Date.prototype.toISOString)) {
-            // native implementation is ~50x faster, use it when we can
-            return this.toDate().toISOString();
-        } else {
-            return formatMoment(m, 'YYYY-MM-DD[T]HH:mm:ss.SSS[Z]');
-        }
-    } else {
+    if (m.year() < 0 || m.year() > 9999) {
         return formatMoment(m, 'YYYYYY-MM-DD[T]HH:mm:ss.SSS[Z]');
     }
+    if (isFunction(Date.prototype.toISOString)) {
+        // native implementation is ~50x faster, use it when we can
+        return this.toDate().toISOString();
+    }
+    return formatMoment(m, 'YYYY-MM-DD[T]HH:mm:ss.SSS[Z]');
 }
 
 /**
@@ -14814,7 +17962,7 @@ function inspect () {
         zone = 'Z';
     }
     var prefix = '[' + func + '("]';
-    var year = (0 < this.year() && this.year() <= 9999) ? 'YYYY' : 'YYYYYY';
+    var year = (0 <= this.year() && this.year() <= 9999) ? 'YYYY' : 'YYYYYY';
     var datetime = '-MM-DD[T]HH:mm:ss.SSS';
     var suffix = zone + '[")]';
 
@@ -14982,7 +18130,7 @@ function toJSON () {
     return this.isValid() ? this.toISOString() : null;
 }
 
-function isValid$1 () {
+function isValid$2 () {
     return isValid(this);
 }
 
@@ -15142,7 +18290,10 @@ addUnitPriority('date', 9);
 addRegexToken('D',  match1to2);
 addRegexToken('DD', match1to2, match2);
 addRegexToken('Do', function (isStrict, locale) {
-    return isStrict ? locale._ordinalParse : locale._ordinalParseLenient;
+    // TODO: Remove "ordinalParse" fallback in next major release.
+    return isStrict ?
+      (locale._dayOfMonthOrdinalParse || locale._ordinalParse) :
+      locale._dayOfMonthOrdinalParseLenient;
 });
 
 addParseToken(['D', 'DD'], DATE);
@@ -15322,7 +18473,7 @@ proto.isBetween         = isBetween;
 proto.isSame            = isSame;
 proto.isSameOrAfter     = isSameOrAfter;
 proto.isSameOrBefore    = isSameOrBefore;
-proto.isValid           = isValid$1;
+proto.isValid           = isValid$2;
 proto.lang              = lang;
 proto.locale            = locale;
 proto.localeData        = localeData;
@@ -15547,7 +18698,7 @@ function listWeekdaysMin (localeSorted, format, index) {
 }
 
 getSetGlobalLocale('en', {
-    ordinalParse: /\d{1,2}(th|st|nd|rd)/,
+    dayOfMonthOrdinalParse: /\d{1,2}(th|st|nd|rd)/,
     ordinal : function (number) {
         var b = number % 10,
             output = (toInt(number % 100 / 10) === 1) ? 'th' :
@@ -15668,6 +18819,9 @@ function monthsToDays (months) {
 }
 
 function as (units) {
+    if (!this.isValid()) {
+        return NaN;
+    }
     var days;
     var months;
     var milliseconds = this._milliseconds;
@@ -15696,6 +18850,9 @@ function as (units) {
 
 // TODO: Use this.as('ms')?
 function valueOf$1 () {
+    if (!this.isValid()) {
+        return NaN;
+    }
     return (
         this._milliseconds +
         this._days * 864e5 +
@@ -15721,12 +18878,12 @@ var asYears        = makeAs('y');
 
 function get$2 (units) {
     units = normalizeUnits(units);
-    return this[units + 's']();
+    return this.isValid() ? this[units + 's']() : NaN;
 }
 
 function makeGetter(name) {
     return function () {
-        return this._data[name];
+        return this.isValid() ? this._data[name] : NaN;
     };
 }
 
@@ -15744,11 +18901,12 @@ function weeks () {
 
 var round = Math.round;
 var thresholds = {
-    s: 45,  // seconds to minute
-    m: 45,  // minutes to hour
-    h: 22,  // hours to day
-    d: 26,  // days to month
-    M: 11   // months to year
+    ss: 44,         // a few seconds to seconds
+    s : 45,         // seconds to minute
+    m : 45,         // minutes to hour
+    h : 22,         // hours to day
+    d : 26,         // days to month
+    M : 11          // months to year
 };
 
 // helper function for moment.fn.from, moment.fn.fromNow, and moment.duration.fn.humanize
@@ -15765,16 +18923,17 @@ function relativeTime$1 (posNegDuration, withoutSuffix, locale) {
     var months   = round(duration.as('M'));
     var years    = round(duration.as('y'));
 
-    var a = seconds < thresholds.s && ['s', seconds]  ||
-            minutes <= 1           && ['m']           ||
-            minutes < thresholds.m && ['mm', minutes] ||
-            hours   <= 1           && ['h']           ||
-            hours   < thresholds.h && ['hh', hours]   ||
-            days    <= 1           && ['d']           ||
-            days    < thresholds.d && ['dd', days]    ||
-            months  <= 1           && ['M']           ||
-            months  < thresholds.M && ['MM', months]  ||
-            years   <= 1           && ['y']           || ['yy', years];
+    var a = seconds <= thresholds.ss && ['s', seconds]  ||
+            seconds < thresholds.s   && ['ss', seconds] ||
+            minutes <= 1             && ['m']           ||
+            minutes < thresholds.m   && ['mm', minutes] ||
+            hours   <= 1             && ['h']           ||
+            hours   < thresholds.h   && ['hh', hours]   ||
+            days    <= 1             && ['d']           ||
+            days    < thresholds.d   && ['dd', days]    ||
+            months  <= 1             && ['M']           ||
+            months  < thresholds.M   && ['MM', months]  ||
+            years   <= 1             && ['y']           || ['yy', years];
 
     a[2] = withoutSuffix;
     a[3] = +posNegDuration > 0;
@@ -15803,10 +18962,17 @@ function getSetRelativeTimeThreshold (threshold, limit) {
         return thresholds[threshold];
     }
     thresholds[threshold] = limit;
+    if (threshold === 's') {
+        thresholds.ss = limit - 1;
+    }
     return true;
 }
 
 function humanize (withSuffix) {
+    if (!this.isValid()) {
+        return this.localeData().invalidDate();
+    }
+
     var locale = this.localeData();
     var output = relativeTime$1(this, !withSuffix, locale);
 
@@ -15827,6 +18993,10 @@ function toISOString$1() {
     // This is because there is no context-free conversion between hours and days
     // (think of clock changes)
     // and also not between days and months (28-31 days per month)
+    if (!this.isValid()) {
+        return this.localeData().invalidDate();
+    }
+
     var seconds = abs$1(this._milliseconds) / 1000;
     var days         = abs$1(this._days);
     var months       = abs$1(this._months);
@@ -15871,6 +19041,7 @@ function toISOString$1() {
 
 var proto$2 = Duration.prototype;
 
+proto$2.isValid        = isValid$1;
 proto$2.abs            = abs;
 proto$2.add            = add$1;
 proto$2.subtract       = subtract$1;
@@ -15926,7 +19097,7 @@ addParseToken('x', function (input, array, config) {
 // Side effect imports
 
 
-hooks.version = '2.17.1';
+hooks.version = '2.18.1';
 
 setHookCallback(createLocal);
 
@@ -15962,9 +19133,16 @@ return hooks;
 
 })));
 
-},{}],67:[function(require,module,exports){
+},{}],73:[function(require,module,exports){
+/*
+object-assign
+(c) Sindre Sorhus
+@license MIT
+*/
+
 'use strict';
 /* eslint-disable no-unused-vars */
+var getOwnPropertySymbols = Object.getOwnPropertySymbols;
 var hasOwnProperty = Object.prototype.hasOwnProperty;
 var propIsEnumerable = Object.prototype.propertyIsEnumerable;
 
@@ -15985,7 +19163,7 @@ function shouldUseNative() {
 		// Detect buggy property enumeration order in older V8 versions.
 
 		// https://bugs.chromium.org/p/v8/issues/detail?id=4118
-		var test1 = new String('abc');  // eslint-disable-line
+		var test1 = new String('abc');  // eslint-disable-line no-new-wrappers
 		test1[5] = 'de';
 		if (Object.getOwnPropertyNames(test1)[0] === '5') {
 			return false;
@@ -16014,7 +19192,7 @@ function shouldUseNative() {
 		}
 
 		return true;
-	} catch (e) {
+	} catch (err) {
 		// We don't expect any of the above to throw, but better to be safe.
 		return false;
 	}
@@ -16034,8 +19212,8 @@ module.exports = shouldUseNative() ? Object.assign : function (target, source) {
 			}
 		}
 
-		if (Object.getOwnPropertySymbols) {
-			symbols = Object.getOwnPropertySymbols(from);
+		if (getOwnPropertySymbols) {
+			symbols = getOwnPropertySymbols(from);
 			for (var i = 0; i < symbols.length; i++) {
 				if (propIsEnumerable.call(from, symbols[i])) {
 					to[symbols[i]] = from[symbols[i]];
@@ -16047,7 +19225,7 @@ module.exports = shouldUseNative() ? Object.assign : function (target, source) {
 	return to;
 };
 
-},{}],68:[function(require,module,exports){
+},{}],74:[function(require,module,exports){
 // shim for using process in browser
 var process = module.exports = {};
 
@@ -16218,6 +19396,10 @@ process.off = noop;
 process.removeListener = noop;
 process.removeAllListeners = noop;
 process.emit = noop;
+process.prependListener = noop;
+process.prependOnceListener = noop;
+
+process.listeners = function (name) { return [] }
 
 process.binding = function (name) {
     throw new Error('process.binding is not supported');
@@ -16229,7 +19411,627 @@ process.chdir = function (dir) {
 };
 process.umask = function() { return 0; };
 
-},{}],69:[function(require,module,exports){
+},{}],75:[function(require,module,exports){
+(function (process){
+/**
+ * Copyright 2013-present, Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ */
+
+'use strict';
+
+if (process.env.NODE_ENV !== 'production') {
+  var invariant = require('fbjs/lib/invariant');
+  var warning = require('fbjs/lib/warning');
+  var ReactPropTypesSecret = require('./lib/ReactPropTypesSecret');
+  var loggedTypeFailures = {};
+}
+
+/**
+ * Assert that the values match with the type specs.
+ * Error messages are memorized and will only be shown once.
+ *
+ * @param {object} typeSpecs Map of name to a ReactPropType
+ * @param {object} values Runtime values that need to be type-checked
+ * @param {string} location e.g. "prop", "context", "child context"
+ * @param {string} componentName Name of the component for error messages.
+ * @param {?Function} getStack Returns the component stack.
+ * @private
+ */
+function checkPropTypes(typeSpecs, values, location, componentName, getStack) {
+  if (process.env.NODE_ENV !== 'production') {
+    for (var typeSpecName in typeSpecs) {
+      if (typeSpecs.hasOwnProperty(typeSpecName)) {
+        var error;
+        // Prop type validation may throw. In case they do, we don't want to
+        // fail the render phase where it didn't fail before. So we log it.
+        // After these have been cleaned up, we'll let them throw.
+        try {
+          // This is intentionally an invariant that gets caught. It's the same
+          // behavior as without this statement except with a better message.
+          invariant(typeof typeSpecs[typeSpecName] === 'function', '%s: %s type `%s` is invalid; it must be a function, usually from ' + 'React.PropTypes.', componentName || 'React class', location, typeSpecName);
+          error = typeSpecs[typeSpecName](values, typeSpecName, componentName, location, null, ReactPropTypesSecret);
+        } catch (ex) {
+          error = ex;
+        }
+        warning(!error || error instanceof Error, '%s: type specification of %s `%s` is invalid; the type checker ' + 'function must return `null` or an `Error` but returned a %s. ' + 'You may have forgotten to pass an argument to the type checker ' + 'creator (arrayOf, instanceOf, objectOf, oneOf, oneOfType, and ' + 'shape all require an argument).', componentName || 'React class', location, typeSpecName, typeof error);
+        if (error instanceof Error && !(error.message in loggedTypeFailures)) {
+          // Only monitor this failure once because there tends to be a lot of the
+          // same error.
+          loggedTypeFailures[error.message] = true;
+
+          var stack = getStack ? getStack() : '';
+
+          warning(false, 'Failed %s type: %s%s', location, error.message, stack != null ? stack : '');
+        }
+      }
+    }
+  }
+}
+
+module.exports = checkPropTypes;
+
+}).call(this,require('_process'))
+},{"./lib/ReactPropTypesSecret":78,"_process":74,"fbjs/lib/invariant":64,"fbjs/lib/warning":71}],76:[function(require,module,exports){
+/**
+ * Copyright 2013-present, Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ */
+
+'use strict';
+
+// React 15.5 references this module, and assumes PropTypes are still callable in production.
+// Therefore we re-export development-only version with all the PropTypes checks here.
+// However if one is migrating to the `prop-types` npm library, they will go through the
+// `index.js` entry point, and it will branch depending on the environment.
+var factory = require('./factoryWithTypeCheckers');
+module.exports = function(isValidElement) {
+  // It is still allowed in 15.5.
+  var throwOnDirectAccess = false;
+  return factory(isValidElement, throwOnDirectAccess);
+};
+
+},{"./factoryWithTypeCheckers":77}],77:[function(require,module,exports){
+(function (process){
+/**
+ * Copyright 2013-present, Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ */
+
+'use strict';
+
+var emptyFunction = require('fbjs/lib/emptyFunction');
+var invariant = require('fbjs/lib/invariant');
+var warning = require('fbjs/lib/warning');
+
+var ReactPropTypesSecret = require('./lib/ReactPropTypesSecret');
+var checkPropTypes = require('./checkPropTypes');
+
+module.exports = function(isValidElement, throwOnDirectAccess) {
+  /* global Symbol */
+  var ITERATOR_SYMBOL = typeof Symbol === 'function' && Symbol.iterator;
+  var FAUX_ITERATOR_SYMBOL = '@@iterator'; // Before Symbol spec.
+
+  /**
+   * Returns the iterator method function contained on the iterable object.
+   *
+   * Be sure to invoke the function with the iterable as context:
+   *
+   *     var iteratorFn = getIteratorFn(myIterable);
+   *     if (iteratorFn) {
+   *       var iterator = iteratorFn.call(myIterable);
+   *       ...
+   *     }
+   *
+   * @param {?object} maybeIterable
+   * @return {?function}
+   */
+  function getIteratorFn(maybeIterable) {
+    var iteratorFn = maybeIterable && (ITERATOR_SYMBOL && maybeIterable[ITERATOR_SYMBOL] || maybeIterable[FAUX_ITERATOR_SYMBOL]);
+    if (typeof iteratorFn === 'function') {
+      return iteratorFn;
+    }
+  }
+
+  /**
+   * Collection of methods that allow declaration and validation of props that are
+   * supplied to React components. Example usage:
+   *
+   *   var Props = require('ReactPropTypes');
+   *   var MyArticle = React.createClass({
+   *     propTypes: {
+   *       // An optional string prop named "description".
+   *       description: Props.string,
+   *
+   *       // A required enum prop named "category".
+   *       category: Props.oneOf(['News','Photos']).isRequired,
+   *
+   *       // A prop named "dialog" that requires an instance of Dialog.
+   *       dialog: Props.instanceOf(Dialog).isRequired
+   *     },
+   *     render: function() { ... }
+   *   });
+   *
+   * A more formal specification of how these methods are used:
+   *
+   *   type := array|bool|func|object|number|string|oneOf([...])|instanceOf(...)
+   *   decl := ReactPropTypes.{type}(.isRequired)?
+   *
+   * Each and every declaration produces a function with the same signature. This
+   * allows the creation of custom validation functions. For example:
+   *
+   *  var MyLink = React.createClass({
+   *    propTypes: {
+   *      // An optional string or URI prop named "href".
+   *      href: function(props, propName, componentName) {
+   *        var propValue = props[propName];
+   *        if (propValue != null && typeof propValue !== 'string' &&
+   *            !(propValue instanceof URI)) {
+   *          return new Error(
+   *            'Expected a string or an URI for ' + propName + ' in ' +
+   *            componentName
+   *          );
+   *        }
+   *      }
+   *    },
+   *    render: function() {...}
+   *  });
+   *
+   * @internal
+   */
+
+  var ANONYMOUS = '<<anonymous>>';
+
+  // Important!
+  // Keep this list in sync with production version in `./factoryWithThrowingShims.js`.
+  var ReactPropTypes = {
+    array: createPrimitiveTypeChecker('array'),
+    bool: createPrimitiveTypeChecker('boolean'),
+    func: createPrimitiveTypeChecker('function'),
+    number: createPrimitiveTypeChecker('number'),
+    object: createPrimitiveTypeChecker('object'),
+    string: createPrimitiveTypeChecker('string'),
+    symbol: createPrimitiveTypeChecker('symbol'),
+
+    any: createAnyTypeChecker(),
+    arrayOf: createArrayOfTypeChecker,
+    element: createElementTypeChecker(),
+    instanceOf: createInstanceTypeChecker,
+    node: createNodeChecker(),
+    objectOf: createObjectOfTypeChecker,
+    oneOf: createEnumTypeChecker,
+    oneOfType: createUnionTypeChecker,
+    shape: createShapeTypeChecker
+  };
+
+  /**
+   * inlined Object.is polyfill to avoid requiring consumers ship their own
+   * https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/is
+   */
+  /*eslint-disable no-self-compare*/
+  function is(x, y) {
+    // SameValue algorithm
+    if (x === y) {
+      // Steps 1-5, 7-10
+      // Steps 6.b-6.e: +0 != -0
+      return x !== 0 || 1 / x === 1 / y;
+    } else {
+      // Step 6.a: NaN == NaN
+      return x !== x && y !== y;
+    }
+  }
+  /*eslint-enable no-self-compare*/
+
+  /**
+   * We use an Error-like object for backward compatibility as people may call
+   * PropTypes directly and inspect their output. However, we don't use real
+   * Errors anymore. We don't inspect their stack anyway, and creating them
+   * is prohibitively expensive if they are created too often, such as what
+   * happens in oneOfType() for any type before the one that matched.
+   */
+  function PropTypeError(message) {
+    this.message = message;
+    this.stack = '';
+  }
+  // Make `instanceof Error` still work for returned errors.
+  PropTypeError.prototype = Error.prototype;
+
+  function createChainableTypeChecker(validate) {
+    if (process.env.NODE_ENV !== 'production') {
+      var manualPropTypeCallCache = {};
+      var manualPropTypeWarningCount = 0;
+    }
+    function checkType(isRequired, props, propName, componentName, location, propFullName, secret) {
+      componentName = componentName || ANONYMOUS;
+      propFullName = propFullName || propName;
+
+      if (secret !== ReactPropTypesSecret) {
+        if (throwOnDirectAccess) {
+          // New behavior only for users of `prop-types` package
+          invariant(
+            false,
+            'Calling PropTypes validators directly is not supported by the `prop-types` package. ' +
+            'Use `PropTypes.checkPropTypes()` to call them. ' +
+            'Read more at http://fb.me/use-check-prop-types'
+          );
+        } else if (process.env.NODE_ENV !== 'production' && typeof console !== 'undefined') {
+          // Old behavior for people using React.PropTypes
+          var cacheKey = componentName + ':' + propName;
+          if (
+            !manualPropTypeCallCache[cacheKey] &&
+            // Avoid spamming the console because they are often not actionable except for lib authors
+            manualPropTypeWarningCount < 3
+          ) {
+            warning(
+              false,
+              'You are manually calling a React.PropTypes validation ' +
+              'function for the `%s` prop on `%s`. This is deprecated ' +
+              'and will throw in the standalone `prop-types` package. ' +
+              'You may be seeing this warning due to a third-party PropTypes ' +
+              'library. See https://fb.me/react-warning-dont-call-proptypes ' + 'for details.',
+              propFullName,
+              componentName
+            );
+            manualPropTypeCallCache[cacheKey] = true;
+            manualPropTypeWarningCount++;
+          }
+        }
+      }
+      if (props[propName] == null) {
+        if (isRequired) {
+          if (props[propName] === null) {
+            return new PropTypeError('The ' + location + ' `' + propFullName + '` is marked as required ' + ('in `' + componentName + '`, but its value is `null`.'));
+          }
+          return new PropTypeError('The ' + location + ' `' + propFullName + '` is marked as required in ' + ('`' + componentName + '`, but its value is `undefined`.'));
+        }
+        return null;
+      } else {
+        return validate(props, propName, componentName, location, propFullName);
+      }
+    }
+
+    var chainedCheckType = checkType.bind(null, false);
+    chainedCheckType.isRequired = checkType.bind(null, true);
+
+    return chainedCheckType;
+  }
+
+  function createPrimitiveTypeChecker(expectedType) {
+    function validate(props, propName, componentName, location, propFullName, secret) {
+      var propValue = props[propName];
+      var propType = getPropType(propValue);
+      if (propType !== expectedType) {
+        // `propValue` being instance of, say, date/regexp, pass the 'object'
+        // check, but we can offer a more precise error message here rather than
+        // 'of type `object`'.
+        var preciseType = getPreciseType(propValue);
+
+        return new PropTypeError('Invalid ' + location + ' `' + propFullName + '` of type ' + ('`' + preciseType + '` supplied to `' + componentName + '`, expected ') + ('`' + expectedType + '`.'));
+      }
+      return null;
+    }
+    return createChainableTypeChecker(validate);
+  }
+
+  function createAnyTypeChecker() {
+    return createChainableTypeChecker(emptyFunction.thatReturnsNull);
+  }
+
+  function createArrayOfTypeChecker(typeChecker) {
+    function validate(props, propName, componentName, location, propFullName) {
+      if (typeof typeChecker !== 'function') {
+        return new PropTypeError('Property `' + propFullName + '` of component `' + componentName + '` has invalid PropType notation inside arrayOf.');
+      }
+      var propValue = props[propName];
+      if (!Array.isArray(propValue)) {
+        var propType = getPropType(propValue);
+        return new PropTypeError('Invalid ' + location + ' `' + propFullName + '` of type ' + ('`' + propType + '` supplied to `' + componentName + '`, expected an array.'));
+      }
+      for (var i = 0; i < propValue.length; i++) {
+        var error = typeChecker(propValue, i, componentName, location, propFullName + '[' + i + ']', ReactPropTypesSecret);
+        if (error instanceof Error) {
+          return error;
+        }
+      }
+      return null;
+    }
+    return createChainableTypeChecker(validate);
+  }
+
+  function createElementTypeChecker() {
+    function validate(props, propName, componentName, location, propFullName) {
+      var propValue = props[propName];
+      if (!isValidElement(propValue)) {
+        var propType = getPropType(propValue);
+        return new PropTypeError('Invalid ' + location + ' `' + propFullName + '` of type ' + ('`' + propType + '` supplied to `' + componentName + '`, expected a single ReactElement.'));
+      }
+      return null;
+    }
+    return createChainableTypeChecker(validate);
+  }
+
+  function createInstanceTypeChecker(expectedClass) {
+    function validate(props, propName, componentName, location, propFullName) {
+      if (!(props[propName] instanceof expectedClass)) {
+        var expectedClassName = expectedClass.name || ANONYMOUS;
+        var actualClassName = getClassName(props[propName]);
+        return new PropTypeError('Invalid ' + location + ' `' + propFullName + '` of type ' + ('`' + actualClassName + '` supplied to `' + componentName + '`, expected ') + ('instance of `' + expectedClassName + '`.'));
+      }
+      return null;
+    }
+    return createChainableTypeChecker(validate);
+  }
+
+  function createEnumTypeChecker(expectedValues) {
+    if (!Array.isArray(expectedValues)) {
+      process.env.NODE_ENV !== 'production' ? warning(false, 'Invalid argument supplied to oneOf, expected an instance of array.') : void 0;
+      return emptyFunction.thatReturnsNull;
+    }
+
+    function validate(props, propName, componentName, location, propFullName) {
+      var propValue = props[propName];
+      for (var i = 0; i < expectedValues.length; i++) {
+        if (is(propValue, expectedValues[i])) {
+          return null;
+        }
+      }
+
+      var valuesString = JSON.stringify(expectedValues);
+      return new PropTypeError('Invalid ' + location + ' `' + propFullName + '` of value `' + propValue + '` ' + ('supplied to `' + componentName + '`, expected one of ' + valuesString + '.'));
+    }
+    return createChainableTypeChecker(validate);
+  }
+
+  function createObjectOfTypeChecker(typeChecker) {
+    function validate(props, propName, componentName, location, propFullName) {
+      if (typeof typeChecker !== 'function') {
+        return new PropTypeError('Property `' + propFullName + '` of component `' + componentName + '` has invalid PropType notation inside objectOf.');
+      }
+      var propValue = props[propName];
+      var propType = getPropType(propValue);
+      if (propType !== 'object') {
+        return new PropTypeError('Invalid ' + location + ' `' + propFullName + '` of type ' + ('`' + propType + '` supplied to `' + componentName + '`, expected an object.'));
+      }
+      for (var key in propValue) {
+        if (propValue.hasOwnProperty(key)) {
+          var error = typeChecker(propValue, key, componentName, location, propFullName + '.' + key, ReactPropTypesSecret);
+          if (error instanceof Error) {
+            return error;
+          }
+        }
+      }
+      return null;
+    }
+    return createChainableTypeChecker(validate);
+  }
+
+  function createUnionTypeChecker(arrayOfTypeCheckers) {
+    if (!Array.isArray(arrayOfTypeCheckers)) {
+      process.env.NODE_ENV !== 'production' ? warning(false, 'Invalid argument supplied to oneOfType, expected an instance of array.') : void 0;
+      return emptyFunction.thatReturnsNull;
+    }
+
+    for (var i = 0; i < arrayOfTypeCheckers.length; i++) {
+      var checker = arrayOfTypeCheckers[i];
+      if (typeof checker !== 'function') {
+        warning(
+          false,
+          'Invalid argument supplid to oneOfType. Expected an array of check functions, but ' +
+          'received %s at index %s.',
+          getPostfixForTypeWarning(checker),
+          i
+        );
+        return emptyFunction.thatReturnsNull;
+      }
+    }
+
+    function validate(props, propName, componentName, location, propFullName) {
+      for (var i = 0; i < arrayOfTypeCheckers.length; i++) {
+        var checker = arrayOfTypeCheckers[i];
+        if (checker(props, propName, componentName, location, propFullName, ReactPropTypesSecret) == null) {
+          return null;
+        }
+      }
+
+      return new PropTypeError('Invalid ' + location + ' `' + propFullName + '` supplied to ' + ('`' + componentName + '`.'));
+    }
+    return createChainableTypeChecker(validate);
+  }
+
+  function createNodeChecker() {
+    function validate(props, propName, componentName, location, propFullName) {
+      if (!isNode(props[propName])) {
+        return new PropTypeError('Invalid ' + location + ' `' + propFullName + '` supplied to ' + ('`' + componentName + '`, expected a ReactNode.'));
+      }
+      return null;
+    }
+    return createChainableTypeChecker(validate);
+  }
+
+  function createShapeTypeChecker(shapeTypes) {
+    function validate(props, propName, componentName, location, propFullName) {
+      var propValue = props[propName];
+      var propType = getPropType(propValue);
+      if (propType !== 'object') {
+        return new PropTypeError('Invalid ' + location + ' `' + propFullName + '` of type `' + propType + '` ' + ('supplied to `' + componentName + '`, expected `object`.'));
+      }
+      for (var key in shapeTypes) {
+        var checker = shapeTypes[key];
+        if (!checker) {
+          continue;
+        }
+        var error = checker(propValue, key, componentName, location, propFullName + '.' + key, ReactPropTypesSecret);
+        if (error) {
+          return error;
+        }
+      }
+      return null;
+    }
+    return createChainableTypeChecker(validate);
+  }
+
+  function isNode(propValue) {
+    switch (typeof propValue) {
+      case 'number':
+      case 'string':
+      case 'undefined':
+        return true;
+      case 'boolean':
+        return !propValue;
+      case 'object':
+        if (Array.isArray(propValue)) {
+          return propValue.every(isNode);
+        }
+        if (propValue === null || isValidElement(propValue)) {
+          return true;
+        }
+
+        var iteratorFn = getIteratorFn(propValue);
+        if (iteratorFn) {
+          var iterator = iteratorFn.call(propValue);
+          var step;
+          if (iteratorFn !== propValue.entries) {
+            while (!(step = iterator.next()).done) {
+              if (!isNode(step.value)) {
+                return false;
+              }
+            }
+          } else {
+            // Iterator will provide entry [k,v] tuples rather than values.
+            while (!(step = iterator.next()).done) {
+              var entry = step.value;
+              if (entry) {
+                if (!isNode(entry[1])) {
+                  return false;
+                }
+              }
+            }
+          }
+        } else {
+          return false;
+        }
+
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  function isSymbol(propType, propValue) {
+    // Native Symbol.
+    if (propType === 'symbol') {
+      return true;
+    }
+
+    // 19.4.3.5 Symbol.prototype[@@toStringTag] === 'Symbol'
+    if (propValue['@@toStringTag'] === 'Symbol') {
+      return true;
+    }
+
+    // Fallback for non-spec compliant Symbols which are polyfilled.
+    if (typeof Symbol === 'function' && propValue instanceof Symbol) {
+      return true;
+    }
+
+    return false;
+  }
+
+  // Equivalent of `typeof` but with special handling for array and regexp.
+  function getPropType(propValue) {
+    var propType = typeof propValue;
+    if (Array.isArray(propValue)) {
+      return 'array';
+    }
+    if (propValue instanceof RegExp) {
+      // Old webkits (at least until Android 4.0) return 'function' rather than
+      // 'object' for typeof a RegExp. We'll normalize this here so that /bla/
+      // passes PropTypes.object.
+      return 'object';
+    }
+    if (isSymbol(propType, propValue)) {
+      return 'symbol';
+    }
+    return propType;
+  }
+
+  // This handles more types than `getPropType`. Only used for error messages.
+  // See `createPrimitiveTypeChecker`.
+  function getPreciseType(propValue) {
+    if (typeof propValue === 'undefined' || propValue === null) {
+      return '' + propValue;
+    }
+    var propType = getPropType(propValue);
+    if (propType === 'object') {
+      if (propValue instanceof Date) {
+        return 'date';
+      } else if (propValue instanceof RegExp) {
+        return 'regexp';
+      }
+    }
+    return propType;
+  }
+
+  // Returns a string that is postfixed to a warning about an invalid type.
+  // For example, "undefined" or "of type array"
+  function getPostfixForTypeWarning(value) {
+    var type = getPreciseType(value);
+    switch (type) {
+      case 'array':
+      case 'object':
+        return 'an ' + type;
+      case 'boolean':
+      case 'date':
+      case 'regexp':
+        return 'a ' + type;
+      default:
+        return type;
+    }
+  }
+
+  // Returns class name of the object, if any.
+  function getClassName(propValue) {
+    if (!propValue.constructor || !propValue.constructor.name) {
+      return ANONYMOUS;
+    }
+    return propValue.constructor.name;
+  }
+
+  ReactPropTypes.checkPropTypes = checkPropTypes;
+  ReactPropTypes.PropTypes = ReactPropTypes;
+
+  return ReactPropTypes;
+};
+
+}).call(this,require('_process'))
+},{"./checkPropTypes":75,"./lib/ReactPropTypesSecret":78,"_process":74,"fbjs/lib/emptyFunction":56,"fbjs/lib/invariant":64,"fbjs/lib/warning":71}],78:[function(require,module,exports){
+/**
+ * Copyright 2013-present, Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ */
+
+'use strict';
+
+var ReactPropTypesSecret = 'SECRET_DO_NOT_PASS_THIS_OR_YOU_WILL_BE_FIRED';
+
+module.exports = ReactPropTypesSecret;
+
+},{}],79:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -16303,7 +20105,7 @@ var ARIADOMPropertyConfig = {
 };
 
 module.exports = ARIADOMPropertyConfig;
-},{}],70:[function(require,module,exports){
+},{}],80:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -16327,7 +20129,7 @@ var AutoFocusUtils = {
 };
 
 module.exports = AutoFocusUtils;
-},{"./ReactDOMComponentTree":101,"fbjs/lib/focusNode":52}],71:[function(require,module,exports){
+},{"./ReactDOMComponentTree":111,"fbjs/lib/focusNode":58}],81:[function(require,module,exports){
 /**
  * Copyright 2013-present Facebook, Inc.
  * All rights reserved.
@@ -16703,7 +20505,6 @@ function extractBeforeInputEvent(topLevelType, targetInst, nativeEvent, nativeEv
  * `composition` event types.
  */
 var BeforeInputEventPlugin = {
-
   eventTypes: eventTypes,
 
   extractEvents: function (topLevelType, targetInst, nativeEvent, nativeEventTarget) {
@@ -16712,7 +20513,7 @@ var BeforeInputEventPlugin = {
 };
 
 module.exports = BeforeInputEventPlugin;
-},{"./EventPropagators":87,"./FallbackCompositionState":88,"./SyntheticCompositionEvent":152,"./SyntheticInputEvent":156,"fbjs/lib/ExecutionEnvironment":44}],72:[function(require,module,exports){
+},{"./EventPropagators":97,"./FallbackCompositionState":98,"./SyntheticCompositionEvent":162,"./SyntheticInputEvent":166,"fbjs/lib/ExecutionEnvironment":50}],82:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -16745,7 +20546,13 @@ var isUnitlessNumber = {
   flexNegative: true,
   flexOrder: true,
   gridRow: true,
+  gridRowEnd: true,
+  gridRowSpan: true,
+  gridRowStart: true,
   gridColumn: true,
+  gridColumnEnd: true,
+  gridColumnSpan: true,
+  gridColumnStart: true,
   fontWeight: true,
   lineClamp: true,
   lineHeight: true,
@@ -16860,7 +20667,8 @@ var CSSProperty = {
 };
 
 module.exports = CSSProperty;
-},{}],73:[function(require,module,exports){
+},{}],83:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -16903,7 +20711,7 @@ if (ExecutionEnvironment.canUseDOM) {
   }
 }
 
-if ("production" !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
   // 'msTransform' is correct, but the other prefixes should be capitalized
   var badVendoredStyleNamePattern = /^(?:webkit|moz|o)[A-Z]/;
 
@@ -16920,7 +20728,7 @@ if ("production" !== 'production') {
     }
 
     warnedStyleNames[name] = true;
-    "production" !== 'production' ? warning(false, 'Unsupported style property %s. Did you mean %s?%s', name, camelizeStyleName(name), checkRenderMessage(owner)) : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(false, 'Unsupported style property %s. Did you mean %s?%s', name, camelizeStyleName(name), checkRenderMessage(owner)) : void 0;
   };
 
   var warnBadVendoredStyleName = function (name, owner) {
@@ -16929,7 +20737,7 @@ if ("production" !== 'production') {
     }
 
     warnedStyleNames[name] = true;
-    "production" !== 'production' ? warning(false, 'Unsupported vendor-prefixed style property %s. Did you mean %s?%s', name, name.charAt(0).toUpperCase() + name.slice(1), checkRenderMessage(owner)) : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(false, 'Unsupported vendor-prefixed style property %s. Did you mean %s?%s', name, name.charAt(0).toUpperCase() + name.slice(1), checkRenderMessage(owner)) : void 0;
   };
 
   var warnStyleValueWithSemicolon = function (name, value, owner) {
@@ -16938,7 +20746,7 @@ if ("production" !== 'production') {
     }
 
     warnedStyleValues[value] = true;
-    "production" !== 'production' ? warning(false, 'Style property values shouldn\'t contain a semicolon.%s ' + 'Try "%s: %s" instead.', checkRenderMessage(owner), name, value.replace(badStyleValueWithSemicolonPattern, '')) : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(false, "Style property values shouldn't contain a semicolon.%s " + 'Try "%s: %s" instead.', checkRenderMessage(owner), name, value.replace(badStyleValueWithSemicolonPattern, '')) : void 0;
   };
 
   var warnStyleValueIsNaN = function (name, value, owner) {
@@ -16947,7 +20755,7 @@ if ("production" !== 'production') {
     }
 
     warnedForNaNValue = true;
-    "production" !== 'production' ? warning(false, '`NaN` is an invalid value for the `%s` css style property.%s', name, checkRenderMessage(owner)) : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(false, '`NaN` is an invalid value for the `%s` css style property.%s', name, checkRenderMessage(owner)) : void 0;
   };
 
   var checkRenderMessage = function (owner) {
@@ -16988,7 +20796,6 @@ if ("production" !== 'production') {
  * Operations for dealing with CSS properties.
  */
 var CSSPropertyOperations = {
-
   /**
    * Serializes a mapping of style properties for use as inline styles:
    *
@@ -17008,13 +20815,16 @@ var CSSPropertyOperations = {
       if (!styles.hasOwnProperty(styleName)) {
         continue;
       }
+      var isCustomProperty = styleName.indexOf('--') === 0;
       var styleValue = styles[styleName];
-      if ("production" !== 'production') {
-        warnValidStyle(styleName, styleValue, component);
+      if (process.env.NODE_ENV !== 'production') {
+        if (!isCustomProperty) {
+          warnValidStyle(styleName, styleValue, component);
+        }
       }
       if (styleValue != null) {
         serialized += processStyleName(styleName) + ':';
-        serialized += dangerousStyleValue(styleName, styleValue, component) + ';';
+        serialized += dangerousStyleValue(styleName, styleValue, component, isCustomProperty) + ';';
       }
     }
     return serialized || null;
@@ -17029,7 +20839,7 @@ var CSSPropertyOperations = {
    * @param {ReactDOMComponent} component
    */
   setValueForStyles: function (node, styles, component) {
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       ReactInstrumentation.debugTool.onHostOperation({
         instanceID: component._debugID,
         type: 'update styles',
@@ -17042,14 +20852,19 @@ var CSSPropertyOperations = {
       if (!styles.hasOwnProperty(styleName)) {
         continue;
       }
-      if ("production" !== 'production') {
-        warnValidStyle(styleName, styles[styleName], component);
+      var isCustomProperty = styleName.indexOf('--') === 0;
+      if (process.env.NODE_ENV !== 'production') {
+        if (!isCustomProperty) {
+          warnValidStyle(styleName, styles[styleName], component);
+        }
       }
-      var styleValue = dangerousStyleValue(styleName, styles[styleName], component);
+      var styleValue = dangerousStyleValue(styleName, styles[styleName], component, isCustomProperty);
       if (styleName === 'float' || styleName === 'cssFloat') {
         styleName = styleFloatAccessor;
       }
-      if (styleValue) {
+      if (isCustomProperty) {
+        style.setProperty(styleName, styleValue);
+      } else if (styleValue) {
         style[styleName] = styleValue;
       } else {
         var expansion = hasShorthandPropertyBug && CSSProperty.shorthandPropertyExpansions[styleName];
@@ -17065,11 +20880,12 @@ var CSSPropertyOperations = {
       }
     }
   }
-
 };
 
 module.exports = CSSPropertyOperations;
-},{"./CSSProperty":72,"./ReactInstrumentation":130,"./dangerousStyleValue":169,"fbjs/lib/ExecutionEnvironment":44,"fbjs/lib/camelizeStyleName":46,"fbjs/lib/hyphenateStyleName":57,"fbjs/lib/memoizeStringOnly":61,"fbjs/lib/warning":65}],74:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./CSSProperty":82,"./ReactInstrumentation":140,"./dangerousStyleValue":179,"_process":74,"fbjs/lib/ExecutionEnvironment":50,"fbjs/lib/camelizeStyleName":52,"fbjs/lib/hyphenateStyleName":63,"fbjs/lib/memoizeStringOnly":67,"fbjs/lib/warning":71}],84:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -17141,7 +20957,7 @@ var CallbackQueue = function () {
     var contexts = this._contexts;
     var arg = this._arg;
     if (callbacks && contexts) {
-      !(callbacks.length === contexts.length) ? "production" !== 'production' ? invariant(false, 'Mismatched list of contexts in callback queue') : _prodInvariant('24') : void 0;
+      !(callbacks.length === contexts.length) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Mismatched list of contexts in callback queue') : _prodInvariant('24') : void 0;
       this._callbacks = null;
       this._contexts = null;
       for (var i = 0; i < callbacks.length; i++) {
@@ -17188,7 +21004,8 @@ var CallbackQueue = function () {
 }();
 
 module.exports = PooledClass.addPoolingTo(CallbackQueue);
-},{"./PooledClass":92,"./reactProdInvariant":188,"fbjs/lib/invariant":58}],75:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./PooledClass":102,"./reactProdInvariant":198,"_process":74,"fbjs/lib/invariant":64}],85:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -17208,6 +21025,7 @@ var ReactDOMComponentTree = require('./ReactDOMComponentTree');
 var ReactUpdates = require('./ReactUpdates');
 var SyntheticEvent = require('./SyntheticEvent');
 
+var inputValueTracking = require('./inputValueTracking');
 var getEventTarget = require('./getEventTarget');
 var isEventSupported = require('./isEventSupported');
 var isTextInputElement = require('./isTextInputElement');
@@ -17222,13 +21040,17 @@ var eventTypes = {
   }
 };
 
+function createAndAccumulateChangeEvent(inst, nativeEvent, target) {
+  var event = SyntheticEvent.getPooled(eventTypes.change, inst, nativeEvent, target);
+  event.type = 'change';
+  EventPropagators.accumulateTwoPhaseDispatches(event);
+  return event;
+}
 /**
  * For IE shims
  */
 var activeElement = null;
 var activeElementInst = null;
-var activeElementValue = null;
-var activeElementValueProp = null;
 
 /**
  * SECTION: handle `change` event
@@ -17245,8 +21067,7 @@ if (ExecutionEnvironment.canUseDOM) {
 }
 
 function manualDispatchChangeEvent(nativeEvent) {
-  var event = SyntheticEvent.getPooled(eventTypes.change, activeElementInst, nativeEvent, getEventTarget(nativeEvent));
-  EventPropagators.accumulateTwoPhaseDispatches(event);
+  var event = createAndAccumulateChangeEvent(activeElementInst, nativeEvent, getEventTarget(nativeEvent));
 
   // If change and propertychange bubbled, we'd just bind to it like all the
   // other events and have it go through ReactBrowserEventEmitter. Since it
@@ -17282,11 +21103,21 @@ function stopWatchingForChangeEventIE8() {
   activeElementInst = null;
 }
 
+function getInstIfValueChanged(targetInst, nativeEvent) {
+  var updated = inputValueTracking.updateValueIfChanged(targetInst);
+  var simulated = nativeEvent.simulated === true && ChangeEventPlugin._allowSimulatedPassThrough;
+
+  if (updated || simulated) {
+    return targetInst;
+  }
+}
+
 function getTargetInstForChangeEvent(topLevelType, targetInst) {
   if (topLevelType === 'topChange') {
     return targetInst;
   }
 }
+
 function handleEventsForChangeEventIE8(topLevelType, target, targetInst) {
   if (topLevelType === 'topFocus') {
     // stopWatching() should be a noop here but we call it just in case we
@@ -17305,105 +21136,54 @@ var isInputEventSupported = false;
 if (ExecutionEnvironment.canUseDOM) {
   // IE9 claims to support the input event but fails to trigger it when
   // deleting text, so we ignore its input events.
-  // IE10+ fire input events to often, such when a placeholder
-  // changes or when an input with a placeholder is focused.
-  isInputEventSupported = isEventSupported('input') && (!document.documentMode || document.documentMode > 11);
+
+  isInputEventSupported = isEventSupported('input') && (!('documentMode' in document) || document.documentMode > 9);
 }
 
 /**
- * (For IE <=11) Replacement getter/setter for the `value` property that gets
- * set on the active element.
- */
-var newValueProp = {
-  get: function () {
-    return activeElementValueProp.get.call(this);
-  },
-  set: function (val) {
-    // Cast to a string so we can do equality checks.
-    activeElementValue = '' + val;
-    activeElementValueProp.set.call(this, val);
-  }
-};
-
-/**
- * (For IE <=11) Starts tracking propertychange events on the passed-in element
+ * (For IE <=9) Starts tracking propertychange events on the passed-in element
  * and override the value property so that we can distinguish user events from
  * value changes in JS.
  */
 function startWatchingForValueChange(target, targetInst) {
   activeElement = target;
   activeElementInst = targetInst;
-  activeElementValue = target.value;
-  activeElementValueProp = Object.getOwnPropertyDescriptor(target.constructor.prototype, 'value');
-
-  // Not guarded in a canDefineProperty check: IE8 supports defineProperty only
-  // on DOM elements
-  Object.defineProperty(activeElement, 'value', newValueProp);
-  if (activeElement.attachEvent) {
-    activeElement.attachEvent('onpropertychange', handlePropertyChange);
-  } else {
-    activeElement.addEventListener('propertychange', handlePropertyChange, false);
-  }
+  activeElement.attachEvent('onpropertychange', handlePropertyChange);
 }
 
 /**
- * (For IE <=11) Removes the event listeners from the currently-tracked element,
+ * (For IE <=9) Removes the event listeners from the currently-tracked element,
  * if any exists.
  */
 function stopWatchingForValueChange() {
   if (!activeElement) {
     return;
   }
-
-  // delete restores the original property definition
-  delete activeElement.value;
-
-  if (activeElement.detachEvent) {
-    activeElement.detachEvent('onpropertychange', handlePropertyChange);
-  } else {
-    activeElement.removeEventListener('propertychange', handlePropertyChange, false);
-  }
+  activeElement.detachEvent('onpropertychange', handlePropertyChange);
 
   activeElement = null;
   activeElementInst = null;
-  activeElementValue = null;
-  activeElementValueProp = null;
 }
 
 /**
- * (For IE <=11) Handles a propertychange event, sending a `change` event if
+ * (For IE <=9) Handles a propertychange event, sending a `change` event if
  * the value of the active element has changed.
  */
 function handlePropertyChange(nativeEvent) {
   if (nativeEvent.propertyName !== 'value') {
     return;
   }
-  var value = nativeEvent.srcElement.value;
-  if (value === activeElementValue) {
-    return;
-  }
-  activeElementValue = value;
-
-  manualDispatchChangeEvent(nativeEvent);
-}
-
-/**
- * If a `change` event should be fired, returns the target's ID.
- */
-function getTargetInstForInputEvent(topLevelType, targetInst) {
-  if (topLevelType === 'topInput') {
-    // In modern browsers (i.e., not IE8 or IE9), the input event is exactly
-    // what we want so fall through here and trigger an abstract event
-    return targetInst;
+  if (getInstIfValueChanged(activeElementInst, nativeEvent)) {
+    manualDispatchChangeEvent(nativeEvent);
   }
 }
 
-function handleEventsForInputEventIE(topLevelType, target, targetInst) {
+function handleEventsForInputEventPolyfill(topLevelType, target, targetInst) {
   if (topLevelType === 'topFocus') {
     // In IE8, we can capture almost all .value changes by adding a
     // propertychange handler and looking for events with propertyName
     // equal to 'value'
-    // In IE9-11, propertychange fires for most input events but is buggy and
+    // In IE9, propertychange fires for most input events but is buggy and
     // doesn't fire when text is deleted, but conveniently, selectionchange
     // appears to fire in all of the remaining cases so we catch those and
     // forward the event if the value has changed
@@ -17421,7 +21201,7 @@ function handleEventsForInputEventIE(topLevelType, target, targetInst) {
 }
 
 // For IE8 and IE9.
-function getTargetInstForInputEventIE(topLevelType, targetInst) {
+function getTargetInstForInputEventPolyfill(topLevelType, targetInst, nativeEvent) {
   if (topLevelType === 'topSelectionChange' || topLevelType === 'topKeyUp' || topLevelType === 'topKeyDown') {
     // On the selectionchange event, the target is just document which isn't
     // helpful for us so just check activeElement instead.
@@ -17433,10 +21213,7 @@ function getTargetInstForInputEventIE(topLevelType, targetInst) {
     // keystroke if user does a key repeat (it'll be a little delayed: right
     // before the second keystroke). Other input methods (e.g., paste) seem to
     // fire selectionchange normally.
-    if (activeElement && activeElement.value !== activeElementValue) {
-      activeElementValue = activeElement.value;
-      return activeElementInst;
-    }
+    return getInstIfValueChanged(activeElementInst, nativeEvent);
   }
 }
 
@@ -17447,12 +21224,39 @@ function shouldUseClickEvent(elem) {
   // Use the `click` event to detect changes to checkbox and radio inputs.
   // This approach works across all browsers, whereas `change` does not fire
   // until `blur` in IE8.
-  return elem.nodeName && elem.nodeName.toLowerCase() === 'input' && (elem.type === 'checkbox' || elem.type === 'radio');
+  var nodeName = elem.nodeName;
+  return nodeName && nodeName.toLowerCase() === 'input' && (elem.type === 'checkbox' || elem.type === 'radio');
 }
 
-function getTargetInstForClickEvent(topLevelType, targetInst) {
+function getTargetInstForClickEvent(topLevelType, targetInst, nativeEvent) {
   if (topLevelType === 'topClick') {
-    return targetInst;
+    return getInstIfValueChanged(targetInst, nativeEvent);
+  }
+}
+
+function getTargetInstForInputOrChangeEvent(topLevelType, targetInst, nativeEvent) {
+  if (topLevelType === 'topInput' || topLevelType === 'topChange') {
+    return getInstIfValueChanged(targetInst, nativeEvent);
+  }
+}
+
+function handleControlledInputBlur(inst, node) {
+  // TODO: In IE, inst is occasionally null. Why?
+  if (inst == null) {
+    return;
+  }
+
+  // Fiber and ReactDOM keep wrapper state in separate places
+  var state = inst._wrapperState || node._wrapperState;
+
+  if (!state || !state.controlled || node.type !== 'number') {
+    return;
+  }
+
+  // If controlled, assign the value attribute to the current value on blur
+  var value = '' + node.value;
+  if (node.getAttribute('value') !== value) {
+    node.setAttribute('value', value);
   }
 }
 
@@ -17467,8 +21271,10 @@ function getTargetInstForClickEvent(topLevelType, targetInst) {
  * - select
  */
 var ChangeEventPlugin = {
-
   eventTypes: eventTypes,
+
+  _allowSimulatedPassThrough: true,
+  _isInputEventSupported: isInputEventSupported,
 
   extractEvents: function (topLevelType, targetInst, nativeEvent, nativeEventTarget) {
     var targetNode = targetInst ? ReactDOMComponentTree.getNodeFromInstance(targetInst) : window;
@@ -17482,21 +21288,19 @@ var ChangeEventPlugin = {
       }
     } else if (isTextInputElement(targetNode)) {
       if (isInputEventSupported) {
-        getTargetInstFunc = getTargetInstForInputEvent;
+        getTargetInstFunc = getTargetInstForInputOrChangeEvent;
       } else {
-        getTargetInstFunc = getTargetInstForInputEventIE;
-        handleEventFunc = handleEventsForInputEventIE;
+        getTargetInstFunc = getTargetInstForInputEventPolyfill;
+        handleEventFunc = handleEventsForInputEventPolyfill;
       }
     } else if (shouldUseClickEvent(targetNode)) {
       getTargetInstFunc = getTargetInstForClickEvent;
     }
 
     if (getTargetInstFunc) {
-      var inst = getTargetInstFunc(topLevelType, targetInst);
+      var inst = getTargetInstFunc(topLevelType, targetInst, nativeEvent);
       if (inst) {
-        var event = SyntheticEvent.getPooled(eventTypes.change, inst, nativeEvent, nativeEventTarget);
-        event.type = 'change';
-        EventPropagators.accumulateTwoPhaseDispatches(event);
+        var event = createAndAccumulateChangeEvent(inst, nativeEvent, nativeEventTarget);
         return event;
       }
     }
@@ -17504,12 +21308,17 @@ var ChangeEventPlugin = {
     if (handleEventFunc) {
       handleEventFunc(topLevelType, targetNode, targetInst);
     }
-  }
 
+    // When blurring, set the value attribute for number inputs
+    if (topLevelType === 'topBlur') {
+      handleControlledInputBlur(targetInst, targetNode);
+    }
+  }
 };
 
 module.exports = ChangeEventPlugin;
-},{"./EventPluginHub":84,"./EventPropagators":87,"./ReactDOMComponentTree":101,"./ReactUpdates":145,"./SyntheticEvent":154,"./getEventTarget":177,"./isEventSupported":185,"./isTextInputElement":186,"fbjs/lib/ExecutionEnvironment":44}],76:[function(require,module,exports){
+},{"./EventPluginHub":94,"./EventPropagators":97,"./ReactDOMComponentTree":111,"./ReactUpdates":155,"./SyntheticEvent":164,"./getEventTarget":187,"./inputValueTracking":193,"./isEventSupported":195,"./isTextInputElement":196,"fbjs/lib/ExecutionEnvironment":50}],86:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -17621,7 +21430,7 @@ function replaceDelimitedText(openingComment, closingComment, stringText) {
     }
   }
 
-  if ("production" !== 'production') {
+  if (process.env.NODE_ENV !== 'production') {
     ReactInstrumentation.debugTool.onHostOperation({
       instanceID: ReactDOMComponentTree.getInstanceFromNode(openingComment)._debugID,
       type: 'replace text',
@@ -17631,7 +21440,7 @@ function replaceDelimitedText(openingComment, closingComment, stringText) {
 }
 
 var dangerouslyReplaceNodeWithMarkup = Danger.dangerouslyReplaceNodeWithMarkup;
-if ("production" !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
   dangerouslyReplaceNodeWithMarkup = function (oldChild, markup, prevInstance) {
     Danger.dangerouslyReplaceNodeWithMarkup(oldChild, markup);
     if (prevInstance._debugID !== 0) {
@@ -17657,7 +21466,6 @@ if ("production" !== 'production') {
  * Operations for updating with DOM children.
  */
 var DOMChildrenOperations = {
-
   dangerouslyReplaceNodeWithMarkup: dangerouslyReplaceNodeWithMarkup,
 
   replaceDelimitedText: replaceDelimitedText,
@@ -17670,7 +21478,7 @@ var DOMChildrenOperations = {
    * @internal
    */
   processUpdates: function (parentNode, updates) {
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       var parentNodeDebugID = ReactDOMComponentTree.getInstanceFromNode(parentNode)._debugID;
     }
 
@@ -17679,17 +21487,20 @@ var DOMChildrenOperations = {
       switch (update.type) {
         case 'INSERT_MARKUP':
           insertLazyTreeChildAt(parentNode, update.content, getNodeAfter(parentNode, update.afterNode));
-          if ("production" !== 'production') {
+          if (process.env.NODE_ENV !== 'production') {
             ReactInstrumentation.debugTool.onHostOperation({
               instanceID: parentNodeDebugID,
               type: 'insert child',
-              payload: { toIndex: update.toIndex, content: update.content.toString() }
+              payload: {
+                toIndex: update.toIndex,
+                content: update.content.toString()
+              }
             });
           }
           break;
         case 'MOVE_EXISTING':
           moveChild(parentNode, update.fromNode, getNodeAfter(parentNode, update.afterNode));
-          if ("production" !== 'production') {
+          if (process.env.NODE_ENV !== 'production') {
             ReactInstrumentation.debugTool.onHostOperation({
               instanceID: parentNodeDebugID,
               type: 'move child',
@@ -17699,7 +21510,7 @@ var DOMChildrenOperations = {
           break;
         case 'SET_MARKUP':
           setInnerHTML(parentNode, update.content);
-          if ("production" !== 'production') {
+          if (process.env.NODE_ENV !== 'production') {
             ReactInstrumentation.debugTool.onHostOperation({
               instanceID: parentNodeDebugID,
               type: 'replace children',
@@ -17709,7 +21520,7 @@ var DOMChildrenOperations = {
           break;
         case 'TEXT_CONTENT':
           setTextContent(parentNode, update.content);
-          if ("production" !== 'production') {
+          if (process.env.NODE_ENV !== 'production') {
             ReactInstrumentation.debugTool.onHostOperation({
               instanceID: parentNodeDebugID,
               type: 'replace text',
@@ -17719,7 +21530,7 @@ var DOMChildrenOperations = {
           break;
         case 'REMOVE_NODE':
           removeChild(parentNode, update.fromNode);
-          if ("production" !== 'production') {
+          if (process.env.NODE_ENV !== 'production') {
             ReactInstrumentation.debugTool.onHostOperation({
               instanceID: parentNodeDebugID,
               type: 'remove child',
@@ -17730,11 +21541,11 @@ var DOMChildrenOperations = {
       }
     }
   }
-
 };
 
 module.exports = DOMChildrenOperations;
-},{"./DOMLazyTree":77,"./Danger":81,"./ReactDOMComponentTree":101,"./ReactInstrumentation":130,"./createMicrosoftUnsafeLocalFunction":168,"./setInnerHTML":190,"./setTextContent":191}],77:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./DOMLazyTree":87,"./Danger":91,"./ReactDOMComponentTree":111,"./ReactInstrumentation":140,"./createMicrosoftUnsafeLocalFunction":178,"./setInnerHTML":200,"./setTextContent":201,"_process":74}],87:[function(require,module,exports){
 /**
  * Copyright 2015-present, Facebook, Inc.
  * All rights reserved.
@@ -17852,7 +21663,7 @@ DOMLazyTree.queueHTML = queueHTML;
 DOMLazyTree.queueText = queueText;
 
 module.exports = DOMLazyTree;
-},{"./DOMNamespaces":78,"./createMicrosoftUnsafeLocalFunction":168,"./setInnerHTML":190,"./setTextContent":191}],78:[function(require,module,exports){
+},{"./DOMNamespaces":88,"./createMicrosoftUnsafeLocalFunction":178,"./setInnerHTML":200,"./setTextContent":201}],88:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -17872,7 +21683,8 @@ var DOMNamespaces = {
 };
 
 module.exports = DOMNamespaces;
-},{}],79:[function(require,module,exports){
+},{}],89:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -17945,7 +21757,7 @@ var DOMPropertyInjection = {
     }
 
     for (var propName in Properties) {
-      !!DOMProperty.properties.hasOwnProperty(propName) ? "production" !== 'production' ? invariant(false, 'injectDOMPropertyConfig(...): You\'re trying to inject DOM property \'%s\' which has already been injected. You may be accidentally injecting the same DOM property config twice, or you may be injecting two configs that have conflicting property names.', propName) : _prodInvariant('48', propName) : void 0;
+      !!DOMProperty.properties.hasOwnProperty(propName) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'injectDOMPropertyConfig(...): You\'re trying to inject DOM property \'%s\' which has already been injected. You may be accidentally injecting the same DOM property config twice, or you may be injecting two configs that have conflicting property names.', propName) : _prodInvariant('48', propName) : void 0;
 
       var lowerCased = propName.toLowerCase();
       var propConfig = Properties[propName];
@@ -17962,16 +21774,16 @@ var DOMPropertyInjection = {
         hasPositiveNumericValue: checkMask(propConfig, Injection.HAS_POSITIVE_NUMERIC_VALUE),
         hasOverloadedBooleanValue: checkMask(propConfig, Injection.HAS_OVERLOADED_BOOLEAN_VALUE)
       };
-      !(propertyInfo.hasBooleanValue + propertyInfo.hasNumericValue + propertyInfo.hasOverloadedBooleanValue <= 1) ? "production" !== 'production' ? invariant(false, 'DOMProperty: Value can be one of boolean, overloaded boolean, or numeric value, but not a combination: %s', propName) : _prodInvariant('50', propName) : void 0;
+      !(propertyInfo.hasBooleanValue + propertyInfo.hasNumericValue + propertyInfo.hasOverloadedBooleanValue <= 1) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'DOMProperty: Value can be one of boolean, overloaded boolean, or numeric value, but not a combination: %s', propName) : _prodInvariant('50', propName) : void 0;
 
-      if ("production" !== 'production') {
+      if (process.env.NODE_ENV !== 'production') {
         DOMProperty.getPossibleStandardName[lowerCased] = propName;
       }
 
       if (DOMAttributeNames.hasOwnProperty(propName)) {
         var attributeName = DOMAttributeNames[propName];
         propertyInfo.attributeName = attributeName;
-        if ("production" !== 'production') {
+        if (process.env.NODE_ENV !== 'production') {
           DOMProperty.getPossibleStandardName[attributeName] = propName;
         }
       }
@@ -18011,7 +21823,6 @@ var ATTRIBUTE_NAME_START_CHAR = ':A-Z_a-z\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\
  * @see http://jsperf.com/key-missing
  */
 var DOMProperty = {
-
   ID_ATTRIBUTE_NAME: 'data-reactid',
   ROOT_ATTRIBUTE_NAME: 'data-reactroot',
 
@@ -18057,7 +21868,7 @@ var DOMProperty = {
    *
    * @type {Object}
    */
-  getPossibleStandardName: "production" !== 'production' ? { autofocus: 'autoFocus' } : null,
+  getPossibleStandardName: process.env.NODE_ENV !== 'production' ? { autofocus: 'autoFocus' } : null,
 
   /**
    * All of the isCustomAttribute() functions that have been injected.
@@ -18082,7 +21893,9 @@ var DOMProperty = {
 };
 
 module.exports = DOMProperty;
-},{"./reactProdInvariant":188,"fbjs/lib/invariant":58}],80:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./reactProdInvariant":198,"_process":74,"fbjs/lib/invariant":64}],90:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -18118,7 +21931,7 @@ function isAttributeNameSafe(attributeName) {
     return true;
   }
   illegalAttributeNameCache[attributeName] = true;
-  "production" !== 'production' ? warning(false, 'Invalid attribute name: `%s`', attributeName) : void 0;
+  process.env.NODE_ENV !== 'production' ? warning(false, 'Invalid attribute name: `%s`', attributeName) : void 0;
   return false;
 }
 
@@ -18130,7 +21943,6 @@ function shouldIgnoreValue(propertyInfo, value) {
  * Operations for dealing with DOM properties.
  */
 var DOMPropertyOperations = {
-
   /**
    * Creates markup for the ID property.
    *
@@ -18232,7 +22044,7 @@ var DOMPropertyOperations = {
       return;
     }
 
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       var payload = {};
       payload[name] = value;
       ReactInstrumentation.debugTool.onHostOperation({
@@ -18253,7 +22065,7 @@ var DOMPropertyOperations = {
       node.setAttribute(name, '' + value);
     }
 
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       var payload = {};
       payload[name] = value;
       ReactInstrumentation.debugTool.onHostOperation({
@@ -18272,7 +22084,7 @@ var DOMPropertyOperations = {
    */
   deleteValueForAttribute: function (node, name) {
     node.removeAttribute(name);
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       ReactInstrumentation.debugTool.onHostOperation({
         instanceID: ReactDOMComponentTree.getInstanceFromNode(node)._debugID,
         type: 'remove attribute',
@@ -18307,7 +22119,7 @@ var DOMPropertyOperations = {
       node.removeAttribute(name);
     }
 
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       ReactInstrumentation.debugTool.onHostOperation({
         instanceID: ReactDOMComponentTree.getInstanceFromNode(node)._debugID,
         type: 'remove attribute',
@@ -18315,11 +22127,12 @@ var DOMPropertyOperations = {
       });
     }
   }
-
 };
 
 module.exports = DOMPropertyOperations;
-},{"./DOMProperty":79,"./ReactDOMComponentTree":101,"./ReactInstrumentation":130,"./quoteAttributeValueForBrowser":187,"fbjs/lib/warning":65}],81:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./DOMProperty":89,"./ReactDOMComponentTree":111,"./ReactInstrumentation":140,"./quoteAttributeValueForBrowser":197,"_process":74,"fbjs/lib/warning":71}],91:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -18342,7 +22155,6 @@ var emptyFunction = require('fbjs/lib/emptyFunction');
 var invariant = require('fbjs/lib/invariant');
 
 var Danger = {
-
   /**
    * Replaces a node with a string of markup at its current position within its
    * parent. The markup must render into a single root node.
@@ -18352,9 +22164,9 @@ var Danger = {
    * @internal
    */
   dangerouslyReplaceNodeWithMarkup: function (oldChild, markup) {
-    !ExecutionEnvironment.canUseDOM ? "production" !== 'production' ? invariant(false, 'dangerouslyReplaceNodeWithMarkup(...): Cannot render markup in a worker thread. Make sure `window` and `document` are available globally before requiring React when unit testing or use ReactDOMServer.renderToString() for server rendering.') : _prodInvariant('56') : void 0;
-    !markup ? "production" !== 'production' ? invariant(false, 'dangerouslyReplaceNodeWithMarkup(...): Missing markup.') : _prodInvariant('57') : void 0;
-    !(oldChild.nodeName !== 'HTML') ? "production" !== 'production' ? invariant(false, 'dangerouslyReplaceNodeWithMarkup(...): Cannot replace markup of the <html> node. This is because browser quirks make this unreliable and/or slow. If you want to render to the root you must use server rendering. See ReactDOMServer.renderToString().') : _prodInvariant('58') : void 0;
+    !ExecutionEnvironment.canUseDOM ? process.env.NODE_ENV !== 'production' ? invariant(false, 'dangerouslyReplaceNodeWithMarkup(...): Cannot render markup in a worker thread. Make sure `window` and `document` are available globally before requiring React when unit testing or use ReactDOMServer.renderToString() for server rendering.') : _prodInvariant('56') : void 0;
+    !markup ? process.env.NODE_ENV !== 'production' ? invariant(false, 'dangerouslyReplaceNodeWithMarkup(...): Missing markup.') : _prodInvariant('57') : void 0;
+    !(oldChild.nodeName !== 'HTML') ? process.env.NODE_ENV !== 'production' ? invariant(false, 'dangerouslyReplaceNodeWithMarkup(...): Cannot replace markup of the <html> node. This is because browser quirks make this unreliable and/or slow. If you want to render to the root you must use server rendering. See ReactDOMServer.renderToString().') : _prodInvariant('58') : void 0;
 
     if (typeof markup === 'string') {
       var newChild = createNodesFromMarkup(markup, emptyFunction)[0];
@@ -18363,11 +22175,11 @@ var Danger = {
       DOMLazyTree.replaceChildWithTree(oldChild, markup);
     }
   }
-
 };
 
 module.exports = Danger;
-},{"./DOMLazyTree":77,"./reactProdInvariant":188,"fbjs/lib/ExecutionEnvironment":44,"fbjs/lib/createNodesFromMarkup":49,"fbjs/lib/emptyFunction":50,"fbjs/lib/invariant":58}],82:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./DOMLazyTree":87,"./reactProdInvariant":198,"_process":74,"fbjs/lib/ExecutionEnvironment":50,"fbjs/lib/createNodesFromMarkup":55,"fbjs/lib/emptyFunction":56,"fbjs/lib/invariant":64}],92:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -18393,7 +22205,7 @@ module.exports = Danger;
 var DefaultEventPluginOrder = ['ResponderEventPlugin', 'SimpleEventPlugin', 'TapEventPlugin', 'EnterLeaveEventPlugin', 'ChangeEventPlugin', 'SelectEventPlugin', 'BeforeInputEventPlugin'];
 
 module.exports = DefaultEventPluginOrder;
-},{}],83:[function(require,module,exports){
+},{}],93:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -18422,7 +22234,6 @@ var eventTypes = {
 };
 
 var EnterLeaveEventPlugin = {
-
   eventTypes: eventTypes,
 
   /**
@@ -18489,11 +22300,11 @@ var EnterLeaveEventPlugin = {
 
     return [leave, enter];
   }
-
 };
 
 module.exports = EnterLeaveEventPlugin;
-},{"./EventPropagators":87,"./ReactDOMComponentTree":101,"./SyntheticMouseEvent":158}],84:[function(require,module,exports){
+},{"./EventPropagators":97,"./ReactDOMComponentTree":111,"./SyntheticMouseEvent":168}],94:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -18601,12 +22412,10 @@ function shouldPreventMouseEvent(name, type, props) {
  * @public
  */
 var EventPluginHub = {
-
   /**
    * Methods for injecting dependencies.
    */
   injection: {
-
     /**
      * @param {array} InjectedEventPluginOrder
      * @public
@@ -18617,7 +22426,6 @@ var EventPluginHub = {
      * @param {object} injectedNamesToPlugins Map from names to plugin modules.
      */
     injectEventPluginsByName: EventPluginRegistry.injectEventPluginsByName
-
   },
 
   /**
@@ -18628,7 +22436,7 @@ var EventPluginHub = {
    * @param {function} listener The callback to store.
    */
   putListener: function (inst, registrationName, listener) {
-    !(typeof listener === 'function') ? "production" !== 'production' ? invariant(false, 'Expected %s listener to be a function, instead got type %s', registrationName, typeof listener) : _prodInvariant('94', registrationName, typeof listener) : void 0;
+    !(typeof listener === 'function') ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Expected %s listener to be a function, instead got type %s', registrationName, typeof listener) : _prodInvariant('94', registrationName, typeof listener) : void 0;
 
     var key = getDictionaryKey(inst);
     var bankForRegistrationName = listenerBank[registrationName] || (listenerBank[registrationName] = {});
@@ -18752,7 +22560,7 @@ var EventPluginHub = {
     } else {
       forEachAccumulated(processingEventQueue, executeDispatchesAndReleaseTopLevel);
     }
-    !!eventQueue ? "production" !== 'production' ? invariant(false, 'processEventQueue(): Additional events were enqueued while processing an event queue. Support for this has not yet been implemented.') : _prodInvariant('95') : void 0;
+    !!eventQueue ? process.env.NODE_ENV !== 'production' ? invariant(false, 'processEventQueue(): Additional events were enqueued while processing an event queue. Support for this has not yet been implemented.') : _prodInvariant('95') : void 0;
     // This would be a good time to rethrow if any of the event handlers threw.
     ReactErrorUtils.rethrowCaughtError();
   },
@@ -18767,11 +22575,12 @@ var EventPluginHub = {
   __getListenerBank: function () {
     return listenerBank;
   }
-
 };
 
 module.exports = EventPluginHub;
-},{"./EventPluginRegistry":85,"./EventPluginUtils":86,"./ReactErrorUtils":121,"./accumulateInto":165,"./forEachAccumulated":173,"./reactProdInvariant":188,"fbjs/lib/invariant":58}],85:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./EventPluginRegistry":95,"./EventPluginUtils":96,"./ReactErrorUtils":131,"./accumulateInto":175,"./forEachAccumulated":183,"./reactProdInvariant":198,"_process":74,"fbjs/lib/invariant":64}],95:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -18812,15 +22621,15 @@ function recomputePluginOrdering() {
   for (var pluginName in namesToPlugins) {
     var pluginModule = namesToPlugins[pluginName];
     var pluginIndex = eventPluginOrder.indexOf(pluginName);
-    !(pluginIndex > -1) ? "production" !== 'production' ? invariant(false, 'EventPluginRegistry: Cannot inject event plugins that do not exist in the plugin ordering, `%s`.', pluginName) : _prodInvariant('96', pluginName) : void 0;
+    !(pluginIndex > -1) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'EventPluginRegistry: Cannot inject event plugins that do not exist in the plugin ordering, `%s`.', pluginName) : _prodInvariant('96', pluginName) : void 0;
     if (EventPluginRegistry.plugins[pluginIndex]) {
       continue;
     }
-    !pluginModule.extractEvents ? "production" !== 'production' ? invariant(false, 'EventPluginRegistry: Event plugins must implement an `extractEvents` method, but `%s` does not.', pluginName) : _prodInvariant('97', pluginName) : void 0;
+    !pluginModule.extractEvents ? process.env.NODE_ENV !== 'production' ? invariant(false, 'EventPluginRegistry: Event plugins must implement an `extractEvents` method, but `%s` does not.', pluginName) : _prodInvariant('97', pluginName) : void 0;
     EventPluginRegistry.plugins[pluginIndex] = pluginModule;
     var publishedEvents = pluginModule.eventTypes;
     for (var eventName in publishedEvents) {
-      !publishEventForPlugin(publishedEvents[eventName], pluginModule, eventName) ? "production" !== 'production' ? invariant(false, 'EventPluginRegistry: Failed to publish event `%s` for plugin `%s`.', eventName, pluginName) : _prodInvariant('98', eventName, pluginName) : void 0;
+      !publishEventForPlugin(publishedEvents[eventName], pluginModule, eventName) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'EventPluginRegistry: Failed to publish event `%s` for plugin `%s`.', eventName, pluginName) : _prodInvariant('98', eventName, pluginName) : void 0;
     }
   }
 }
@@ -18834,7 +22643,7 @@ function recomputePluginOrdering() {
  * @private
  */
 function publishEventForPlugin(dispatchConfig, pluginModule, eventName) {
-  !!EventPluginRegistry.eventNameDispatchConfigs.hasOwnProperty(eventName) ? "production" !== 'production' ? invariant(false, 'EventPluginHub: More than one plugin attempted to publish the same event name, `%s`.', eventName) : _prodInvariant('99', eventName) : void 0;
+  !!EventPluginRegistry.eventNameDispatchConfigs.hasOwnProperty(eventName) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'EventPluginHub: More than one plugin attempted to publish the same event name, `%s`.', eventName) : _prodInvariant('99', eventName) : void 0;
   EventPluginRegistry.eventNameDispatchConfigs[eventName] = dispatchConfig;
 
   var phasedRegistrationNames = dispatchConfig.phasedRegistrationNames;
@@ -18862,11 +22671,11 @@ function publishEventForPlugin(dispatchConfig, pluginModule, eventName) {
  * @private
  */
 function publishRegistrationName(registrationName, pluginModule, eventName) {
-  !!EventPluginRegistry.registrationNameModules[registrationName] ? "production" !== 'production' ? invariant(false, 'EventPluginHub: More than one plugin attempted to publish the same registration name, `%s`.', registrationName) : _prodInvariant('100', registrationName) : void 0;
+  !!EventPluginRegistry.registrationNameModules[registrationName] ? process.env.NODE_ENV !== 'production' ? invariant(false, 'EventPluginHub: More than one plugin attempted to publish the same registration name, `%s`.', registrationName) : _prodInvariant('100', registrationName) : void 0;
   EventPluginRegistry.registrationNameModules[registrationName] = pluginModule;
   EventPluginRegistry.registrationNameDependencies[registrationName] = pluginModule.eventTypes[eventName].dependencies;
 
-  if ("production" !== 'production') {
+  if (process.env.NODE_ENV !== 'production') {
     var lowerCasedName = registrationName.toLowerCase();
     EventPluginRegistry.possibleRegistrationNames[lowerCasedName] = registrationName;
 
@@ -18882,7 +22691,6 @@ function publishRegistrationName(registrationName, pluginModule, eventName) {
  * @see {EventPluginHub}
  */
 var EventPluginRegistry = {
-
   /**
    * Ordered list of injected plugins.
    */
@@ -18909,7 +22717,7 @@ var EventPluginRegistry = {
    * only in __DEV__.
    * @type {Object}
    */
-  possibleRegistrationNames: "production" !== 'production' ? {} : null,
+  possibleRegistrationNames: process.env.NODE_ENV !== 'production' ? {} : null,
   // Trust the developer to only use possibleRegistrationNames in __DEV__
 
   /**
@@ -18922,7 +22730,7 @@ var EventPluginRegistry = {
    * @see {EventPluginHub.injection.injectEventPluginOrder}
    */
   injectEventPluginOrder: function (injectedEventPluginOrder) {
-    !!eventPluginOrder ? "production" !== 'production' ? invariant(false, 'EventPluginRegistry: Cannot inject event plugin ordering more than once. You are likely trying to load more than one copy of React.') : _prodInvariant('101') : void 0;
+    !!eventPluginOrder ? process.env.NODE_ENV !== 'production' ? invariant(false, 'EventPluginRegistry: Cannot inject event plugin ordering more than once. You are likely trying to load more than one copy of React.') : _prodInvariant('101') : void 0;
     // Clone the ordering so it cannot be dynamically mutated.
     eventPluginOrder = Array.prototype.slice.call(injectedEventPluginOrder);
     recomputePluginOrdering();
@@ -18946,7 +22754,7 @@ var EventPluginRegistry = {
       }
       var pluginModule = injectedNamesToPlugins[pluginName];
       if (!namesToPlugins.hasOwnProperty(pluginName) || namesToPlugins[pluginName] !== pluginModule) {
-        !!namesToPlugins[pluginName] ? "production" !== 'production' ? invariant(false, 'EventPluginRegistry: Cannot inject two different event plugins using the same name, `%s`.', pluginName) : _prodInvariant('102', pluginName) : void 0;
+        !!namesToPlugins[pluginName] ? process.env.NODE_ENV !== 'production' ? invariant(false, 'EventPluginRegistry: Cannot inject two different event plugins using the same name, `%s`.', pluginName) : _prodInvariant('102', pluginName) : void 0;
         namesToPlugins[pluginName] = pluginModule;
         isOrderingDirty = true;
       }
@@ -19013,7 +22821,7 @@ var EventPluginRegistry = {
       }
     }
 
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       var possibleRegistrationNames = EventPluginRegistry.possibleRegistrationNames;
       for (var lowerCasedName in possibleRegistrationNames) {
         if (possibleRegistrationNames.hasOwnProperty(lowerCasedName)) {
@@ -19022,11 +22830,12 @@ var EventPluginRegistry = {
       }
     }
   }
-
 };
 
 module.exports = EventPluginRegistry;
-},{"./reactProdInvariant":188,"fbjs/lib/invariant":58}],86:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./reactProdInvariant":198,"_process":74,"fbjs/lib/invariant":64}],96:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -19059,14 +22868,14 @@ var TreeTraversal;
 var injection = {
   injectComponentTree: function (Injected) {
     ComponentTree = Injected;
-    if ("production" !== 'production') {
-      "production" !== 'production' ? warning(Injected && Injected.getNodeFromInstance && Injected.getInstanceFromNode, 'EventPluginUtils.injection.injectComponentTree(...): Injected ' + 'module is missing getNodeFromInstance or getInstanceFromNode.') : void 0;
+    if (process.env.NODE_ENV !== 'production') {
+      process.env.NODE_ENV !== 'production' ? warning(Injected && Injected.getNodeFromInstance && Injected.getInstanceFromNode, 'EventPluginUtils.injection.injectComponentTree(...): Injected ' + 'module is missing getNodeFromInstance or getInstanceFromNode.') : void 0;
     }
   },
   injectTreeTraversal: function (Injected) {
     TreeTraversal = Injected;
-    if ("production" !== 'production') {
-      "production" !== 'production' ? warning(Injected && Injected.isAncestor && Injected.getLowestCommonAncestor, 'EventPluginUtils.injection.injectTreeTraversal(...): Injected ' + 'module is missing isAncestor or getLowestCommonAncestor.') : void 0;
+    if (process.env.NODE_ENV !== 'production') {
+      process.env.NODE_ENV !== 'production' ? warning(Injected && Injected.isAncestor && Injected.getLowestCommonAncestor, 'EventPluginUtils.injection.injectTreeTraversal(...): Injected ' + 'module is missing isAncestor or getLowestCommonAncestor.') : void 0;
     }
   }
 };
@@ -19083,7 +22892,7 @@ function isStartish(topLevelType) {
 }
 
 var validateEventDispatches;
-if ("production" !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
   validateEventDispatches = function (event) {
     var dispatchListeners = event._dispatchListeners;
     var dispatchInstances = event._dispatchInstances;
@@ -19094,7 +22903,7 @@ if ("production" !== 'production') {
     var instancesIsArr = Array.isArray(dispatchInstances);
     var instancesLen = instancesIsArr ? dispatchInstances.length : dispatchInstances ? 1 : 0;
 
-    "production" !== 'production' ? warning(instancesIsArr === listenersIsArr && instancesLen === listenersLen, 'EventPluginUtils: Invalid `event`.') : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(instancesIsArr === listenersIsArr && instancesLen === listenersLen, 'EventPluginUtils: Invalid `event`.') : void 0;
   };
 }
 
@@ -19122,7 +22931,7 @@ function executeDispatch(event, simulated, listener, inst) {
 function executeDispatchesInOrder(event, simulated) {
   var dispatchListeners = event._dispatchListeners;
   var dispatchInstances = event._dispatchInstances;
-  if ("production" !== 'production') {
+  if (process.env.NODE_ENV !== 'production') {
     validateEventDispatches(event);
   }
   if (Array.isArray(dispatchListeners)) {
@@ -19150,7 +22959,7 @@ function executeDispatchesInOrder(event, simulated) {
 function executeDispatchesInOrderStopAtTrueImpl(event) {
   var dispatchListeners = event._dispatchListeners;
   var dispatchInstances = event._dispatchInstances;
-  if ("production" !== 'production') {
+  if (process.env.NODE_ENV !== 'production') {
     validateEventDispatches(event);
   }
   if (Array.isArray(dispatchListeners)) {
@@ -19191,12 +23000,12 @@ function executeDispatchesInOrderStopAtTrue(event) {
  * @return {*} The return value of executing the single dispatch.
  */
 function executeDirectDispatch(event) {
-  if ("production" !== 'production') {
+  if (process.env.NODE_ENV !== 'production') {
     validateEventDispatches(event);
   }
   var dispatchListener = event._dispatchListeners;
   var dispatchInstance = event._dispatchInstances;
-  !!Array.isArray(dispatchListener) ? "production" !== 'production' ? invariant(false, 'executeDirectDispatch(...): Invalid `event`.') : _prodInvariant('103') : void 0;
+  !!Array.isArray(dispatchListener) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'executeDirectDispatch(...): Invalid `event`.') : _prodInvariant('103') : void 0;
   event.currentTarget = dispatchListener ? EventPluginUtils.getNodeFromInstance(dispatchInstance) : null;
   var res = dispatchListener ? dispatchListener(event) : null;
   event.currentTarget = null;
@@ -19252,7 +23061,9 @@ var EventPluginUtils = {
 };
 
 module.exports = EventPluginUtils;
-},{"./ReactErrorUtils":121,"./reactProdInvariant":188,"fbjs/lib/invariant":58,"fbjs/lib/warning":65}],87:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./ReactErrorUtils":131,"./reactProdInvariant":198,"_process":74,"fbjs/lib/invariant":64,"fbjs/lib/warning":71}],97:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -19290,8 +23101,8 @@ function listenerAtPhase(inst, event, propagationPhase) {
  * "dispatch" object that pairs the event with the listener.
  */
 function accumulateDirectionalDispatches(inst, phase, event) {
-  if ("production" !== 'production') {
-    "production" !== 'production' ? warning(inst, 'Dispatching inst must not be null') : void 0;
+  if (process.env.NODE_ENV !== 'production') {
+    process.env.NODE_ENV !== 'production' ? warning(inst, 'Dispatching inst must not be null') : void 0;
   }
   var listener = listenerAtPhase(inst, event, phase);
   if (listener) {
@@ -19386,7 +23197,8 @@ var EventPropagators = {
 };
 
 module.exports = EventPropagators;
-},{"./EventPluginHub":84,"./EventPluginUtils":86,"./accumulateInto":165,"./forEachAccumulated":173,"fbjs/lib/warning":65}],88:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./EventPluginHub":94,"./EventPluginUtils":96,"./accumulateInto":175,"./forEachAccumulated":183,"_process":74,"fbjs/lib/warning":71}],98:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -19481,7 +23293,7 @@ _assign(FallbackCompositionState.prototype, {
 PooledClass.addPoolingTo(FallbackCompositionState);
 
 module.exports = FallbackCompositionState;
-},{"./PooledClass":92,"./getTextContentAccessor":182,"object-assign":67}],89:[function(require,module,exports){
+},{"./PooledClass":102,"./getTextContentAccessor":191,"object-assign":73}],99:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -19689,11 +23501,35 @@ var HTMLDOMPropertyConfig = {
     htmlFor: 'for',
     httpEquiv: 'http-equiv'
   },
-  DOMPropertyNames: {}
+  DOMPropertyNames: {},
+  DOMMutationMethods: {
+    value: function (node, value) {
+      if (value == null) {
+        return node.removeAttribute('value');
+      }
+
+      // Number inputs get special treatment due to some edge cases in
+      // Chrome. Let everything else assign the value attribute as normal.
+      // https://github.com/facebook/react/issues/7253#issuecomment-236074326
+      if (node.type !== 'number' || node.hasAttribute('value') === false) {
+        node.setAttribute('value', '' + value);
+      } else if (node.validity && !node.validity.badInput && node.ownerDocument.activeElement !== node) {
+        // Don't assign an attribute if validation reports bad
+        // input. Chrome will clear the value. Additionally, don't
+        // operate on inputs that have focus, otherwise Chrome might
+        // strip off trailing decimal places and cause the user's
+        // cursor position to jump to the beginning of the input.
+        //
+        // In ReactDOMInput, we have an onBlur event that will trigger
+        // this function again when focus is lost.
+        node.setAttribute('value', '' + value);
+      }
+    }
+  }
 };
 
 module.exports = HTMLDOMPropertyConfig;
-},{"./DOMProperty":79}],90:[function(require,module,exports){
+},{"./DOMProperty":89}],100:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -19752,7 +23588,8 @@ var KeyEscapeUtils = {
 };
 
 module.exports = KeyEscapeUtils;
-},{}],91:[function(require,module,exports){
+},{}],101:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -19767,33 +23604,36 @@ module.exports = KeyEscapeUtils;
 
 var _prodInvariant = require('./reactProdInvariant');
 
-var React = require('react/lib/React');
 var ReactPropTypesSecret = require('./ReactPropTypesSecret');
+var propTypesFactory = require('prop-types/factory');
+
+var React = require('react/lib/React');
+var PropTypes = propTypesFactory(React.isValidElement);
 
 var invariant = require('fbjs/lib/invariant');
 var warning = require('fbjs/lib/warning');
 
 var hasReadOnlyValue = {
-  'button': true,
-  'checkbox': true,
-  'image': true,
-  'hidden': true,
-  'radio': true,
-  'reset': true,
-  'submit': true
+  button: true,
+  checkbox: true,
+  image: true,
+  hidden: true,
+  radio: true,
+  reset: true,
+  submit: true
 };
 
 function _assertSingleLink(inputProps) {
-  !(inputProps.checkedLink == null || inputProps.valueLink == null) ? "production" !== 'production' ? invariant(false, 'Cannot provide a checkedLink and a valueLink. If you want to use checkedLink, you probably don\'t want to use valueLink and vice versa.') : _prodInvariant('87') : void 0;
+  !(inputProps.checkedLink == null || inputProps.valueLink == null) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Cannot provide a checkedLink and a valueLink. If you want to use checkedLink, you probably don\'t want to use valueLink and vice versa.') : _prodInvariant('87') : void 0;
 }
 function _assertValueLink(inputProps) {
   _assertSingleLink(inputProps);
-  !(inputProps.value == null && inputProps.onChange == null) ? "production" !== 'production' ? invariant(false, 'Cannot provide a valueLink and a value or onChange event. If you want to use value or onChange, you probably don\'t want to use valueLink.') : _prodInvariant('88') : void 0;
+  !(inputProps.value == null && inputProps.onChange == null) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Cannot provide a valueLink and a value or onChange event. If you want to use value or onChange, you probably don\'t want to use valueLink.') : _prodInvariant('88') : void 0;
 }
 
 function _assertCheckedLink(inputProps) {
   _assertSingleLink(inputProps);
-  !(inputProps.checked == null && inputProps.onChange == null) ? "production" !== 'production' ? invariant(false, 'Cannot provide a checkedLink and a checked property or onChange event. If you want to use checked or onChange, you probably don\'t want to use checkedLink') : _prodInvariant('89') : void 0;
+  !(inputProps.checked == null && inputProps.onChange == null) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Cannot provide a checkedLink and a checked property or onChange event. If you want to use checked or onChange, you probably don\'t want to use checkedLink') : _prodInvariant('89') : void 0;
 }
 
 var propTypes = {
@@ -19809,7 +23649,7 @@ var propTypes = {
     }
     return new Error('You provided a `checked` prop to a form field without an ' + '`onChange` handler. This will render a read-only field. If ' + 'the field should be mutable use `defaultChecked`. Otherwise, ' + 'set either `onChange` or `readOnly`.');
   },
-  onChange: React.PropTypes.func
+  onChange: PropTypes.func
 };
 
 var loggedTypeFailures = {};
@@ -19839,7 +23679,7 @@ var LinkedValueUtils = {
         loggedTypeFailures[error.message] = true;
 
         var addendum = getDeclarationErrorAddendum(owner);
-        "production" !== 'production' ? warning(false, 'Failed form propType: %s%s', error.message, addendum) : void 0;
+        process.env.NODE_ENV !== 'production' ? warning(false, 'Failed form propType: %s%s', error.message, addendum) : void 0;
       }
     }
   },
@@ -19887,7 +23727,9 @@ var LinkedValueUtils = {
 };
 
 module.exports = LinkedValueUtils;
-},{"./ReactPropTypesSecret":138,"./reactProdInvariant":188,"fbjs/lib/invariant":58,"fbjs/lib/warning":65,"react/lib/React":197}],92:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./ReactPropTypesSecret":148,"./reactProdInvariant":198,"_process":74,"fbjs/lib/invariant":64,"fbjs/lib/warning":71,"prop-types/factory":76,"react/lib/React":207}],102:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -19956,20 +23798,9 @@ var fourArgumentPooler = function (a1, a2, a3, a4) {
   }
 };
 
-var fiveArgumentPooler = function (a1, a2, a3, a4, a5) {
-  var Klass = this;
-  if (Klass.instancePool.length) {
-    var instance = Klass.instancePool.pop();
-    Klass.call(instance, a1, a2, a3, a4, a5);
-    return instance;
-  } else {
-    return new Klass(a1, a2, a3, a4, a5);
-  }
-};
-
 var standardReleaser = function (instance) {
   var Klass = this;
-  !(instance instanceof Klass) ? "production" !== 'production' ? invariant(false, 'Trying to release an instance into a pool of a different type.') : _prodInvariant('25') : void 0;
+  !(instance instanceof Klass) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Trying to release an instance into a pool of a different type.') : _prodInvariant('25') : void 0;
   instance.destructor();
   if (Klass.instancePool.length < Klass.poolSize) {
     Klass.instancePool.push(instance);
@@ -20006,12 +23837,12 @@ var PooledClass = {
   oneArgumentPooler: oneArgumentPooler,
   twoArgumentPooler: twoArgumentPooler,
   threeArgumentPooler: threeArgumentPooler,
-  fourArgumentPooler: fourArgumentPooler,
-  fiveArgumentPooler: fiveArgumentPooler
+  fourArgumentPooler: fourArgumentPooler
 };
 
 module.exports = PooledClass;
-},{"./reactProdInvariant":188,"fbjs/lib/invariant":58}],93:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./reactProdInvariant":198,"_process":74,"fbjs/lib/invariant":64}],103:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -20189,7 +24020,6 @@ function getListeningForDocument(mountAt) {
  * @internal
  */
 var ReactBrowserEventEmitter = _assign({}, ReactEventEmitterMixin, {
-
   /**
    * Injectable event backend
    */
@@ -20263,14 +24093,12 @@ var ReactBrowserEventEmitter = _assign({}, ReactEventEmitterMixin, {
             ReactBrowserEventEmitter.ReactEventListener.trapBubbledEvent('topWheel', 'DOMMouseScroll', mountAt);
           }
         } else if (dependency === 'topScroll') {
-
           if (isEventSupported('scroll', true)) {
             ReactBrowserEventEmitter.ReactEventListener.trapCapturedEvent('topScroll', 'scroll', mountAt);
           } else {
             ReactBrowserEventEmitter.ReactEventListener.trapBubbledEvent('topScroll', 'scroll', ReactBrowserEventEmitter.ReactEventListener.WINDOW_HANDLE);
           }
         } else if (dependency === 'topFocus' || dependency === 'topBlur') {
-
           if (isEventSupported('focus', true)) {
             ReactBrowserEventEmitter.ReactEventListener.trapCapturedEvent('topFocus', 'focus', mountAt);
             ReactBrowserEventEmitter.ReactEventListener.trapCapturedEvent('topBlur', 'blur', mountAt);
@@ -20335,11 +24163,10 @@ var ReactBrowserEventEmitter = _assign({}, ReactEventEmitterMixin, {
       isMonitoringScrollValue = true;
     }
   }
-
 });
 
 module.exports = ReactBrowserEventEmitter;
-},{"./EventPluginRegistry":85,"./ReactEventEmitterMixin":122,"./ViewportMetrics":164,"./getVendorPrefixedEventName":183,"./isEventSupported":185,"object-assign":67}],94:[function(require,module,exports){
+},{"./EventPluginRegistry":95,"./ReactEventEmitterMixin":132,"./ViewportMetrics":174,"./getVendorPrefixedEventName":192,"./isEventSupported":195,"object-assign":73}],104:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2014-present, Facebook, Inc.
@@ -20363,7 +24190,7 @@ var warning = require('fbjs/lib/warning');
 
 var ReactComponentTreeHook;
 
-if (typeof process !== 'undefined' && process.env && "production" === 'test') {
+if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'test') {
   // Temporary hack.
   // Inline requires don't work well with Jest:
   // https://github.com/facebook/react/issues/7240
@@ -20375,12 +24202,12 @@ if (typeof process !== 'undefined' && process.env && "production" === 'test') {
 function instantiateChild(childInstances, child, name, selfDebugID) {
   // We found a component instance.
   var keyUnique = childInstances[name] === undefined;
-  if ("production" !== 'production') {
+  if (process.env.NODE_ENV !== 'production') {
     if (!ReactComponentTreeHook) {
       ReactComponentTreeHook = require('react/lib/ReactComponentTreeHook');
     }
     if (!keyUnique) {
-      "production" !== 'production' ? warning(false, 'flattenChildren(...): Encountered two children with the same key, ' + '`%s`. Child keys must be unique; when two children share a key, only ' + 'the first child will be used.%s', KeyEscapeUtils.unescape(name), ReactComponentTreeHook.getStackAddendumByID(selfDebugID)) : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(false, 'flattenChildren(...): Encountered two children with the same key, ' + '`%s`. Child keys must be unique; when two children share a key, only ' + 'the first child will be used.%s', KeyEscapeUtils.unescape(name), ReactComponentTreeHook.getStackAddendumByID(selfDebugID)) : void 0;
     }
   }
   if (child != null && keyUnique) {
@@ -20402,14 +24229,14 @@ var ReactChildReconciler = {
    * @return {?object} A set of child instances.
    * @internal
    */
-  instantiateChildren: function (nestedChildNodes, transaction, context, selfDebugID // 0 in production and for roots
-  ) {
+  instantiateChildren: function (nestedChildNodes, transaction, context, selfDebugID) // 0 in production and for roots
+  {
     if (nestedChildNodes == null) {
       return null;
     }
     var childInstances = {};
 
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       traverseAllChildren(nestedChildNodes, function (childInsts, child, name) {
         return instantiateChild(childInsts, child, name, selfDebugID);
       }, childInstances);
@@ -20429,8 +24256,8 @@ var ReactChildReconciler = {
    * @return {?object} A new set of child instances.
    * @internal
    */
-  updateChildren: function (prevChildren, nextChildren, mountImages, removedNodes, transaction, hostParent, hostContainerInfo, context, selfDebugID // 0 in production and for roots
-  ) {
+  updateChildren: function (prevChildren, nextChildren, mountImages, removedNodes, transaction, hostParent, hostContainerInfo, context, selfDebugID) // 0 in production and for roots
+  {
     // We currently don't have a way to track moves here but if we use iterators
     // instead of for..in we can zip the iterators and check if an item has
     // moved.
@@ -20490,12 +24317,11 @@ var ReactChildReconciler = {
       }
     }
   }
-
 };
 
 module.exports = ReactChildReconciler;
 }).call(this,require('_process'))
-},{"./KeyEscapeUtils":90,"./ReactReconciler":140,"./instantiateReactComponent":184,"./shouldUpdateReactComponent":192,"./traverseAllChildren":193,"_process":68,"fbjs/lib/warning":65,"react/lib/ReactComponentTreeHook":201}],95:[function(require,module,exports){
+},{"./KeyEscapeUtils":100,"./ReactReconciler":150,"./instantiateReactComponent":194,"./shouldUpdateReactComponent":202,"./traverseAllChildren":203,"_process":74,"fbjs/lib/warning":71,"react/lib/ReactComponentTreeHook":210}],105:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -20517,15 +24343,14 @@ var ReactDOMIDOperations = require('./ReactDOMIDOperations');
  * need for this injection.
  */
 var ReactComponentBrowserEnvironment = {
-
   processChildrenUpdates: ReactDOMIDOperations.dangerouslyProcessChildrenUpdates,
 
   replaceNodeWithMarkup: DOMChildrenOperations.dangerouslyReplaceNodeWithMarkup
-
 };
 
 module.exports = ReactComponentBrowserEnvironment;
-},{"./DOMChildrenOperations":76,"./ReactDOMIDOperations":105}],96:[function(require,module,exports){
+},{"./DOMChildrenOperations":86,"./ReactDOMIDOperations":115}],106:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2014-present, Facebook, Inc.
  * All rights reserved.
@@ -20546,7 +24371,6 @@ var invariant = require('fbjs/lib/invariant');
 var injected = false;
 
 var ReactComponentEnvironment = {
-
   /**
    * Optionally injectable hook for swapping out mount images in the middle of
    * the tree.
@@ -20561,17 +24385,18 @@ var ReactComponentEnvironment = {
 
   injection: {
     injectEnvironment: function (environment) {
-      !!injected ? "production" !== 'production' ? invariant(false, 'ReactCompositeComponent: injectEnvironment() can only be called once.') : _prodInvariant('104') : void 0;
+      !!injected ? process.env.NODE_ENV !== 'production' ? invariant(false, 'ReactCompositeComponent: injectEnvironment() can only be called once.') : _prodInvariant('104') : void 0;
       ReactComponentEnvironment.replaceNodeWithMarkup = environment.replaceNodeWithMarkup;
       ReactComponentEnvironment.processChildrenUpdates = environment.processChildrenUpdates;
       injected = true;
     }
   }
-
 };
 
 module.exports = ReactComponentEnvironment;
-},{"./reactProdInvariant":188,"fbjs/lib/invariant":58}],97:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./reactProdInvariant":198,"_process":74,"fbjs/lib/invariant":64}],107:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -20596,7 +24421,7 @@ var ReactInstrumentation = require('./ReactInstrumentation');
 var ReactNodeTypes = require('./ReactNodeTypes');
 var ReactReconciler = require('./ReactReconciler');
 
-if ("production" !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
   var checkReactTypeSpec = require('./checkReactTypeSpec');
 }
 
@@ -20621,9 +24446,9 @@ StatelessComponent.prototype.render = function () {
 };
 
 function warnIfInvalidElement(Component, element) {
-  if ("production" !== 'production') {
-    "production" !== 'production' ? warning(element === null || element === false || React.isValidElement(element), '%s(...): A valid React element (or null) must be returned. You may have ' + 'returned undefined, an array or some other invalid object.', Component.displayName || Component.name || 'Component') : void 0;
-    "production" !== 'production' ? warning(!Component.childContextTypes, '%s(...): childContextTypes cannot be defined on a functional component.', Component.displayName || Component.name || 'Component') : void 0;
+  if (process.env.NODE_ENV !== 'production') {
+    process.env.NODE_ENV !== 'production' ? warning(element === null || element === false || React.isValidElement(element), '%s(...): A valid React element (or null) must be returned. You may have ' + 'returned undefined, an array or some other invalid object.', Component.displayName || Component.name || 'Component') : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(!Component.childContextTypes, '%s(...): childContextTypes cannot be defined on a functional component.', Component.displayName || Component.name || 'Component') : void 0;
   }
 }
 
@@ -20691,7 +24516,6 @@ var nextMountID = 1;
  * @lends {ReactCompositeComponent.prototype}
  */
 var ReactCompositeComponent = {
-
   /**
    * Base constructor for all composite component.
    *
@@ -20726,7 +24550,7 @@ var ReactCompositeComponent = {
     // ComponentWillUnmount shall only be called once
     this._calledComponentWillUnmount = false;
 
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       this._warnedAboutRefsInRender = false;
     }
   },
@@ -20766,7 +24590,7 @@ var ReactCompositeComponent = {
     if (!doConstruct && (inst == null || inst.render == null)) {
       renderedElement = inst;
       warnIfInvalidElement(Component, renderedElement);
-      !(inst === null || inst === false || React.isValidElement(inst)) ? "production" !== 'production' ? invariant(false, '%s(...): A valid React element (or null) must be returned. You may have returned undefined, an array or some other invalid object.', Component.displayName || Component.name || 'Component') : _prodInvariant('105', Component.displayName || Component.name || 'Component') : void 0;
+      !(inst === null || inst === false || React.isValidElement(inst)) ? process.env.NODE_ENV !== 'production' ? invariant(false, '%s(...): A valid React element (or null) must be returned. You may have returned undefined, an array or some other invalid object.', Component.displayName || Component.name || 'Component') : _prodInvariant('105', Component.displayName || Component.name || 'Component') : void 0;
       inst = new StatelessComponent(Component);
       this._compositeType = CompositeTypes.StatelessFunctional;
     } else {
@@ -20777,17 +24601,17 @@ var ReactCompositeComponent = {
       }
     }
 
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       // This will throw later in _renderValidatedComponent, but add an early
       // warning now to help debugging
       if (inst.render == null) {
-        "production" !== 'production' ? warning(false, '%s(...): No `render` method found on the returned component ' + 'instance: you may have forgotten to define `render`.', Component.displayName || Component.name || 'Component') : void 0;
+        process.env.NODE_ENV !== 'production' ? warning(false, '%s(...): No `render` method found on the returned component ' + 'instance: you may have forgotten to define `render`.', Component.displayName || Component.name || 'Component') : void 0;
       }
 
       var propsMutated = inst.props !== publicProps;
       var componentName = Component.displayName || Component.name || 'Component';
 
-      "production" !== 'production' ? warning(inst.props === undefined || !propsMutated, '%s(...): When calling super() in `%s`, make sure to pass ' + 'up the same props that your component\'s constructor was passed.', componentName, componentName) : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(inst.props === undefined || !propsMutated, '%s(...): When calling super() in `%s`, make sure to pass ' + "up the same props that your component's constructor was passed.", componentName, componentName) : void 0;
     }
 
     // These should be set up in the constructor, but as a convenience for
@@ -20802,24 +24626,24 @@ var ReactCompositeComponent = {
     // Store a reference from the instance back to the internal representation
     ReactInstanceMap.set(inst, this);
 
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       // Since plain JS classes are defined without any special initialization
       // logic, we can not catch common errors early. Therefore, we have to
       // catch them here, at initialization time, instead.
-      "production" !== 'production' ? warning(!inst.getInitialState || inst.getInitialState.isReactClassApproved, 'getInitialState was defined on %s, a plain JavaScript class. ' + 'This is only supported for classes created using React.createClass. ' + 'Did you mean to define a state property instead?', this.getName() || 'a component') : void 0;
-      "production" !== 'production' ? warning(!inst.getDefaultProps || inst.getDefaultProps.isReactClassApproved, 'getDefaultProps was defined on %s, a plain JavaScript class. ' + 'This is only supported for classes created using React.createClass. ' + 'Use a static property to define defaultProps instead.', this.getName() || 'a component') : void 0;
-      "production" !== 'production' ? warning(!inst.propTypes, 'propTypes was defined as an instance property on %s. Use a static ' + 'property to define propTypes instead.', this.getName() || 'a component') : void 0;
-      "production" !== 'production' ? warning(!inst.contextTypes, 'contextTypes was defined as an instance property on %s. Use a ' + 'static property to define contextTypes instead.', this.getName() || 'a component') : void 0;
-      "production" !== 'production' ? warning(typeof inst.componentShouldUpdate !== 'function', '%s has a method called ' + 'componentShouldUpdate(). Did you mean shouldComponentUpdate()? ' + 'The name is phrased as a question because the function is ' + 'expected to return a value.', this.getName() || 'A component') : void 0;
-      "production" !== 'production' ? warning(typeof inst.componentDidUnmount !== 'function', '%s has a method called ' + 'componentDidUnmount(). But there is no such lifecycle method. ' + 'Did you mean componentWillUnmount()?', this.getName() || 'A component') : void 0;
-      "production" !== 'production' ? warning(typeof inst.componentWillRecieveProps !== 'function', '%s has a method called ' + 'componentWillRecieveProps(). Did you mean componentWillReceiveProps()?', this.getName() || 'A component') : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(!inst.getInitialState || inst.getInitialState.isReactClassApproved || inst.state, 'getInitialState was defined on %s, a plain JavaScript class. ' + 'This is only supported for classes created using React.createClass. ' + 'Did you mean to define a state property instead?', this.getName() || 'a component') : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(!inst.getDefaultProps || inst.getDefaultProps.isReactClassApproved, 'getDefaultProps was defined on %s, a plain JavaScript class. ' + 'This is only supported for classes created using React.createClass. ' + 'Use a static property to define defaultProps instead.', this.getName() || 'a component') : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(!inst.propTypes, 'propTypes was defined as an instance property on %s. Use a static ' + 'property to define propTypes instead.', this.getName() || 'a component') : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(!inst.contextTypes, 'contextTypes was defined as an instance property on %s. Use a ' + 'static property to define contextTypes instead.', this.getName() || 'a component') : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(typeof inst.componentShouldUpdate !== 'function', '%s has a method called ' + 'componentShouldUpdate(). Did you mean shouldComponentUpdate()? ' + 'The name is phrased as a question because the function is ' + 'expected to return a value.', this.getName() || 'A component') : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(typeof inst.componentDidUnmount !== 'function', '%s has a method called ' + 'componentDidUnmount(). But there is no such lifecycle method. ' + 'Did you mean componentWillUnmount()?', this.getName() || 'A component') : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(typeof inst.componentWillRecieveProps !== 'function', '%s has a method called ' + 'componentWillRecieveProps(). Did you mean componentWillReceiveProps()?', this.getName() || 'A component') : void 0;
     }
 
     var initialState = inst.state;
     if (initialState === undefined) {
       inst.state = initialState = null;
     }
-    !(typeof initialState === 'object' && !Array.isArray(initialState)) ? "production" !== 'production' ? invariant(false, '%s.state: must be set to an object or null', this.getName() || 'ReactCompositeComponent') : _prodInvariant('106', this.getName() || 'ReactCompositeComponent') : void 0;
+    !(typeof initialState === 'object' && !Array.isArray(initialState)) ? process.env.NODE_ENV !== 'production' ? invariant(false, '%s.state: must be set to an object or null', this.getName() || 'ReactCompositeComponent') : _prodInvariant('106', this.getName() || 'ReactCompositeComponent') : void 0;
 
     this._pendingStateQueue = null;
     this._pendingReplaceState = false;
@@ -20833,7 +24657,7 @@ var ReactCompositeComponent = {
     }
 
     if (inst.componentDidMount) {
-      if ("production" !== 'production') {
+      if (process.env.NODE_ENV !== 'production') {
         transaction.getReactMountReady().enqueue(function () {
           measureLifeCyclePerf(function () {
             return inst.componentDidMount();
@@ -20848,7 +24672,7 @@ var ReactCompositeComponent = {
   },
 
   _constructComponent: function (doConstruct, publicProps, publicContext, updateQueue) {
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       ReactCurrentOwner.current = this;
       try {
         return this._constructComponentWithoutOwner(doConstruct, publicProps, publicContext, updateQueue);
@@ -20864,7 +24688,7 @@ var ReactCompositeComponent = {
     var Component = this._currentElement.type;
 
     if (doConstruct) {
-      if ("production" !== 'production') {
+      if (process.env.NODE_ENV !== 'production') {
         return measureLifeCyclePerf(function () {
           return new Component(publicProps, publicContext, updateQueue);
         }, this._debugID, 'ctor');
@@ -20875,7 +24699,7 @@ var ReactCompositeComponent = {
 
     // This can still be an instance in case of factory components
     // but we'll count this as time spent rendering as the more common case.
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       return measureLifeCyclePerf(function () {
         return Component(publicProps, publicContext, updateQueue);
       }, this._debugID, 'render');
@@ -20912,12 +24736,12 @@ var ReactCompositeComponent = {
     var inst = this._instance;
 
     var debugID = 0;
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       debugID = this._debugID;
     }
 
     if (inst.componentWillMount) {
-      if ("production" !== 'production') {
+      if (process.env.NODE_ENV !== 'production') {
         measureLifeCyclePerf(function () {
           return inst.componentWillMount();
         }, debugID, 'componentWillMount');
@@ -20944,7 +24768,7 @@ var ReactCompositeComponent = {
 
     var markup = ReactReconciler.mountComponent(child, transaction, hostParent, hostContainerInfo, this._processChildContext(context), debugID);
 
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       if (debugID !== 0) {
         var childDebugIDs = child._debugID !== 0 ? [child._debugID] : [];
         ReactInstrumentation.debugTool.onSetChildren(debugID, childDebugIDs);
@@ -20978,7 +24802,7 @@ var ReactCompositeComponent = {
         var name = this.getName() + '.componentWillUnmount()';
         ReactErrorUtils.invokeGuardedCallback(name, inst.componentWillUnmount.bind(inst));
       } else {
-        if ("production" !== 'production') {
+        if (process.env.NODE_ENV !== 'production') {
           measureLifeCyclePerf(function () {
             return inst.componentWillUnmount();
           }, this._debugID, 'componentWillUnmount');
@@ -21053,7 +24877,7 @@ var ReactCompositeComponent = {
    */
   _processContext: function (context) {
     var maskedContext = this._maskContext(context);
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       var Component = this._currentElement.type;
       if (Component.contextTypes) {
         this._checkContextTypes(Component.contextTypes, maskedContext, 'context');
@@ -21073,7 +24897,7 @@ var ReactCompositeComponent = {
     var childContext;
 
     if (inst.getChildContext) {
-      if ("production" !== 'production') {
+      if (process.env.NODE_ENV !== 'production') {
         ReactInstrumentation.debugTool.onBeginProcessingChildContext();
         try {
           childContext = inst.getChildContext();
@@ -21086,12 +24910,12 @@ var ReactCompositeComponent = {
     }
 
     if (childContext) {
-      !(typeof Component.childContextTypes === 'object') ? "production" !== 'production' ? invariant(false, '%s.getChildContext(): childContextTypes must be defined in order to use getChildContext().', this.getName() || 'ReactCompositeComponent') : _prodInvariant('107', this.getName() || 'ReactCompositeComponent') : void 0;
-      if ("production" !== 'production') {
-        this._checkContextTypes(Component.childContextTypes, childContext, 'childContext');
+      !(typeof Component.childContextTypes === 'object') ? process.env.NODE_ENV !== 'production' ? invariant(false, '%s.getChildContext(): childContextTypes must be defined in order to use getChildContext().', this.getName() || 'ReactCompositeComponent') : _prodInvariant('107', this.getName() || 'ReactCompositeComponent') : void 0;
+      if (process.env.NODE_ENV !== 'production') {
+        this._checkContextTypes(Component.childContextTypes, childContext, 'child context');
       }
       for (var name in childContext) {
-        !(name in Component.childContextTypes) ? "production" !== 'production' ? invariant(false, '%s.getChildContext(): key "%s" is not defined in childContextTypes.', this.getName() || 'ReactCompositeComponent', name) : _prodInvariant('108', this.getName() || 'ReactCompositeComponent', name) : void 0;
+        !(name in Component.childContextTypes) ? process.env.NODE_ENV !== 'production' ? invariant(false, '%s.getChildContext(): key "%s" is not defined in childContextTypes.', this.getName() || 'ReactCompositeComponent', name) : _prodInvariant('108', this.getName() || 'ReactCompositeComponent', name) : void 0;
       }
       return _assign({}, currentContext, childContext);
     }
@@ -21107,7 +24931,7 @@ var ReactCompositeComponent = {
    * @private
    */
   _checkContextTypes: function (typeSpecs, values, location) {
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       checkReactTypeSpec(typeSpecs, values, location, this.getName(), null, this._debugID);
     }
   },
@@ -21155,7 +24979,7 @@ var ReactCompositeComponent = {
    */
   updateComponent: function (transaction, prevParentElement, nextParentElement, prevUnmaskedContext, nextUnmaskedContext) {
     var inst = this._instance;
-    !(inst != null) ? "production" !== 'production' ? invariant(false, 'Attempted to update component `%s` that has already been unmounted (or failed to mount).', this.getName() || 'ReactCompositeComponent') : _prodInvariant('136', this.getName() || 'ReactCompositeComponent') : void 0;
+    !(inst != null) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Attempted to update component `%s` that has already been unmounted (or failed to mount).', this.getName() || 'ReactCompositeComponent') : _prodInvariant('136', this.getName() || 'ReactCompositeComponent') : void 0;
 
     var willReceive = false;
     var nextContext;
@@ -21180,7 +25004,7 @@ var ReactCompositeComponent = {
     // _pendingStateQueue which will ensure that any state updates gets
     // immediately reconciled instead of waiting for the next batch.
     if (willReceive && inst.componentWillReceiveProps) {
-      if ("production" !== 'production') {
+      if (process.env.NODE_ENV !== 'production') {
         measureLifeCyclePerf(function () {
           return inst.componentWillReceiveProps(nextProps, nextContext);
         }, this._debugID, 'componentWillReceiveProps');
@@ -21194,7 +25018,7 @@ var ReactCompositeComponent = {
 
     if (!this._pendingForceUpdate) {
       if (inst.shouldComponentUpdate) {
-        if ("production" !== 'production') {
+        if (process.env.NODE_ENV !== 'production') {
           shouldUpdate = measureLifeCyclePerf(function () {
             return inst.shouldComponentUpdate(nextProps, nextState, nextContext);
           }, this._debugID, 'shouldComponentUpdate');
@@ -21208,8 +25032,8 @@ var ReactCompositeComponent = {
       }
     }
 
-    if ("production" !== 'production') {
-      "production" !== 'production' ? warning(shouldUpdate !== undefined, '%s.shouldComponentUpdate(): Returned undefined instead of a ' + 'boolean value. Make sure to return true or false.', this.getName() || 'ReactCompositeComponent') : void 0;
+    if (process.env.NODE_ENV !== 'production') {
+      process.env.NODE_ENV !== 'production' ? warning(shouldUpdate !== undefined, '%s.shouldComponentUpdate(): Returned undefined instead of a ' + 'boolean value. Make sure to return true or false.', this.getName() || 'ReactCompositeComponent') : void 0;
     }
 
     this._updateBatchNumber = null;
@@ -21280,7 +25104,7 @@ var ReactCompositeComponent = {
     }
 
     if (inst.componentWillUpdate) {
-      if ("production" !== 'production') {
+      if (process.env.NODE_ENV !== 'production') {
         measureLifeCyclePerf(function () {
           return inst.componentWillUpdate(nextProps, nextState, nextContext);
         }, this._debugID, 'componentWillUpdate');
@@ -21298,7 +25122,7 @@ var ReactCompositeComponent = {
     this._updateRenderedComponent(transaction, unmaskedContext);
 
     if (hasComponentDidUpdate) {
-      if ("production" !== 'production') {
+      if (process.env.NODE_ENV !== 'production') {
         transaction.getReactMountReady().enqueue(function () {
           measureLifeCyclePerf(inst.componentDidUpdate.bind(inst, prevProps, prevState, prevContext), _this2._debugID, 'componentDidUpdate');
         });
@@ -21320,7 +25144,7 @@ var ReactCompositeComponent = {
     var nextRenderedElement = this._renderValidatedComponent();
 
     var debugID = 0;
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       debugID = this._debugID;
     }
 
@@ -21338,7 +25162,7 @@ var ReactCompositeComponent = {
 
       var nextMarkup = ReactReconciler.mountComponent(child, transaction, this._hostParent, this._hostContainerInfo, this._processChildContext(context), debugID);
 
-      if ("production" !== 'production') {
+      if (process.env.NODE_ENV !== 'production') {
         if (debugID !== 0) {
           var childDebugIDs = child._debugID !== 0 ? [child._debugID] : [];
           ReactInstrumentation.debugTool.onSetChildren(debugID, childDebugIDs);
@@ -21365,7 +25189,7 @@ var ReactCompositeComponent = {
     var inst = this._instance;
     var renderedElement;
 
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       renderedElement = measureLifeCyclePerf(function () {
         return inst.render();
       }, this._debugID, 'render');
@@ -21373,7 +25197,7 @@ var ReactCompositeComponent = {
       renderedElement = inst.render();
     }
 
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       // We allow auto-mocks to proceed as if they're returning null.
       if (renderedElement === undefined && inst.render._isMockFunction) {
         // This is probably bad practice. Consider warning here and
@@ -21390,7 +25214,7 @@ var ReactCompositeComponent = {
    */
   _renderValidatedComponent: function () {
     var renderedElement;
-    if ("production" !== 'production' || this._compositeType !== CompositeTypes.StatelessFunctional) {
+    if (process.env.NODE_ENV !== 'production' || this._compositeType !== CompositeTypes.StatelessFunctional) {
       ReactCurrentOwner.current = this;
       try {
         renderedElement = this._renderValidatedComponentWithoutOwnerOrContext();
@@ -21402,7 +25226,7 @@ var ReactCompositeComponent = {
     }
     !(
     // TODO: An `isValidNode` function would probably be more appropriate
-    renderedElement === null || renderedElement === false || React.isValidElement(renderedElement)) ? "production" !== 'production' ? invariant(false, '%s.render(): A valid React element (or null) must be returned. You may have returned undefined, an array or some other invalid object.', this.getName() || 'ReactCompositeComponent') : _prodInvariant('109', this.getName() || 'ReactCompositeComponent') : void 0;
+    renderedElement === null || renderedElement === false || React.isValidElement(renderedElement)) ? process.env.NODE_ENV !== 'production' ? invariant(false, '%s.render(): A valid React element (or null) must be returned. You may have returned undefined, an array or some other invalid object.', this.getName() || 'ReactCompositeComponent') : _prodInvariant('109', this.getName() || 'ReactCompositeComponent') : void 0;
 
     return renderedElement;
   },
@@ -21417,11 +25241,11 @@ var ReactCompositeComponent = {
    */
   attachRef: function (ref, component) {
     var inst = this.getPublicInstance();
-    !(inst != null) ? "production" !== 'production' ? invariant(false, 'Stateless function components cannot have refs.') : _prodInvariant('110') : void 0;
+    !(inst != null) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Stateless function components cannot have refs.') : _prodInvariant('110') : void 0;
     var publicComponentInstance = component.getPublicInstance();
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       var componentName = component && component.getName ? component.getName() : 'a component';
-      "production" !== 'production' ? warning(publicComponentInstance != null || component._compositeType !== CompositeTypes.StatelessFunctional, 'Stateless function components cannot be given refs ' + '(See ref "%s" in %s created by %s). ' + 'Attempts to access this ref will fail.', ref, componentName, this.getName()) : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(publicComponentInstance != null || component._compositeType !== CompositeTypes.StatelessFunctional, 'Stateless function components cannot be given refs ' + '(See ref "%s" in %s created by %s). ' + 'Attempts to access this ref will fail.', ref, componentName, this.getName()) : void 0;
     }
     var refs = inst.refs === emptyObject ? inst.refs = {} : inst.refs;
     refs[ref] = publicComponentInstance;
@@ -21469,11 +25293,12 @@ var ReactCompositeComponent = {
 
   // Stub
   _instantiateReactComponent: null
-
 };
 
 module.exports = ReactCompositeComponent;
-},{"./ReactComponentEnvironment":96,"./ReactErrorUtils":121,"./ReactInstanceMap":129,"./ReactInstrumentation":130,"./ReactNodeTypes":135,"./ReactReconciler":140,"./checkReactTypeSpec":167,"./reactProdInvariant":188,"./shouldUpdateReactComponent":192,"fbjs/lib/emptyObject":51,"fbjs/lib/invariant":58,"fbjs/lib/shallowEqual":64,"fbjs/lib/warning":65,"object-assign":67,"react/lib/React":197,"react/lib/ReactCurrentOwner":202}],98:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./ReactComponentEnvironment":106,"./ReactErrorUtils":131,"./ReactInstanceMap":139,"./ReactInstrumentation":140,"./ReactNodeTypes":145,"./ReactReconciler":150,"./checkReactTypeSpec":177,"./reactProdInvariant":198,"./shouldUpdateReactComponent":202,"_process":74,"fbjs/lib/emptyObject":57,"fbjs/lib/invariant":64,"fbjs/lib/shallowEqual":70,"fbjs/lib/warning":71,"object-assign":73,"react/lib/React":207,"react/lib/ReactCurrentOwner":211}],108:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -21511,6 +25336,7 @@ var ReactDOM = {
   /* eslint-disable camelcase */
   unstable_batchedUpdates: ReactUpdates.batchedUpdates,
   unstable_renderSubtreeIntoContainer: renderSubtreeIntoContainer
+  /* eslint-enable camelcase */
 };
 
 // Inject the runtime into a devtools global hook regardless of browser.
@@ -21536,10 +25362,9 @@ if (typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ !== 'undefined' && typeof __REACT_DEVT
   });
 }
 
-if ("production" !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
   var ExecutionEnvironment = require('fbjs/lib/ExecutionEnvironment');
   if (ExecutionEnvironment.canUseDOM && window.top === window.self) {
-
     // First check if devtools is not installed
     if (typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ === 'undefined') {
       // If we're in Chrome or Firefox, provide a download link if not installed.
@@ -21551,13 +25376,13 @@ if ("production" !== 'production') {
     }
 
     var testFunc = function testFn() {};
-    "production" !== 'production' ? warning((testFunc.name || testFunc.toString()).indexOf('testFn') !== -1, 'It looks like you\'re using a minified copy of the development build ' + 'of React. When deploying React apps to production, make sure to use ' + 'the production build which skips development warnings and is faster. ' + 'See https://fb.me/react-minification for more details.') : void 0;
+    process.env.NODE_ENV !== 'production' ? warning((testFunc.name || testFunc.toString()).indexOf('testFn') !== -1, "It looks like you're using a minified copy of the development build " + 'of React. When deploying React apps to production, make sure to use ' + 'the production build which skips development warnings and is faster. ' + 'See https://fb.me/react-minification for more details.') : void 0;
 
     // If we're in IE8, check to see if we are in compatibility mode and provide
     // information on preventing compatibility mode
     var ieCompatibilityMode = document.documentMode && document.documentMode < 8;
 
-    "production" !== 'production' ? warning(!ieCompatibilityMode, 'Internet Explorer is running in compatibility mode; please add the ' + 'following tag to your HTML to prevent this from happening: ' + '<meta http-equiv="X-UA-Compatible" content="IE=edge" />') : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(!ieCompatibilityMode, 'Internet Explorer is running in compatibility mode; please add the ' + 'following tag to your HTML to prevent this from happening: ' + '<meta http-equiv="X-UA-Compatible" content="IE=edge" />') : void 0;
 
     var expectedFeatures = [
     // shims
@@ -21565,14 +25390,14 @@ if ("production" !== 'production') {
 
     for (var i = 0; i < expectedFeatures.length; i++) {
       if (!expectedFeatures[i]) {
-        "production" !== 'production' ? warning(false, 'One or more ES5 shims expected by React are not available: ' + 'https://fb.me/react-warning-polyfills') : void 0;
+        process.env.NODE_ENV !== 'production' ? warning(false, 'One or more ES5 shims expected by React are not available: ' + 'https://fb.me/react-warning-polyfills') : void 0;
         break;
       }
     }
   }
 }
 
-if ("production" !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
   var ReactInstrumentation = require('./ReactInstrumentation');
   var ReactDOMUnknownPropertyHook = require('./ReactDOMUnknownPropertyHook');
   var ReactDOMNullInputValuePropHook = require('./ReactDOMNullInputValuePropHook');
@@ -21584,7 +25409,9 @@ if ("production" !== 'production') {
 }
 
 module.exports = ReactDOM;
-},{"./ReactDOMComponentTree":101,"./ReactDOMInvalidARIAHook":107,"./ReactDOMNullInputValuePropHook":108,"./ReactDOMUnknownPropertyHook":115,"./ReactDefaultInjection":118,"./ReactInstrumentation":130,"./ReactMount":133,"./ReactReconciler":140,"./ReactUpdates":145,"./ReactVersion":146,"./findDOMNode":171,"./getHostComponentFromComposite":178,"./renderSubtreeIntoContainer":189,"fbjs/lib/ExecutionEnvironment":44,"fbjs/lib/warning":65}],99:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./ReactDOMComponentTree":111,"./ReactDOMInvalidARIAHook":117,"./ReactDOMNullInputValuePropHook":118,"./ReactDOMUnknownPropertyHook":125,"./ReactDefaultInjection":128,"./ReactInstrumentation":140,"./ReactMount":143,"./ReactReconciler":150,"./ReactUpdates":155,"./ReactVersion":156,"./findDOMNode":181,"./getHostComponentFromComposite":188,"./renderSubtreeIntoContainer":199,"_process":74,"fbjs/lib/ExecutionEnvironment":50,"fbjs/lib/warning":71}],109:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -21626,6 +25453,7 @@ var escapeTextContentForBrowser = require('./escapeTextContentForBrowser');
 var invariant = require('fbjs/lib/invariant');
 var isEventSupported = require('./isEventSupported');
 var shallowEqual = require('fbjs/lib/shallowEqual');
+var inputValueTracking = require('./inputValueTracking');
 var validateDOMNesting = require('./validateDOMNesting');
 var warning = require('fbjs/lib/warning');
 
@@ -21636,7 +25464,7 @@ var listenTo = ReactBrowserEventEmitter.listenTo;
 var registrationNameModules = EventPluginRegistry.registrationNameModules;
 
 // For quickly matching children type, to test if can be treated as content.
-var CONTENT_TYPES = { 'string': true, 'number': true };
+var CONTENT_TYPES = { string: true, number: true };
 
 var STYLE = 'style';
 var HTML = '__html';
@@ -21711,7 +25539,7 @@ function checkAndWarnForMutatedStyle(style1, style2, component) {
 
   styleMutationWarning[hash] = true;
 
-  "production" !== 'production' ? warning(false, '`%s` was passed a style object that has previously been mutated. ' + 'Mutating `style` is deprecated. Consider cloning it beforehand. Check ' + 'the `render` %s. Previous style: %s. Mutated style: %s.', componentName, owner ? 'of `' + ownerName + '`' : 'using <' + componentName + '>', friendlyStringify(style1), friendlyStringify(style2)) : void 0;
+  process.env.NODE_ENV !== 'production' ? warning(false, '`%s` was passed a style object that has previously been mutated. ' + 'Mutating `style` is deprecated. Consider cloning it beforehand. Check ' + 'the `render` %s. Previous style: %s. Mutated style: %s.', componentName, owner ? 'of `' + ownerName + '`' : 'using <' + componentName + '>', friendlyStringify(style1), friendlyStringify(style2)) : void 0;
 }
 
 /**
@@ -21724,28 +25552,28 @@ function assertValidProps(component, props) {
   }
   // Note the use of `==` which checks for null or undefined.
   if (voidElementTags[component._tag]) {
-    !(props.children == null && props.dangerouslySetInnerHTML == null) ? "production" !== 'production' ? invariant(false, '%s is a void element tag and must neither have `children` nor use `dangerouslySetInnerHTML`.%s', component._tag, component._currentElement._owner ? ' Check the render method of ' + component._currentElement._owner.getName() + '.' : '') : _prodInvariant('137', component._tag, component._currentElement._owner ? ' Check the render method of ' + component._currentElement._owner.getName() + '.' : '') : void 0;
+    !(props.children == null && props.dangerouslySetInnerHTML == null) ? process.env.NODE_ENV !== 'production' ? invariant(false, '%s is a void element tag and must neither have `children` nor use `dangerouslySetInnerHTML`.%s', component._tag, component._currentElement._owner ? ' Check the render method of ' + component._currentElement._owner.getName() + '.' : '') : _prodInvariant('137', component._tag, component._currentElement._owner ? ' Check the render method of ' + component._currentElement._owner.getName() + '.' : '') : void 0;
   }
   if (props.dangerouslySetInnerHTML != null) {
-    !(props.children == null) ? "production" !== 'production' ? invariant(false, 'Can only set one of `children` or `props.dangerouslySetInnerHTML`.') : _prodInvariant('60') : void 0;
-    !(typeof props.dangerouslySetInnerHTML === 'object' && HTML in props.dangerouslySetInnerHTML) ? "production" !== 'production' ? invariant(false, '`props.dangerouslySetInnerHTML` must be in the form `{__html: ...}`. Please visit https://fb.me/react-invariant-dangerously-set-inner-html for more information.') : _prodInvariant('61') : void 0;
+    !(props.children == null) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Can only set one of `children` or `props.dangerouslySetInnerHTML`.') : _prodInvariant('60') : void 0;
+    !(typeof props.dangerouslySetInnerHTML === 'object' && HTML in props.dangerouslySetInnerHTML) ? process.env.NODE_ENV !== 'production' ? invariant(false, '`props.dangerouslySetInnerHTML` must be in the form `{__html: ...}`. Please visit https://fb.me/react-invariant-dangerously-set-inner-html for more information.') : _prodInvariant('61') : void 0;
   }
-  if ("production" !== 'production') {
-    "production" !== 'production' ? warning(props.innerHTML == null, 'Directly setting property `innerHTML` is not permitted. ' + 'For more information, lookup documentation on `dangerouslySetInnerHTML`.') : void 0;
-    "production" !== 'production' ? warning(props.suppressContentEditableWarning || !props.contentEditable || props.children == null, 'A component is `contentEditable` and contains `children` managed by ' + 'React. It is now your responsibility to guarantee that none of ' + 'those nodes are unexpectedly modified or duplicated. This is ' + 'probably not intentional.') : void 0;
-    "production" !== 'production' ? warning(props.onFocusIn == null && props.onFocusOut == null, 'React uses onFocus and onBlur instead of onFocusIn and onFocusOut. ' + 'All React events are normalized to bubble, so onFocusIn and onFocusOut ' + 'are not needed/supported by React.') : void 0;
+  if (process.env.NODE_ENV !== 'production') {
+    process.env.NODE_ENV !== 'production' ? warning(props.innerHTML == null, 'Directly setting property `innerHTML` is not permitted. ' + 'For more information, lookup documentation on `dangerouslySetInnerHTML`.') : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(props.suppressContentEditableWarning || !props.contentEditable || props.children == null, 'A component is `contentEditable` and contains `children` managed by ' + 'React. It is now your responsibility to guarantee that none of ' + 'those nodes are unexpectedly modified or duplicated. This is ' + 'probably not intentional.') : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(props.onFocusIn == null && props.onFocusOut == null, 'React uses onFocus and onBlur instead of onFocusIn and onFocusOut. ' + 'All React events are normalized to bubble, so onFocusIn and onFocusOut ' + 'are not needed/supported by React.') : void 0;
   }
-  !(props.style == null || typeof props.style === 'object') ? "production" !== 'production' ? invariant(false, 'The `style` prop expects a mapping from style properties to values, not a string. For example, style={{marginRight: spacing + \'em\'}} when using JSX.%s', getDeclarationErrorAddendum(component)) : _prodInvariant('62', getDeclarationErrorAddendum(component)) : void 0;
+  !(props.style == null || typeof props.style === 'object') ? process.env.NODE_ENV !== 'production' ? invariant(false, 'The `style` prop expects a mapping from style properties to values, not a string. For example, style={{marginRight: spacing + \'em\'}} when using JSX.%s', getDeclarationErrorAddendum(component)) : _prodInvariant('62', getDeclarationErrorAddendum(component)) : void 0;
 }
 
 function enqueuePutListener(inst, registrationName, listener, transaction) {
   if (transaction instanceof ReactServerRenderingTransaction) {
     return;
   }
-  if ("production" !== 'production') {
+  if (process.env.NODE_ENV !== 'production') {
     // IE8 has no API for event capturing and the `onScroll` event doesn't
     // bubble.
-    "production" !== 'production' ? warning(registrationName !== 'onScroll' || isEventSupported('scroll', true), 'This browser doesn\'t support the `onScroll` event') : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(registrationName !== 'onScroll' || isEventSupported('scroll', true), "This browser doesn't support the `onScroll` event") : void 0;
   }
   var containerInfo = inst._hostContainerInfo;
   var isDocumentFragment = containerInfo._node && containerInfo._node.nodeType === DOC_FRAGMENT_TYPE;
@@ -21779,7 +25607,7 @@ function optionPostMount() {
 }
 
 var setAndValidateContentChildDev = emptyFunction;
-if ("production" !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
   setAndValidateContentChildDev = function (content) {
     var hasExistingContent = this._contentDebugID != null;
     var debugID = this._debugID;
@@ -21835,13 +25663,17 @@ var mediaEvents = {
   topWaiting: 'waiting'
 };
 
+function trackInputValue() {
+  inputValueTracking.track(this);
+}
+
 function trapBubbledEventsLocal() {
   var inst = this;
   // If a component renders to null or if another component fatals and causes
   // the state of the tree to be corrupted, `node` here can be null.
-  !inst._rootNodeID ? "production" !== 'production' ? invariant(false, 'Must be mounted to trap events') : _prodInvariant('63') : void 0;
+  !inst._rootNodeID ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Must be mounted to trap events') : _prodInvariant('63') : void 0;
   var node = getNode(inst);
-  !node ? "production" !== 'production' ? invariant(false, 'trapBubbledEvent(...): Requires node to be rendered.') : _prodInvariant('64') : void 0;
+  !node ? process.env.NODE_ENV !== 'production' ? invariant(false, 'trapBubbledEvent(...): Requires node to be rendered.') : _prodInvariant('64') : void 0;
 
   switch (inst._tag) {
     case 'iframe':
@@ -21850,7 +25682,6 @@ function trapBubbledEventsLocal() {
       break;
     case 'video':
     case 'audio':
-
       inst._wrapperState.listeners = [];
       // Create listener for each media event
       for (var event in mediaEvents) {
@@ -21884,34 +25715,35 @@ function postUpdateSelectWrapper() {
 // those special-case tags.
 
 var omittedCloseTags = {
-  'area': true,
-  'base': true,
-  'br': true,
-  'col': true,
-  'embed': true,
-  'hr': true,
-  'img': true,
-  'input': true,
-  'keygen': true,
-  'link': true,
-  'meta': true,
-  'param': true,
-  'source': true,
-  'track': true,
-  'wbr': true
+  area: true,
+  base: true,
+  br: true,
+  col: true,
+  embed: true,
+  hr: true,
+  img: true,
+  input: true,
+  keygen: true,
+  link: true,
+  meta: true,
+  param: true,
+  source: true,
+  track: true,
+  wbr: true
+  // NOTE: menuitem's close tag should be omitted, but that causes problems.
 };
 
 var newlineEatingTags = {
-  'listing': true,
-  'pre': true,
-  'textarea': true
+  listing: true,
+  pre: true,
+  textarea: true
 };
 
 // For HTML, certain tags cannot have children. This has the same purpose as
 // `omittedCloseTags` except that `menuitem` should still have its closing tag.
 
 var voidElementTags = _assign({
-  'menuitem': true
+  menuitem: true
 }, omittedCloseTags);
 
 // We accept any tag to be rendered but since this gets injected into arbitrary
@@ -21924,7 +25756,7 @@ var hasOwnProperty = {}.hasOwnProperty;
 
 function validateDangerousTag(tag) {
   if (!hasOwnProperty.call(validatedTagCache, tag)) {
-    !VALID_TAG_REGEX.test(tag) ? "production" !== 'production' ? invariant(false, 'Invalid tag: %s', tag) : _prodInvariant('65', tag) : void 0;
+    !VALID_TAG_REGEX.test(tag) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Invalid tag: %s', tag) : _prodInvariant('65', tag) : void 0;
     validatedTagCache[tag] = true;
   }
 }
@@ -21966,7 +25798,7 @@ function ReactDOMComponent(element) {
   this._wrapperState = null;
   this._topLevelWrapper = null;
   this._flags = 0;
-  if ("production" !== 'production') {
+  if (process.env.NODE_ENV !== 'production') {
     this._ancestorInfo = null;
     setAndValidateContentChildDev.call(this, null);
   }
@@ -21975,7 +25807,6 @@ function ReactDOMComponent(element) {
 ReactDOMComponent.displayName = 'ReactDOMComponent';
 
 ReactDOMComponent.Mixin = {
-
   /**
    * Generates root tag markup then recurses. This method has side effects and
    * is not idempotent.
@@ -22012,6 +25843,7 @@ ReactDOMComponent.Mixin = {
       case 'input':
         ReactDOMInput.mountWrapper(this, props, hostParent);
         props = ReactDOMInput.getHostProps(this, props);
+        transaction.getReactMountReady().enqueue(trackInputValue, this);
         transaction.getReactMountReady().enqueue(trapBubbledEventsLocal, this);
         break;
       case 'option':
@@ -22026,6 +25858,7 @@ ReactDOMComponent.Mixin = {
       case 'textarea':
         ReactDOMTextarea.mountWrapper(this, props, hostParent);
         props = ReactDOMTextarea.getHostProps(this, props);
+        transaction.getReactMountReady().enqueue(trackInputValue, this);
         transaction.getReactMountReady().enqueue(trapBubbledEventsLocal, this);
         break;
     }
@@ -22055,7 +25888,7 @@ ReactDOMComponent.Mixin = {
     }
     this._namespaceURI = namespaceURI;
 
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       var parentInfo;
       if (hostParent != null) {
         parentInfo = hostParent._ancestorInfo;
@@ -22174,7 +26007,7 @@ ReactDOMComponent.Mixin = {
       } else {
         if (propKey === STYLE) {
           if (propValue) {
-            if ("production" !== 'production') {
+            if (process.env.NODE_ENV !== 'production') {
               // See `_updateDOMProperties`. style block
               this._previousStyle = propValue;
             }
@@ -22233,7 +26066,7 @@ ReactDOMComponent.Mixin = {
       if (contentToUse != null) {
         // TODO: Validate that text is allowed as a child of this node
         ret = escapeTextContentForBrowser(contentToUse);
-        if ("production" !== 'production') {
+        if (process.env.NODE_ENV !== 'production') {
           setAndValidateContentChildDev.call(this, contentToUse);
         }
       } else if (childrenToUse != null) {
@@ -22268,12 +26101,18 @@ ReactDOMComponent.Mixin = {
     } else {
       var contentToUse = CONTENT_TYPES[typeof props.children] ? props.children : null;
       var childrenToUse = contentToUse != null ? null : props.children;
+      // TODO: Validate that text is allowed as a child of this node
       if (contentToUse != null) {
-        // TODO: Validate that text is allowed as a child of this node
-        if ("production" !== 'production') {
-          setAndValidateContentChildDev.call(this, contentToUse);
+        // Avoid setting textContent when the text is empty. In IE11 setting
+        // textContent on a text area will cause the placeholder to not
+        // show within the textarea until it has been focused and blurred again.
+        // https://github.com/facebook/react/issues/6731#issuecomment-254874553
+        if (contentToUse !== '') {
+          if (process.env.NODE_ENV !== 'production') {
+            setAndValidateContentChildDev.call(this, contentToUse);
+          }
+          DOMLazyTree.queueText(lazyTree, contentToUse);
         }
-        DOMLazyTree.queueText(lazyTree, contentToUse);
       } else if (childrenToUse != null) {
         var mountImages = this.mountChildren(childrenToUse, transaction, context);
         for (var i = 0; i < mountImages.length; i++) {
@@ -22408,7 +26247,7 @@ ReactDOMComponent.Mixin = {
       }
       if (propKey === STYLE) {
         if (nextProp) {
-          if ("production" !== 'production') {
+          if (process.env.NODE_ENV !== 'production') {
             checkAndWarnForMutatedStyle(this._previousStyleCopy, this._previousStyle, this);
             this._previousStyle = nextProp;
           }
@@ -22490,7 +26329,7 @@ ReactDOMComponent.Mixin = {
       this.updateChildren(null, transaction, context);
     } else if (lastHasContentOrHtml && !nextHasContentOrHtml) {
       this.updateTextContent('');
-      if ("production" !== 'production') {
+      if (process.env.NODE_ENV !== 'production') {
         ReactInstrumentation.debugTool.onSetChildren(this._debugID, []);
       }
     }
@@ -22498,7 +26337,7 @@ ReactDOMComponent.Mixin = {
     if (nextContent != null) {
       if (lastContent !== nextContent) {
         this.updateTextContent('' + nextContent);
-        if ("production" !== 'production') {
+        if (process.env.NODE_ENV !== 'production') {
           setAndValidateContentChildDev.call(this, nextContent);
         }
       }
@@ -22506,11 +26345,11 @@ ReactDOMComponent.Mixin = {
       if (lastHtml !== nextHtml) {
         this.updateMarkup('' + nextHtml);
       }
-      if ("production" !== 'production') {
+      if (process.env.NODE_ENV !== 'production') {
         ReactInstrumentation.debugTool.onSetChildren(this._debugID, []);
       }
     } else if (nextChildren != null) {
-      if ("production" !== 'production') {
+      if (process.env.NODE_ENV !== 'production') {
         setAndValidateContentChildDev.call(this, null);
       }
 
@@ -22545,6 +26384,10 @@ ReactDOMComponent.Mixin = {
           }
         }
         break;
+      case 'input':
+      case 'textarea':
+        inputValueTracking.stopTracking(this);
+        break;
       case 'html':
       case 'head':
       case 'body':
@@ -22554,7 +26397,7 @@ ReactDOMComponent.Mixin = {
          * take advantage of React's reconciliation for styling and <title>
          * management. So we just document it and throw in dangerous cases.
          */
-        !false ? "production" !== 'production' ? invariant(false, '<%s> tried to unmount. Because of cross-browser quirks it is impossible to unmount some top-level components (eg <html>, <head>, and <body>) reliably and efficiently. To fix this, have a single top-level component that never unmounts render these elements.', this._tag) : _prodInvariant('66', this._tag) : void 0;
+        !false ? process.env.NODE_ENV !== 'production' ? invariant(false, '<%s> tried to unmount. Because of cross-browser quirks it is impossible to unmount some top-level components (eg <html>, <head>, and <body>) reliably and efficiently. To fix this, have a single top-level component that never unmounts render these elements.', this._tag) : _prodInvariant('66', this._tag) : void 0;
         break;
     }
 
@@ -22565,7 +26408,7 @@ ReactDOMComponent.Mixin = {
     this._domID = 0;
     this._wrapperState = null;
 
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       setAndValidateContentChildDev.call(this, null);
     }
   },
@@ -22573,13 +26416,13 @@ ReactDOMComponent.Mixin = {
   getPublicInstance: function () {
     return getNode(this);
   }
-
 };
 
 _assign(ReactDOMComponent.prototype, ReactDOMComponent.Mixin, ReactMultiChild.Mixin);
 
 module.exports = ReactDOMComponent;
-},{"./AutoFocusUtils":70,"./CSSPropertyOperations":73,"./DOMLazyTree":77,"./DOMNamespaces":78,"./DOMProperty":79,"./DOMPropertyOperations":80,"./EventPluginHub":84,"./EventPluginRegistry":85,"./ReactBrowserEventEmitter":93,"./ReactDOMComponentFlags":100,"./ReactDOMComponentTree":101,"./ReactDOMInput":106,"./ReactDOMOption":109,"./ReactDOMSelect":110,"./ReactDOMTextarea":113,"./ReactInstrumentation":130,"./ReactMultiChild":134,"./ReactServerRenderingTransaction":142,"./escapeTextContentForBrowser":170,"./isEventSupported":185,"./reactProdInvariant":188,"./validateDOMNesting":194,"fbjs/lib/emptyFunction":50,"fbjs/lib/invariant":58,"fbjs/lib/shallowEqual":64,"fbjs/lib/warning":65,"object-assign":67}],100:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./AutoFocusUtils":80,"./CSSPropertyOperations":83,"./DOMLazyTree":87,"./DOMNamespaces":88,"./DOMProperty":89,"./DOMPropertyOperations":90,"./EventPluginHub":94,"./EventPluginRegistry":95,"./ReactBrowserEventEmitter":103,"./ReactDOMComponentFlags":110,"./ReactDOMComponentTree":111,"./ReactDOMInput":116,"./ReactDOMOption":119,"./ReactDOMSelect":120,"./ReactDOMTextarea":123,"./ReactInstrumentation":140,"./ReactMultiChild":144,"./ReactServerRenderingTransaction":152,"./escapeTextContentForBrowser":180,"./inputValueTracking":193,"./isEventSupported":195,"./reactProdInvariant":198,"./validateDOMNesting":204,"_process":74,"fbjs/lib/emptyFunction":56,"fbjs/lib/invariant":64,"fbjs/lib/shallowEqual":70,"fbjs/lib/warning":71,"object-assign":73}],110:[function(require,module,exports){
 /**
  * Copyright 2015-present, Facebook, Inc.
  * All rights reserved.
@@ -22597,7 +26440,8 @@ var ReactDOMComponentFlags = {
 };
 
 module.exports = ReactDOMComponentFlags;
-},{}],101:[function(require,module,exports){
+},{}],111:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -22621,6 +26465,13 @@ var ATTR_NAME = DOMProperty.ID_ATTRIBUTE_NAME;
 var Flags = ReactDOMComponentFlags;
 
 var internalInstanceKey = '__reactInternalInstance$' + Math.random().toString(36).slice(2);
+
+/**
+ * Check if a given node should be cached.
+ */
+function shouldPrecacheNode(node, nodeID) {
+  return node.nodeType === 1 && node.getAttribute(ATTR_NAME) === String(nodeID) || node.nodeType === 8 && node.nodeValue === ' react-text: ' + nodeID + ' ' || node.nodeType === 8 && node.nodeValue === ' react-empty: ' + nodeID + ' ';
+}
 
 /**
  * Drill down (through composites and empty components) until we get a host or
@@ -22687,13 +26538,13 @@ function precacheChildNodes(inst, node) {
     }
     // We assume the child nodes are in the same order as the child instances.
     for (; childNode !== null; childNode = childNode.nextSibling) {
-      if (childNode.nodeType === 1 && childNode.getAttribute(ATTR_NAME) === String(childID) || childNode.nodeType === 8 && childNode.nodeValue === ' react-text: ' + childID + ' ' || childNode.nodeType === 8 && childNode.nodeValue === ' react-empty: ' + childID + ' ') {
+      if (shouldPrecacheNode(childNode, childID)) {
         precacheNode(childInst, childNode);
         continue outer;
       }
     }
     // We reached the end of the DOM children without finding an ID match.
-    !false ? "production" !== 'production' ? invariant(false, 'Unable to find element with ID %s.', childID) : _prodInvariant('32', childID) : void 0;
+    !false ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Unable to find element with ID %s.', childID) : _prodInvariant('32', childID) : void 0;
   }
   inst._flags |= Flags.hasCachedChildNodes;
 }
@@ -22752,7 +26603,7 @@ function getInstanceFromNode(node) {
 function getNodeFromInstance(inst) {
   // Without this first invariant, passing a non-DOM-component triggers the next
   // invariant for a missing parent, which is super confusing.
-  !(inst._hostNode !== undefined) ? "production" !== 'production' ? invariant(false, 'getNodeFromInstance: Invalid argument.') : _prodInvariant('33') : void 0;
+  !(inst._hostNode !== undefined) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'getNodeFromInstance: Invalid argument.') : _prodInvariant('33') : void 0;
 
   if (inst._hostNode) {
     return inst._hostNode;
@@ -22762,7 +26613,7 @@ function getNodeFromInstance(inst) {
   var parents = [];
   while (!inst._hostNode) {
     parents.push(inst);
-    !inst._hostParent ? "production" !== 'production' ? invariant(false, 'React DOM tree root should always have a node reference.') : _prodInvariant('34') : void 0;
+    !inst._hostParent ? process.env.NODE_ENV !== 'production' ? invariant(false, 'React DOM tree root should always have a node reference.') : _prodInvariant('34') : void 0;
     inst = inst._hostParent;
   }
 
@@ -22785,7 +26636,9 @@ var ReactDOMComponentTree = {
 };
 
 module.exports = ReactDOMComponentTree;
-},{"./DOMProperty":79,"./ReactDOMComponentFlags":100,"./reactProdInvariant":188,"fbjs/lib/invariant":58}],102:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./DOMProperty":89,"./ReactDOMComponentFlags":110,"./reactProdInvariant":198,"_process":74,"fbjs/lib/invariant":64}],112:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -22811,14 +26664,15 @@ function ReactDOMContainerInfo(topLevelWrapper, node) {
     _tag: node ? node.nodeName.toLowerCase() : null,
     _namespaceURI: node ? node.namespaceURI : null
   };
-  if ("production" !== 'production') {
+  if (process.env.NODE_ENV !== 'production') {
     info._ancestorInfo = node ? validateDOMNesting.updatedAncestorInfo(null, info._tag, null) : null;
   }
   return info;
 }
 
 module.exports = ReactDOMContainerInfo;
-},{"./validateDOMNesting":194}],103:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./validateDOMNesting":204,"_process":74}],113:[function(require,module,exports){
 /**
  * Copyright 2014-present, Facebook, Inc.
  * All rights reserved.
@@ -22878,7 +26732,7 @@ _assign(ReactDOMEmptyComponent.prototype, {
 });
 
 module.exports = ReactDOMEmptyComponent;
-},{"./DOMLazyTree":77,"./ReactDOMComponentTree":101,"object-assign":67}],104:[function(require,module,exports){
+},{"./DOMLazyTree":87,"./ReactDOMComponentTree":111,"object-assign":73}],114:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -22897,7 +26751,7 @@ var ReactDOMFeatureFlags = {
 };
 
 module.exports = ReactDOMFeatureFlags;
-},{}],105:[function(require,module,exports){
+},{}],115:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -22917,7 +26771,6 @@ var ReactDOMComponentTree = require('./ReactDOMComponentTree');
  * Operations used to process updates to DOM nodes.
  */
 var ReactDOMIDOperations = {
-
   /**
    * Updates a component's children by processing a series of updates.
    *
@@ -22931,7 +26784,8 @@ var ReactDOMIDOperations = {
 };
 
 module.exports = ReactDOMIDOperations;
-},{"./DOMChildrenOperations":76,"./ReactDOMComponentTree":101}],106:[function(require,module,exports){
+},{"./DOMChildrenOperations":86,"./ReactDOMComponentTree":111}],116:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -23018,25 +26872,25 @@ var ReactDOMInput = {
   },
 
   mountWrapper: function (inst, props) {
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       LinkedValueUtils.checkPropTypes('input', props, inst._currentElement._owner);
 
       var owner = inst._currentElement._owner;
 
       if (props.valueLink !== undefined && !didWarnValueLink) {
-        "production" !== 'production' ? warning(false, '`valueLink` prop on `input` is deprecated; set `value` and `onChange` instead.') : void 0;
+        process.env.NODE_ENV !== 'production' ? warning(false, '`valueLink` prop on `input` is deprecated; set `value` and `onChange` instead.') : void 0;
         didWarnValueLink = true;
       }
       if (props.checkedLink !== undefined && !didWarnCheckedLink) {
-        "production" !== 'production' ? warning(false, '`checkedLink` prop on `input` is deprecated; set `value` and `onChange` instead.') : void 0;
+        process.env.NODE_ENV !== 'production' ? warning(false, '`checkedLink` prop on `input` is deprecated; set `value` and `onChange` instead.') : void 0;
         didWarnCheckedLink = true;
       }
       if (props.checked !== undefined && props.defaultChecked !== undefined && !didWarnCheckedDefaultChecked) {
-        "production" !== 'production' ? warning(false, '%s contains an input of type %s with both checked and defaultChecked props. ' + 'Input elements must be either controlled or uncontrolled ' + '(specify either the checked prop, or the defaultChecked prop, but not ' + 'both). Decide between using a controlled or uncontrolled input ' + 'element and remove one of these props. More info: ' + 'https://fb.me/react-controlled-components', owner && owner.getName() || 'A component', props.type) : void 0;
+        process.env.NODE_ENV !== 'production' ? warning(false, '%s contains an input of type %s with both checked and defaultChecked props. ' + 'Input elements must be either controlled or uncontrolled ' + '(specify either the checked prop, or the defaultChecked prop, but not ' + 'both). Decide between using a controlled or uncontrolled input ' + 'element and remove one of these props. More info: ' + 'https://fb.me/react-controlled-components', owner && owner.getName() || 'A component', props.type) : void 0;
         didWarnCheckedDefaultChecked = true;
       }
       if (props.value !== undefined && props.defaultValue !== undefined && !didWarnValueDefaultValue) {
-        "production" !== 'production' ? warning(false, '%s contains an input of type %s with both value and defaultValue props. ' + 'Input elements must be either controlled or uncontrolled ' + '(specify either the value prop, or the defaultValue prop, but not ' + 'both). Decide between using a controlled or uncontrolled input ' + 'element and remove one of these props. More info: ' + 'https://fb.me/react-controlled-components', owner && owner.getName() || 'A component', props.type) : void 0;
+        process.env.NODE_ENV !== 'production' ? warning(false, '%s contains an input of type %s with both value and defaultValue props. ' + 'Input elements must be either controlled or uncontrolled ' + '(specify either the value prop, or the defaultValue prop, but not ' + 'both). Decide between using a controlled or uncontrolled input ' + 'element and remove one of these props. More info: ' + 'https://fb.me/react-controlled-components', owner && owner.getName() || 'A component', props.type) : void 0;
         didWarnValueDefaultValue = true;
       }
     }
@@ -23046,27 +26900,24 @@ var ReactDOMInput = {
       initialChecked: props.checked != null ? props.checked : props.defaultChecked,
       initialValue: props.value != null ? props.value : defaultValue,
       listeners: null,
-      onChange: _handleChange.bind(inst)
+      onChange: _handleChange.bind(inst),
+      controlled: isControlled(props)
     };
-
-    if ("production" !== 'production') {
-      inst._wrapperState.controlled = isControlled(props);
-    }
   },
 
   updateWrapper: function (inst) {
     var props = inst._currentElement.props;
 
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       var controlled = isControlled(props);
       var owner = inst._currentElement._owner;
 
       if (!inst._wrapperState.controlled && controlled && !didWarnUncontrolledToControlled) {
-        "production" !== 'production' ? warning(false, '%s is changing an uncontrolled input of type %s to be controlled. ' + 'Input elements should not switch from uncontrolled to controlled (or vice versa). ' + 'Decide between using a controlled or uncontrolled input ' + 'element for the lifetime of the component. More info: https://fb.me/react-controlled-components', owner && owner.getName() || 'A component', props.type) : void 0;
+        process.env.NODE_ENV !== 'production' ? warning(false, '%s is changing an uncontrolled input of type %s to be controlled. ' + 'Input elements should not switch from uncontrolled to controlled (or vice versa). ' + 'Decide between using a controlled or uncontrolled input ' + 'element for the lifetime of the component. More info: https://fb.me/react-controlled-components', owner && owner.getName() || 'A component', props.type) : void 0;
         didWarnUncontrolledToControlled = true;
       }
       if (inst._wrapperState.controlled && !controlled && !didWarnControlledToUncontrolled) {
-        "production" !== 'production' ? warning(false, '%s is changing a controlled input of type %s to be uncontrolled. ' + 'Input elements should not switch from controlled to uncontrolled (or vice versa). ' + 'Decide between using a controlled or uncontrolled input ' + 'element for the lifetime of the component. More info: https://fb.me/react-controlled-components', owner && owner.getName() || 'A component', props.type) : void 0;
+        process.env.NODE_ENV !== 'production' ? warning(false, '%s is changing a controlled input of type %s to be uncontrolled. ' + 'Input elements should not switch from controlled to uncontrolled (or vice versa). ' + 'Decide between using a controlled or uncontrolled input ' + 'element for the lifetime of the component. More info: https://fb.me/react-controlled-components', owner && owner.getName() || 'A component', props.type) : void 0;
         didWarnControlledToUncontrolled = true;
       }
     }
@@ -23080,18 +26931,40 @@ var ReactDOMInput = {
     var node = ReactDOMComponentTree.getNodeFromInstance(inst);
     var value = LinkedValueUtils.getValue(props);
     if (value != null) {
+      if (value === 0 && node.value === '') {
+        node.value = '0';
+        // Note: IE9 reports a number inputs as 'text', so check props instead.
+      } else if (props.type === 'number') {
+        // Simulate `input.valueAsNumber`. IE9 does not support it
+        var valueAsNumber = parseFloat(node.value, 10) || 0;
 
-      // Cast `value` to a string to ensure the value is set correctly. While
-      // browsers typically do this as necessary, jsdom doesn't.
-      var newValue = '' + value;
-
-      // To avoid side effects (such as losing text selection), only set value if changed
-      if (newValue !== node.value) {
-        node.value = newValue;
+        if (
+        // eslint-disable-next-line
+        value != valueAsNumber ||
+        // eslint-disable-next-line
+        value == valueAsNumber && node.value != value) {
+          // Cast `value` to a string to ensure the value is set correctly. While
+          // browsers typically do this as necessary, jsdom doesn't.
+          node.value = '' + value;
+        }
+      } else if (node.value !== '' + value) {
+        // Cast `value` to a string to ensure the value is set correctly. While
+        // browsers typically do this as necessary, jsdom doesn't.
+        node.value = '' + value;
       }
     } else {
       if (props.value == null && props.defaultValue != null) {
-        node.defaultValue = '' + props.defaultValue;
+        // In Chrome, assigning defaultValue to certain input types triggers input validation.
+        // For number inputs, the display value loses trailing decimal points. For email inputs,
+        // Chrome raises "The specified value <x> is not a valid email address".
+        //
+        // Here we check to see if the defaultValue has actually changed, avoiding these problems
+        // when the user is inputting text
+        //
+        // https://github.com/facebook/react/issues/7253
+        if (node.defaultValue !== '' + props.defaultValue) {
+          node.defaultValue = '' + props.defaultValue;
+        }
       }
       if (props.checked == null && props.defaultChecked != null) {
         node.defaultChecked = !!props.defaultChecked;
@@ -23187,7 +27060,7 @@ function _handleChange(event) {
       // That's probably okay; we don't support it just as we don't support
       // mixing React radio buttons with non-React ones.
       var otherInstance = ReactDOMComponentTree.getInstanceFromNode(otherNode);
-      !otherInstance ? "production" !== 'production' ? invariant(false, 'ReactDOMInput: Mixing React and non-React radio inputs with the same `name` is not supported.') : _prodInvariant('90') : void 0;
+      !otherInstance ? process.env.NODE_ENV !== 'production' ? invariant(false, 'ReactDOMInput: Mixing React and non-React radio inputs with the same `name` is not supported.') : _prodInvariant('90') : void 0;
       // If this is a controlled radio button group, forcing the input that
       // was previously checked to update will cause it to be come re-checked
       // as appropriate.
@@ -23199,7 +27072,9 @@ function _handleChange(event) {
 }
 
 module.exports = ReactDOMInput;
-},{"./DOMPropertyOperations":80,"./LinkedValueUtils":91,"./ReactDOMComponentTree":101,"./ReactUpdates":145,"./reactProdInvariant":188,"fbjs/lib/invariant":58,"fbjs/lib/warning":65,"object-assign":67}],107:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./DOMPropertyOperations":90,"./LinkedValueUtils":101,"./ReactDOMComponentTree":111,"./ReactUpdates":155,"./reactProdInvariant":198,"_process":74,"fbjs/lib/invariant":64,"fbjs/lib/warning":71,"object-assign":73}],117:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -23237,7 +27112,7 @@ function validateProperty(tagName, name, debugID) {
     }
     // aria-* attributes should be lowercase; suggest the lowercase version.
     if (name !== standardName) {
-      "production" !== 'production' ? warning(false, 'Unknown ARIA attribute %s. Did you mean %s?%s', name, standardName, ReactComponentTreeHook.getStackAddendumByID(debugID)) : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(false, 'Unknown ARIA attribute %s. Did you mean %s?%s', name, standardName, ReactComponentTreeHook.getStackAddendumByID(debugID)) : void 0;
       warnedProperties[name] = true;
       return true;
     }
@@ -23261,9 +27136,9 @@ function warnInvalidARIAProps(debugID, element) {
   }).join(', ');
 
   if (invalidProps.length === 1) {
-    "production" !== 'production' ? warning(false, 'Invalid aria prop %s on <%s> tag. ' + 'For details, see https://fb.me/invalid-aria-prop%s', unknownPropString, element.type, ReactComponentTreeHook.getStackAddendumByID(debugID)) : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(false, 'Invalid aria prop %s on <%s> tag. ' + 'For details, see https://fb.me/invalid-aria-prop%s', unknownPropString, element.type, ReactComponentTreeHook.getStackAddendumByID(debugID)) : void 0;
   } else if (invalidProps.length > 1) {
-    "production" !== 'production' ? warning(false, 'Invalid aria props %s on <%s> tag. ' + 'For details, see https://fb.me/invalid-aria-prop%s', unknownPropString, element.type, ReactComponentTreeHook.getStackAddendumByID(debugID)) : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(false, 'Invalid aria props %s on <%s> tag. ' + 'For details, see https://fb.me/invalid-aria-prop%s', unknownPropString, element.type, ReactComponentTreeHook.getStackAddendumByID(debugID)) : void 0;
   }
 }
 
@@ -23280,19 +27155,21 @@ function handleElement(debugID, element) {
 
 var ReactDOMInvalidARIAHook = {
   onBeforeMountComponent: function (debugID, element) {
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       handleElement(debugID, element);
     }
   },
   onBeforeUpdateComponent: function (debugID, element) {
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       handleElement(debugID, element);
     }
   }
 };
 
 module.exports = ReactDOMInvalidARIAHook;
-},{"./DOMProperty":79,"fbjs/lib/warning":65,"react/lib/ReactComponentTreeHook":201}],108:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./DOMProperty":89,"_process":74,"fbjs/lib/warning":71,"react/lib/ReactComponentTreeHook":210}],118:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -23319,7 +27196,7 @@ function handleElement(debugID, element) {
     return;
   }
   if (element.props != null && element.props.value === null && !didWarnValueNull) {
-    "production" !== 'production' ? warning(false, '`value` prop on `%s` should not be null. ' + 'Consider using the empty string to clear the component or `undefined` ' + 'for uncontrolled components.%s', element.type, ReactComponentTreeHook.getStackAddendumByID(debugID)) : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(false, '`value` prop on `%s` should not be null. ' + 'Consider using the empty string to clear the component or `undefined` ' + 'for uncontrolled components.%s', element.type, ReactComponentTreeHook.getStackAddendumByID(debugID)) : void 0;
 
     didWarnValueNull = true;
   }
@@ -23335,7 +27212,9 @@ var ReactDOMNullInputValuePropHook = {
 };
 
 module.exports = ReactDOMNullInputValuePropHook;
-},{"fbjs/lib/warning":65,"react/lib/ReactComponentTreeHook":201}],109:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"_process":74,"fbjs/lib/warning":71,"react/lib/ReactComponentTreeHook":210}],119:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -23370,7 +27249,7 @@ function flattenChildren(children) {
       content += child;
     } else if (!didWarnInvalidOptionChildren) {
       didWarnInvalidOptionChildren = true;
-      "production" !== 'production' ? warning(false, 'Only strings and numbers are supported as <option> children.') : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(false, 'Only strings and numbers are supported as <option> children.') : void 0;
     }
   });
 
@@ -23383,8 +27262,8 @@ function flattenChildren(children) {
 var ReactDOMOption = {
   mountWrapper: function (inst, props, hostParent) {
     // TODO (yungsters): Remove support for `selected` in <option>.
-    if ("production" !== 'production') {
-      "production" !== 'production' ? warning(props.selected == null, 'Use the `defaultValue` or `value` props on <select> instead of ' + 'setting `selected` on <option>.') : void 0;
+    if (process.env.NODE_ENV !== 'production') {
+      process.env.NODE_ENV !== 'production' ? warning(props.selected == null, 'Use the `defaultValue` or `value` props on <select> instead of ' + 'setting `selected` on <option>.') : void 0;
     }
 
     // Look up whether this option is 'selected'
@@ -23454,11 +27333,12 @@ var ReactDOMOption = {
 
     return hostProps;
   }
-
 };
 
 module.exports = ReactDOMOption;
-},{"./ReactDOMComponentTree":101,"./ReactDOMSelect":110,"fbjs/lib/warning":65,"object-assign":67,"react/lib/React":197}],110:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./ReactDOMComponentTree":111,"./ReactDOMSelect":120,"_process":74,"fbjs/lib/warning":71,"object-assign":73,"react/lib/React":207}],120:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -23516,7 +27396,7 @@ function checkSelectPropTypes(inst, props) {
   LinkedValueUtils.checkPropTypes('select', props, owner);
 
   if (props.valueLink !== undefined && !didWarnValueLink) {
-    "production" !== 'production' ? warning(false, '`valueLink` prop on `select` is deprecated; set `value` and `onChange` instead.') : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(false, '`valueLink` prop on `select` is deprecated; set `value` and `onChange` instead.') : void 0;
     didWarnValueLink = true;
   }
 
@@ -23527,9 +27407,9 @@ function checkSelectPropTypes(inst, props) {
     }
     var isArray = Array.isArray(props[propName]);
     if (props.multiple && !isArray) {
-      "production" !== 'production' ? warning(false, 'The `%s` prop supplied to <select> must be an array if ' + '`multiple` is true.%s', propName, getDeclarationErrorAddendum(owner)) : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(false, 'The `%s` prop supplied to <select> must be an array if ' + '`multiple` is true.%s', propName, getDeclarationErrorAddendum(owner)) : void 0;
     } else if (!props.multiple && isArray) {
-      "production" !== 'production' ? warning(false, 'The `%s` prop supplied to <select> must be a scalar ' + 'value if `multiple` is false.%s', propName, getDeclarationErrorAddendum(owner)) : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(false, 'The `%s` prop supplied to <select> must be a scalar ' + 'value if `multiple` is false.%s', propName, getDeclarationErrorAddendum(owner)) : void 0;
     }
   }
 }
@@ -23595,7 +27475,7 @@ var ReactDOMSelect = {
   },
 
   mountWrapper: function (inst, props) {
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       checkSelectPropTypes(inst, props);
     }
 
@@ -23609,7 +27489,7 @@ var ReactDOMSelect = {
     };
 
     if (props.value !== undefined && props.defaultValue !== undefined && !didWarnValueDefaultValue) {
-      "production" !== 'production' ? warning(false, 'Select elements must be either controlled or uncontrolled ' + '(specify either the value prop, or the defaultValue prop, but not ' + 'both). Decide between using a controlled or uncontrolled select ' + 'element and remove one of these props. More info: ' + 'https://fb.me/react-controlled-components') : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(false, 'Select elements must be either controlled or uncontrolled ' + '(specify either the value prop, or the defaultValue prop, but not ' + 'both). Decide between using a controlled or uncontrolled select ' + 'element and remove one of these props. More info: ' + 'https://fb.me/react-controlled-components') : void 0;
       didWarnValueDefaultValue = true;
     }
   },
@@ -23658,7 +27538,8 @@ function _handleChange(event) {
 }
 
 module.exports = ReactDOMSelect;
-},{"./LinkedValueUtils":91,"./ReactDOMComponentTree":101,"./ReactUpdates":145,"fbjs/lib/warning":65,"object-assign":67}],111:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./LinkedValueUtils":101,"./ReactDOMComponentTree":111,"./ReactUpdates":155,"_process":74,"fbjs/lib/warning":71,"object-assign":73}],121:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -23870,7 +27751,8 @@ var ReactDOMSelection = {
 };
 
 module.exports = ReactDOMSelection;
-},{"./getNodeForCharacterOffset":181,"./getTextContentAccessor":182,"fbjs/lib/ExecutionEnvironment":44}],112:[function(require,module,exports){
+},{"./getNodeForCharacterOffset":190,"./getTextContentAccessor":191,"fbjs/lib/ExecutionEnvironment":50}],122:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -23925,7 +27807,6 @@ var ReactDOMTextComponent = function (text) {
 };
 
 _assign(ReactDOMTextComponent.prototype, {
-
   /**
    * Creates the markup for this text node. This node is not intended to have
    * any features besides containing text content.
@@ -23935,7 +27816,7 @@ _assign(ReactDOMTextComponent.prototype, {
    * @internal
    */
   mountComponent: function (transaction, hostParent, hostContainerInfo, context) {
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       var parentInfo;
       if (hostParent != null) {
         parentInfo = hostParent._ancestorInfo;
@@ -24012,7 +27893,7 @@ _assign(ReactDOMTextComponent.prototype, {
       var openingComment = ReactDOMComponentTree.getNodeFromInstance(this);
       var node = openingComment.nextSibling;
       while (true) {
-        !(node != null) ? "production" !== 'production' ? invariant(false, 'Missing closing comment for text component %s', this._domID) : _prodInvariant('67', this._domID) : void 0;
+        !(node != null) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Missing closing comment for text component %s', this._domID) : _prodInvariant('67', this._domID) : void 0;
         if (node.nodeType === 8 && node.nodeValue === ' /react-text ') {
           this._closingComment = node;
           break;
@@ -24030,11 +27911,12 @@ _assign(ReactDOMTextComponent.prototype, {
     this._commentNodes = null;
     ReactDOMComponentTree.uncacheNode(this);
   }
-
 });
 
 module.exports = ReactDOMTextComponent;
-},{"./DOMChildrenOperations":76,"./DOMLazyTree":77,"./ReactDOMComponentTree":101,"./escapeTextContentForBrowser":170,"./reactProdInvariant":188,"./validateDOMNesting":194,"fbjs/lib/invariant":58,"object-assign":67}],113:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./DOMChildrenOperations":86,"./DOMLazyTree":87,"./ReactDOMComponentTree":111,"./escapeTextContentForBrowser":180,"./reactProdInvariant":198,"./validateDOMNesting":204,"_process":74,"fbjs/lib/invariant":64,"object-assign":73}],123:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -24084,7 +27966,7 @@ function forceUpdateIfMounted() {
  */
 var ReactDOMTextarea = {
   getHostProps: function (inst, props) {
-    !(props.dangerouslySetInnerHTML == null) ? "production" !== 'production' ? invariant(false, '`dangerouslySetInnerHTML` does not make sense on <textarea>.') : _prodInvariant('91') : void 0;
+    !(props.dangerouslySetInnerHTML == null) ? process.env.NODE_ENV !== 'production' ? invariant(false, '`dangerouslySetInnerHTML` does not make sense on <textarea>.') : _prodInvariant('91') : void 0;
 
     // Always set children to the same thing. In IE9, the selection range will
     // get reset if `textContent` is mutated.  We could add a check in setTextContent
@@ -24102,14 +27984,14 @@ var ReactDOMTextarea = {
   },
 
   mountWrapper: function (inst, props) {
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       LinkedValueUtils.checkPropTypes('textarea', props, inst._currentElement._owner);
       if (props.valueLink !== undefined && !didWarnValueLink) {
-        "production" !== 'production' ? warning(false, '`valueLink` prop on `textarea` is deprecated; set `value` and `onChange` instead.') : void 0;
+        process.env.NODE_ENV !== 'production' ? warning(false, '`valueLink` prop on `textarea` is deprecated; set `value` and `onChange` instead.') : void 0;
         didWarnValueLink = true;
       }
       if (props.value !== undefined && props.defaultValue !== undefined && !didWarnValDefaultVal) {
-        "production" !== 'production' ? warning(false, 'Textarea elements must be either controlled or uncontrolled ' + '(specify either the value prop, or the defaultValue prop, but not ' + 'both). Decide between using a controlled or uncontrolled textarea ' + 'and remove one of these props. More info: ' + 'https://fb.me/react-controlled-components') : void 0;
+        process.env.NODE_ENV !== 'production' ? warning(false, 'Textarea elements must be either controlled or uncontrolled ' + '(specify either the value prop, or the defaultValue prop, but not ' + 'both). Decide between using a controlled or uncontrolled textarea ' + 'and remove one of these props. More info: ' + 'https://fb.me/react-controlled-components') : void 0;
         didWarnValDefaultVal = true;
       }
     }
@@ -24123,12 +28005,12 @@ var ReactDOMTextarea = {
       // TODO (yungsters): Remove support for children content in <textarea>.
       var children = props.children;
       if (children != null) {
-        if ("production" !== 'production') {
-          "production" !== 'production' ? warning(false, 'Use the `defaultValue` or `value` props instead of setting ' + 'children on <textarea>.') : void 0;
+        if (process.env.NODE_ENV !== 'production') {
+          process.env.NODE_ENV !== 'production' ? warning(false, 'Use the `defaultValue` or `value` props instead of setting ' + 'children on <textarea>.') : void 0;
         }
-        !(defaultValue == null) ? "production" !== 'production' ? invariant(false, 'If you supply `defaultValue` on a <textarea>, do not pass children.') : _prodInvariant('92') : void 0;
+        !(defaultValue == null) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'If you supply `defaultValue` on a <textarea>, do not pass children.') : _prodInvariant('92') : void 0;
         if (Array.isArray(children)) {
-          !(children.length <= 1) ? "production" !== 'production' ? invariant(false, '<textarea> can only have at most one child.') : _prodInvariant('93') : void 0;
+          !(children.length <= 1) ? process.env.NODE_ENV !== 'production' ? invariant(false, '<textarea> can only have at most one child.') : _prodInvariant('93') : void 0;
           children = children[0];
         }
 
@@ -24174,9 +28056,15 @@ var ReactDOMTextarea = {
     // This is in postMount because we need access to the DOM node, which is not
     // available until after the component has mounted.
     var node = ReactDOMComponentTree.getNodeFromInstance(inst);
+    var textContent = node.textContent;
 
-    // Warning: node.value may be the empty string at this point (IE11) if placeholder is set.
-    node.value = node.textContent; // Detach value from defaultValue
+    // Only set node.value if textContent is equal to the expected
+    // initial value. In IE10/IE11 there is a bug where the placeholder attribute
+    // will populate textContent as well.
+    // https://developer.microsoft.com/microsoft-edge/platform/issues/101525/
+    if (textContent === inst._wrapperState.initialValue) {
+      node.value = textContent;
+    }
   }
 };
 
@@ -24188,7 +28076,9 @@ function _handleChange(event) {
 }
 
 module.exports = ReactDOMTextarea;
-},{"./LinkedValueUtils":91,"./ReactDOMComponentTree":101,"./ReactUpdates":145,"./reactProdInvariant":188,"fbjs/lib/invariant":58,"fbjs/lib/warning":65,"object-assign":67}],114:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./LinkedValueUtils":101,"./ReactDOMComponentTree":111,"./ReactUpdates":155,"./reactProdInvariant":198,"_process":74,"fbjs/lib/invariant":64,"fbjs/lib/warning":71,"object-assign":73}],124:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2015-present, Facebook, Inc.
  * All rights reserved.
@@ -24210,8 +28100,8 @@ var invariant = require('fbjs/lib/invariant');
  * different trees.
  */
 function getLowestCommonAncestor(instA, instB) {
-  !('_hostNode' in instA) ? "production" !== 'production' ? invariant(false, 'getNodeFromInstance: Invalid argument.') : _prodInvariant('33') : void 0;
-  !('_hostNode' in instB) ? "production" !== 'production' ? invariant(false, 'getNodeFromInstance: Invalid argument.') : _prodInvariant('33') : void 0;
+  !('_hostNode' in instA) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'getNodeFromInstance: Invalid argument.') : _prodInvariant('33') : void 0;
+  !('_hostNode' in instB) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'getNodeFromInstance: Invalid argument.') : _prodInvariant('33') : void 0;
 
   var depthA = 0;
   for (var tempA = instA; tempA; tempA = tempA._hostParent) {
@@ -24250,8 +28140,8 @@ function getLowestCommonAncestor(instA, instB) {
  * Return if A is an ancestor of B.
  */
 function isAncestor(instA, instB) {
-  !('_hostNode' in instA) ? "production" !== 'production' ? invariant(false, 'isAncestor: Invalid argument.') : _prodInvariant('35') : void 0;
-  !('_hostNode' in instB) ? "production" !== 'production' ? invariant(false, 'isAncestor: Invalid argument.') : _prodInvariant('35') : void 0;
+  !('_hostNode' in instA) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'isAncestor: Invalid argument.') : _prodInvariant('35') : void 0;
+  !('_hostNode' in instB) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'isAncestor: Invalid argument.') : _prodInvariant('35') : void 0;
 
   while (instB) {
     if (instB === instA) {
@@ -24266,7 +28156,7 @@ function isAncestor(instA, instB) {
  * Return the parent instance of the passed-in instance.
  */
 function getParentInstance(inst) {
-  !('_hostNode' in inst) ? "production" !== 'production' ? invariant(false, 'getParentInstance: Invalid argument.') : _prodInvariant('36') : void 0;
+  !('_hostNode' in inst) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'getParentInstance: Invalid argument.') : _prodInvariant('36') : void 0;
 
   return inst._hostParent;
 }
@@ -24324,7 +28214,9 @@ module.exports = {
   traverseTwoPhase: traverseTwoPhase,
   traverseEnterLeave: traverseEnterLeave
 };
-},{"./reactProdInvariant":188,"fbjs/lib/invariant":58}],115:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./reactProdInvariant":198,"_process":74,"fbjs/lib/invariant":64}],125:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -24343,7 +28235,7 @@ var ReactComponentTreeHook = require('react/lib/ReactComponentTreeHook');
 
 var warning = require('fbjs/lib/warning');
 
-if ("production" !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
   var reactProps = {
     children: true,
     dangerouslySetInnerHTML: true,
@@ -24381,10 +28273,10 @@ if ("production" !== 'production') {
     var registrationName = EventPluginRegistry.possibleRegistrationNames.hasOwnProperty(lowerCasedName) ? EventPluginRegistry.possibleRegistrationNames[lowerCasedName] : null;
 
     if (standardName != null) {
-      "production" !== 'production' ? warning(false, 'Unknown DOM property %s. Did you mean %s?%s', name, standardName, ReactComponentTreeHook.getStackAddendumByID(debugID)) : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(false, 'Unknown DOM property %s. Did you mean %s?%s', name, standardName, ReactComponentTreeHook.getStackAddendumByID(debugID)) : void 0;
       return true;
     } else if (registrationName != null) {
-      "production" !== 'production' ? warning(false, 'Unknown event handler property %s. Did you mean `%s`?%s', name, registrationName, ReactComponentTreeHook.getStackAddendumByID(debugID)) : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(false, 'Unknown event handler property %s. Did you mean `%s`?%s', name, registrationName, ReactComponentTreeHook.getStackAddendumByID(debugID)) : void 0;
       return true;
     } else {
       // We were unable to guess which prop the user intended.
@@ -24410,9 +28302,9 @@ var warnUnknownProperties = function (debugID, element) {
   }).join(', ');
 
   if (unknownProps.length === 1) {
-    "production" !== 'production' ? warning(false, 'Unknown prop %s on <%s> tag. Remove this prop from the element. ' + 'For details, see https://fb.me/react-unknown-prop%s', unknownPropString, element.type, ReactComponentTreeHook.getStackAddendumByID(debugID)) : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(false, 'Unknown prop %s on <%s> tag. Remove this prop from the element. ' + 'For details, see https://fb.me/react-unknown-prop%s', unknownPropString, element.type, ReactComponentTreeHook.getStackAddendumByID(debugID)) : void 0;
   } else if (unknownProps.length > 1) {
-    "production" !== 'production' ? warning(false, 'Unknown props %s on <%s> tag. Remove these props from the element. ' + 'For details, see https://fb.me/react-unknown-prop%s', unknownPropString, element.type, ReactComponentTreeHook.getStackAddendumByID(debugID)) : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(false, 'Unknown props %s on <%s> tag. Remove these props from the element. ' + 'For details, see https://fb.me/react-unknown-prop%s', unknownPropString, element.type, ReactComponentTreeHook.getStackAddendumByID(debugID)) : void 0;
   }
 };
 
@@ -24436,7 +28328,9 @@ var ReactDOMUnknownPropertyHook = {
 };
 
 module.exports = ReactDOMUnknownPropertyHook;
-},{"./DOMProperty":79,"./EventPluginRegistry":85,"fbjs/lib/warning":65,"react/lib/ReactComponentTreeHook":201}],116:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./DOMProperty":89,"./EventPluginRegistry":95,"_process":74,"fbjs/lib/warning":71,"react/lib/ReactComponentTreeHook":210}],126:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2016-present, Facebook, Inc.
  * All rights reserved.
@@ -24465,7 +28359,7 @@ function callHook(event, fn, context, arg1, arg2, arg3, arg4, arg5) {
   try {
     fn.call(context, arg1, arg2, arg3, arg4, arg5);
   } catch (e) {
-    "production" !== 'production' ? warning(didHookThrowForEvent[event], 'Exception thrown by hook while handling %s: %s', event, e + '\n' + e.stack) : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(didHookThrowForEvent[event], 'Exception thrown by hook while handling %s: %s', event, e + '\n' + e.stack) : void 0;
     didHookThrowForEvent[event] = true;
   }
 }
@@ -24549,7 +28443,7 @@ function checkDebugID(debugID) {
     return;
   }
   if (!debugID) {
-    "production" !== 'production' ? warning(false, 'ReactDebugTool: debugID may not be empty.') : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(false, 'ReactDebugTool: debugID may not be empty.') : void 0;
   }
 }
 
@@ -24558,7 +28452,7 @@ function beginLifeCycleTimer(debugID, timerType) {
     return;
   }
   if (currentTimerType && !lifeCycleTimerHasWarned) {
-    "production" !== 'production' ? warning(false, 'There is an internal error in the React performance measurement code. ' + 'Did not expect %s timer to start while %s timer is still in ' + 'progress for %s instance.', timerType, currentTimerType || 'no', debugID === currentTimerDebugID ? 'the same' : 'another') : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(false, 'There is an internal error in the React performance measurement code. ' + 'Did not expect %s timer to start while %s timer is still in ' + 'progress for %s instance.', timerType, currentTimerType || 'no', debugID === currentTimerDebugID ? 'the same' : 'another') : void 0;
     lifeCycleTimerHasWarned = true;
   }
   currentTimerStartTime = performanceNow();
@@ -24572,7 +28466,7 @@ function endLifeCycleTimer(debugID, timerType) {
     return;
   }
   if (currentTimerType !== timerType && !lifeCycleTimerHasWarned) {
-    "production" !== 'production' ? warning(false, 'There is an internal error in the React performance measurement code. ' + 'We did not expect %s timer to stop while %s timer is still in ' + 'progress for %s instance. Please report this as a bug in React.', timerType, currentTimerType || 'no', debugID === currentTimerDebugID ? 'the same' : 'another') : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(false, 'There is an internal error in the React performance measurement code. ' + 'We did not expect %s timer to stop while %s timer is still in ' + 'progress for %s instance. Please report this as a bug in React.', timerType, currentTimerType || 'no', debugID === currentTimerDebugID ? 'the same' : 'another') : void 0;
     lifeCycleTimerHasWarned = true;
   }
   if (isProfiling) {
@@ -24617,9 +28511,7 @@ function resumeCurrentLifeCycleTimer() {
 }
 
 var lastMarkTimeStamp = 0;
-var canUsePerformanceMeasure =
-// $FlowFixMe https://github.com/facebook/flow/issues/2345
-typeof performance !== 'undefined' && typeof performance.mark === 'function' && typeof performance.clearMarks === 'function' && typeof performance.measure === 'function' && typeof performance.clearMeasures === 'function';
+var canUsePerformanceMeasure = typeof performance !== 'undefined' && typeof performance.mark === 'function' && typeof performance.clearMarks === 'function' && typeof performance.measure === 'function' && typeof performance.clearMeasures === 'function';
 
 function shouldMark(debugID) {
   if (!isProfiling || !canUsePerformanceMeasure) {
@@ -24667,7 +28559,9 @@ function markEnd(debugID, markType) {
   }
 
   performance.clearMarks(markName);
-  performance.clearMeasures(measurementName);
+  if (measurementName) {
+    performance.clearMeasures(measurementName);
+  }
 }
 
 var ReactDebugTool = {
@@ -24797,7 +28691,8 @@ if (/[?&]react_perf\b/.test(url)) {
 }
 
 module.exports = ReactDebugTool;
-},{"./ReactHostOperationHistoryHook":126,"./ReactInvalidSetStateWarningHook":131,"fbjs/lib/ExecutionEnvironment":44,"fbjs/lib/performanceNow":63,"fbjs/lib/warning":65,"react/lib/ReactComponentTreeHook":201}],117:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./ReactHostOperationHistoryHook":136,"./ReactInvalidSetStateWarningHook":141,"_process":74,"fbjs/lib/ExecutionEnvironment":50,"fbjs/lib/performanceNow":69,"fbjs/lib/warning":71,"react/lib/ReactComponentTreeHook":210}],127:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -24865,7 +28760,7 @@ var ReactDefaultBatchingStrategy = {
 };
 
 module.exports = ReactDefaultBatchingStrategy;
-},{"./ReactUpdates":145,"./Transaction":163,"fbjs/lib/emptyFunction":50,"object-assign":67}],118:[function(require,module,exports){
+},{"./ReactUpdates":155,"./Transaction":173,"fbjs/lib/emptyFunction":56,"object-assign":73}],128:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -24951,7 +28846,7 @@ function inject() {
 module.exports = {
   inject: inject
 };
-},{"./ARIADOMPropertyConfig":69,"./BeforeInputEventPlugin":71,"./ChangeEventPlugin":75,"./DefaultEventPluginOrder":82,"./EnterLeaveEventPlugin":83,"./HTMLDOMPropertyConfig":89,"./ReactComponentBrowserEnvironment":95,"./ReactDOMComponent":99,"./ReactDOMComponentTree":101,"./ReactDOMEmptyComponent":103,"./ReactDOMTextComponent":112,"./ReactDOMTreeTraversal":114,"./ReactDefaultBatchingStrategy":117,"./ReactEventListener":123,"./ReactInjection":127,"./ReactReconcileTransaction":139,"./SVGDOMPropertyConfig":147,"./SelectEventPlugin":148,"./SimpleEventPlugin":149}],119:[function(require,module,exports){
+},{"./ARIADOMPropertyConfig":79,"./BeforeInputEventPlugin":81,"./ChangeEventPlugin":85,"./DefaultEventPluginOrder":92,"./EnterLeaveEventPlugin":93,"./HTMLDOMPropertyConfig":99,"./ReactComponentBrowserEnvironment":105,"./ReactDOMComponent":109,"./ReactDOMComponentTree":111,"./ReactDOMEmptyComponent":113,"./ReactDOMTextComponent":122,"./ReactDOMTreeTraversal":124,"./ReactDefaultBatchingStrategy":127,"./ReactEventListener":133,"./ReactInjection":137,"./ReactReconcileTransaction":149,"./SVGDOMPropertyConfig":157,"./SelectEventPlugin":158,"./SimpleEventPlugin":159}],129:[function(require,module,exports){
 /**
  * Copyright 2014-present, Facebook, Inc.
  * All rights reserved.
@@ -24971,7 +28866,7 @@ module.exports = {
 var REACT_ELEMENT_TYPE = typeof Symbol === 'function' && Symbol['for'] && Symbol['for']('react.element') || 0xeac7;
 
 module.exports = REACT_ELEMENT_TYPE;
-},{}],120:[function(require,module,exports){
+},{}],130:[function(require,module,exports){
 /**
  * Copyright 2014-present, Facebook, Inc.
  * All rights reserved.
@@ -25001,7 +28896,8 @@ var ReactEmptyComponent = {
 ReactEmptyComponent.injection = ReactEmptyComponentInjection;
 
 module.exports = ReactEmptyComponent;
-},{}],121:[function(require,module,exports){
+},{}],131:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -25057,7 +28953,7 @@ var ReactErrorUtils = {
   }
 };
 
-if ("production" !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
   /**
    * To help development we can get better devtools integration by simulating a
    * real browser event.
@@ -25069,7 +28965,6 @@ if ("production" !== 'production') {
       var evtType = 'react-' + name;
       fakeNode.addEventListener(evtType, boundFunc, false);
       var evt = document.createEvent('Event');
-      // $FlowFixMe https://github.com/facebook/flow/issues/2336
       evt.initEvent(evtType, false, false);
       fakeNode.dispatchEvent(evt);
       fakeNode.removeEventListener(evtType, boundFunc, false);
@@ -25078,7 +28973,8 @@ if ("production" !== 'production') {
 }
 
 module.exports = ReactErrorUtils;
-},{}],122:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"_process":74}],132:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -25099,7 +28995,6 @@ function runEventQueueInBatch(events) {
 }
 
 var ReactEventEmitterMixin = {
-
   /**
    * Streams a fired top-level event to `EventPluginHub` where plugins have the
    * opportunity to create `ReactEvent`s to be dispatched.
@@ -25111,7 +29006,7 @@ var ReactEventEmitterMixin = {
 };
 
 module.exports = ReactEventEmitterMixin;
-},{"./EventPluginHub":84}],123:[function(require,module,exports){
+},{"./EventPluginHub":94}],133:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -25266,7 +29161,7 @@ var ReactEventListener = {
 };
 
 module.exports = ReactEventListener;
-},{"./PooledClass":92,"./ReactDOMComponentTree":101,"./ReactUpdates":145,"./getEventTarget":177,"fbjs/lib/EventListener":43,"fbjs/lib/ExecutionEnvironment":44,"fbjs/lib/getUnboundedScrollPosition":55,"object-assign":67}],124:[function(require,module,exports){
+},{"./PooledClass":102,"./ReactDOMComponentTree":111,"./ReactUpdates":155,"./getEventTarget":187,"fbjs/lib/EventListener":49,"fbjs/lib/ExecutionEnvironment":50,"fbjs/lib/getUnboundedScrollPosition":61,"object-assign":73}],134:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -25288,7 +29183,8 @@ var ReactFeatureFlags = {
 };
 
 module.exports = ReactFeatureFlags;
-},{}],125:[function(require,module,exports){
+},{}],135:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2014-present, Facebook, Inc.
  * All rights reserved.
@@ -25301,14 +29197,11 @@ module.exports = ReactFeatureFlags;
 
 'use strict';
 
-var _prodInvariant = require('./reactProdInvariant'),
-    _assign = require('object-assign');
+var _prodInvariant = require('./reactProdInvariant');
 
 var invariant = require('fbjs/lib/invariant');
 
 var genericComponentClass = null;
-// This registry keeps track of wrapper classes around host tags.
-var tagToComponentClass = {};
 var textComponentClass = null;
 
 var ReactHostComponentInjection = {
@@ -25321,11 +29214,6 @@ var ReactHostComponentInjection = {
   // rendered as props.
   injectTextComponentClass: function (componentClass) {
     textComponentClass = componentClass;
-  },
-  // This accepts a keyed object with classes as values. Each key represents a
-  // tag. That particular tag will use this class instead of the generic one.
-  injectComponentClasses: function (componentClasses) {
-    _assign(tagToComponentClass, componentClasses);
   }
 };
 
@@ -25336,7 +29224,7 @@ var ReactHostComponentInjection = {
  * @return {function} The internal class constructor function.
  */
 function createInternalComponent(element) {
-  !genericComponentClass ? "production" !== 'production' ? invariant(false, 'There is no registered component for the tag %s', element.type) : _prodInvariant('111', element.type) : void 0;
+  !genericComponentClass ? process.env.NODE_ENV !== 'production' ? invariant(false, 'There is no registered component for the tag %s', element.type) : _prodInvariant('111', element.type) : void 0;
   return new genericComponentClass(element);
 }
 
@@ -25364,7 +29252,8 @@ var ReactHostComponent = {
 };
 
 module.exports = ReactHostComponent;
-},{"./reactProdInvariant":188,"fbjs/lib/invariant":58,"object-assign":67}],126:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./reactProdInvariant":198,"_process":74,"fbjs/lib/invariant":64}],136:[function(require,module,exports){
 /**
  * Copyright 2016-present, Facebook, Inc.
  * All rights reserved.
@@ -25398,7 +29287,7 @@ var ReactHostOperationHistoryHook = {
 };
 
 module.exports = ReactHostOperationHistoryHook;
-},{}],127:[function(require,module,exports){
+},{}],137:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -25432,7 +29321,7 @@ var ReactInjection = {
 };
 
 module.exports = ReactInjection;
-},{"./DOMProperty":79,"./EventPluginHub":84,"./EventPluginUtils":86,"./ReactBrowserEventEmitter":93,"./ReactComponentEnvironment":96,"./ReactEmptyComponent":120,"./ReactHostComponent":125,"./ReactUpdates":145}],128:[function(require,module,exports){
+},{"./DOMProperty":89,"./EventPluginHub":94,"./EventPluginUtils":96,"./ReactBrowserEventEmitter":103,"./ReactComponentEnvironment":106,"./ReactEmptyComponent":130,"./ReactHostComponent":135,"./ReactUpdates":155}],138:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -25462,7 +29351,6 @@ function isInDocument(node) {
  * Input selection module for React.
  */
 var ReactInputSelection = {
-
   hasSelectionCapabilities: function (elem) {
     var nodeName = elem && elem.nodeName && elem.nodeName.toLowerCase();
     return nodeName && (nodeName === 'input' && elem.type === 'text' || nodeName === 'textarea' || elem.contentEditable === 'true');
@@ -25556,7 +29444,7 @@ var ReactInputSelection = {
 };
 
 module.exports = ReactInputSelection;
-},{"./ReactDOMSelection":111,"fbjs/lib/containsNode":47,"fbjs/lib/focusNode":52,"fbjs/lib/getActiveElement":53}],129:[function(require,module,exports){
+},{"./ReactDOMSelection":121,"fbjs/lib/containsNode":53,"fbjs/lib/focusNode":58,"fbjs/lib/getActiveElement":59}],139:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -25579,7 +29467,6 @@ module.exports = ReactInputSelection;
 // TODO: Replace this with ES6: var ReactInstanceMap = new Map();
 
 var ReactInstanceMap = {
-
   /**
    * This API should be called `delete` but we'd have to make sure to always
    * transform these to strings for IE support. When this transform is fully
@@ -25600,11 +29487,11 @@ var ReactInstanceMap = {
   set: function (key, value) {
     key._reactInternalInstance = value;
   }
-
 };
 
 module.exports = ReactInstanceMap;
-},{}],130:[function(require,module,exports){
+},{}],140:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2016-present, Facebook, Inc.
  * All rights reserved.
@@ -25622,13 +29509,15 @@ module.exports = ReactInstanceMap;
 
 var debugTool = null;
 
-if ("production" !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
   var ReactDebugTool = require('./ReactDebugTool');
   debugTool = ReactDebugTool;
 }
 
 module.exports = { debugTool: debugTool };
-},{"./ReactDebugTool":116}],131:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./ReactDebugTool":126,"_process":74}],141:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2016-present, Facebook, Inc.
  * All rights reserved.
@@ -25644,11 +29533,11 @@ module.exports = { debugTool: debugTool };
 
 var warning = require('fbjs/lib/warning');
 
-if ("production" !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
   var processingChildContext = false;
 
   var warnInvalidSetState = function () {
-    "production" !== 'production' ? warning(!processingChildContext, 'setState(...): Cannot call setState() inside getChildContext()') : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(!processingChildContext, 'setState(...): Cannot call setState() inside getChildContext()') : void 0;
   };
 }
 
@@ -25665,7 +29554,8 @@ var ReactInvalidSetStateWarningHook = {
 };
 
 module.exports = ReactInvalidSetStateWarningHook;
-},{"fbjs/lib/warning":65}],132:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"_process":74,"fbjs/lib/warning":71}],142:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -25715,7 +29605,8 @@ var ReactMarkupChecksum = {
 };
 
 module.exports = ReactMarkupChecksum;
-},{"./adler32":166}],133:[function(require,module,exports){
+},{"./adler32":176}],143:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -25855,11 +29746,11 @@ function batchedMountComponentIntoNode(componentInstance, container, shouldReuse
  * @see {ReactMount.unmountComponentAtNode}
  */
 function unmountComponentFromNode(instance, container, safely) {
-  if ("production" !== 'production') {
+  if (process.env.NODE_ENV !== 'production') {
     ReactInstrumentation.debugTool.onBeginFlush();
   }
   ReactReconciler.unmountComponent(instance, safely);
-  if ("production" !== 'production') {
+  if (process.env.NODE_ENV !== 'production') {
     ReactInstrumentation.debugTool.onEndFlush();
   }
 
@@ -25947,7 +29838,7 @@ var TopLevelWrapper = function () {
   this.rootID = topLevelRootCounter++;
 };
 TopLevelWrapper.prototype.isReactComponent = {};
-if ("production" !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
   TopLevelWrapper.displayName = 'TopLevelWrapper';
 }
 TopLevelWrapper.prototype.render = function () {
@@ -25974,7 +29865,6 @@ TopLevelWrapper.isReactTopLevelWrapper = true;
  * Inside of `container`, the first element rendered is the "reactRoot".
  */
 var ReactMount = {
-
   TopLevelWrapper: TopLevelWrapper,
 
   /**
@@ -26024,9 +29914,9 @@ var ReactMount = {
     // Various parts of our code (such as ReactCompositeComponent's
     // _renderValidatedComponent) assume that calls to render aren't nested;
     // verify that that's the case.
-    "production" !== 'production' ? warning(ReactCurrentOwner.current == null, '_renderNewRootComponent(): Render methods should be a pure function ' + 'of props and state; triggering nested component updates from ' + 'render is not allowed. If necessary, trigger nested updates in ' + 'componentDidUpdate. Check the render method of %s.', ReactCurrentOwner.current && ReactCurrentOwner.current.getName() || 'ReactCompositeComponent') : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(ReactCurrentOwner.current == null, '_renderNewRootComponent(): Render methods should be a pure function ' + 'of props and state; triggering nested component updates from ' + 'render is not allowed. If necessary, trigger nested updates in ' + 'componentDidUpdate. Check the render method of %s.', ReactCurrentOwner.current && ReactCurrentOwner.current.getName() || 'ReactCompositeComponent') : void 0;
 
-    !isValidContainer(container) ? "production" !== 'production' ? invariant(false, '_registerComponent(...): Target container is not a DOM element.') : _prodInvariant('37') : void 0;
+    !isValidContainer(container) ? process.env.NODE_ENV !== 'production' ? invariant(false, '_registerComponent(...): Target container is not a DOM element.') : _prodInvariant('37') : void 0;
 
     ReactBrowserEventEmitter.ensureScrollValueMonitoring();
     var componentInstance = instantiateReactComponent(nextElement, false);
@@ -26057,19 +29947,20 @@ var ReactMount = {
    * @return {ReactComponent} Component instance rendered in `container`.
    */
   renderSubtreeIntoContainer: function (parentComponent, nextElement, container, callback) {
-    !(parentComponent != null && ReactInstanceMap.has(parentComponent)) ? "production" !== 'production' ? invariant(false, 'parentComponent must be a valid React Component') : _prodInvariant('38') : void 0;
+    !(parentComponent != null && ReactInstanceMap.has(parentComponent)) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'parentComponent must be a valid React Component') : _prodInvariant('38') : void 0;
     return ReactMount._renderSubtreeIntoContainer(parentComponent, nextElement, container, callback);
   },
 
   _renderSubtreeIntoContainer: function (parentComponent, nextElement, container, callback) {
     ReactUpdateQueue.validateCallback(callback, 'ReactDOM.render');
-    !React.isValidElement(nextElement) ? "production" !== 'production' ? invariant(false, 'ReactDOM.render(): Invalid component element.%s', typeof nextElement === 'string' ? ' Instead of passing a string like \'div\', pass ' + 'React.createElement(\'div\') or <div />.' : typeof nextElement === 'function' ? ' Instead of passing a class like Foo, pass ' + 'React.createElement(Foo) or <Foo />.' :
-    // Check if it quacks like an element
-    nextElement != null && nextElement.props !== undefined ? ' This may be caused by unintentionally loading two independent ' + 'copies of React.' : '') : _prodInvariant('39', typeof nextElement === 'string' ? ' Instead of passing a string like \'div\', pass ' + 'React.createElement(\'div\') or <div />.' : typeof nextElement === 'function' ? ' Instead of passing a class like Foo, pass ' + 'React.createElement(Foo) or <Foo />.' : nextElement != null && nextElement.props !== undefined ? ' This may be caused by unintentionally loading two independent ' + 'copies of React.' : '') : void 0;
+    !React.isValidElement(nextElement) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'ReactDOM.render(): Invalid component element.%s', typeof nextElement === 'string' ? " Instead of passing a string like 'div', pass " + "React.createElement('div') or <div />." : typeof nextElement === 'function' ? ' Instead of passing a class like Foo, pass ' + 'React.createElement(Foo) or <Foo />.' : // Check if it quacks like an element
+    nextElement != null && nextElement.props !== undefined ? ' This may be caused by unintentionally loading two independent ' + 'copies of React.' : '') : _prodInvariant('39', typeof nextElement === 'string' ? " Instead of passing a string like 'div', pass " + "React.createElement('div') or <div />." : typeof nextElement === 'function' ? ' Instead of passing a class like Foo, pass ' + 'React.createElement(Foo) or <Foo />.' : nextElement != null && nextElement.props !== undefined ? ' This may be caused by unintentionally loading two independent ' + 'copies of React.' : '') : void 0;
 
-    "production" !== 'production' ? warning(!container || !container.tagName || container.tagName.toUpperCase() !== 'BODY', 'render(): Rendering components directly into document.body is ' + 'discouraged, since its children are often manipulated by third-party ' + 'scripts and browser extensions. This may lead to subtle ' + 'reconciliation issues. Try rendering into a container element created ' + 'for your app.') : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(!container || !container.tagName || container.tagName.toUpperCase() !== 'BODY', 'render(): Rendering components directly into document.body is ' + 'discouraged, since its children are often manipulated by third-party ' + 'scripts and browser extensions. This may lead to subtle ' + 'reconciliation issues. Try rendering into a container element created ' + 'for your app.') : void 0;
 
-    var nextWrappedElement = React.createElement(TopLevelWrapper, { child: nextElement });
+    var nextWrappedElement = React.createElement(TopLevelWrapper, {
+      child: nextElement
+    });
 
     var nextContext;
     if (parentComponent) {
@@ -26100,14 +29991,14 @@ var ReactMount = {
     var containerHasReactMarkup = reactRootElement && !!internalGetID(reactRootElement);
     var containerHasNonRootReactChild = hasNonRootReactChild(container);
 
-    if ("production" !== 'production') {
-      "production" !== 'production' ? warning(!containerHasNonRootReactChild, 'render(...): Replacing React-rendered children with a new root ' + 'component. If you intended to update the children of this node, ' + 'you should instead have the existing children update their state ' + 'and render the new components instead of calling ReactDOM.render.') : void 0;
+    if (process.env.NODE_ENV !== 'production') {
+      process.env.NODE_ENV !== 'production' ? warning(!containerHasNonRootReactChild, 'render(...): Replacing React-rendered children with a new root ' + 'component. If you intended to update the children of this node, ' + 'you should instead have the existing children update their state ' + 'and render the new components instead of calling ReactDOM.render.') : void 0;
 
       if (!containerHasReactMarkup || reactRootElement.nextSibling) {
         var rootElementSibling = reactRootElement;
         while (rootElementSibling) {
           if (internalGetID(rootElementSibling)) {
-            "production" !== 'production' ? warning(false, 'render(): Target node has markup rendered by React, but there ' + 'are unrelated nodes as well. This is most commonly caused by ' + 'white-space inserted around server-rendered markup.') : void 0;
+            process.env.NODE_ENV !== 'production' ? warning(false, 'render(): Target node has markup rendered by React, but there ' + 'are unrelated nodes as well. This is most commonly caused by ' + 'white-space inserted around server-rendered markup.') : void 0;
             break;
           }
           rootElementSibling = rootElementSibling.nextSibling;
@@ -26153,12 +30044,12 @@ var ReactMount = {
     // _renderValidatedComponent) assume that calls to render aren't nested;
     // verify that that's the case. (Strictly speaking, unmounting won't cause a
     // render but we still don't expect to be in a render call here.)
-    "production" !== 'production' ? warning(ReactCurrentOwner.current == null, 'unmountComponentAtNode(): Render methods should be a pure function ' + 'of props and state; triggering nested component updates from render ' + 'is not allowed. If necessary, trigger nested updates in ' + 'componentDidUpdate. Check the render method of %s.', ReactCurrentOwner.current && ReactCurrentOwner.current.getName() || 'ReactCompositeComponent') : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(ReactCurrentOwner.current == null, 'unmountComponentAtNode(): Render methods should be a pure function ' + 'of props and state; triggering nested component updates from render ' + 'is not allowed. If necessary, trigger nested updates in ' + 'componentDidUpdate. Check the render method of %s.', ReactCurrentOwner.current && ReactCurrentOwner.current.getName() || 'ReactCompositeComponent') : void 0;
 
-    !isValidContainer(container) ? "production" !== 'production' ? invariant(false, 'unmountComponentAtNode(...): Target container is not a DOM element.') : _prodInvariant('40') : void 0;
+    !isValidContainer(container) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'unmountComponentAtNode(...): Target container is not a DOM element.') : _prodInvariant('40') : void 0;
 
-    if ("production" !== 'production') {
-      "production" !== 'production' ? warning(!nodeIsRenderedByOtherInstance(container), 'unmountComponentAtNode(): The node you\'re attempting to unmount ' + 'was rendered by another copy of React.') : void 0;
+    if (process.env.NODE_ENV !== 'production') {
+      process.env.NODE_ENV !== 'production' ? warning(!nodeIsRenderedByOtherInstance(container), "unmountComponentAtNode(): The node you're attempting to unmount " + 'was rendered by another copy of React.') : void 0;
     }
 
     var prevComponent = getTopLevelWrapperInContainer(container);
@@ -26170,8 +30061,8 @@ var ReactMount = {
       // Check if the container itself is a React root node.
       var isContainerReactRoot = container.nodeType === 1 && container.hasAttribute(ROOT_ATTR_NAME);
 
-      if ("production" !== 'production') {
-        "production" !== 'production' ? warning(!containerHasNonRootReactChild, 'unmountComponentAtNode(): The node you\'re attempting to unmount ' + 'was rendered by React and is not a top-level container. %s', isContainerReactRoot ? 'You may have accidentally passed in a React root node instead ' + 'of its container.' : 'Instead, have the parent component update its state and ' + 'rerender in order to remove this component.') : void 0;
+      if (process.env.NODE_ENV !== 'production') {
+        process.env.NODE_ENV !== 'production' ? warning(!containerHasNonRootReactChild, "unmountComponentAtNode(): The node you're attempting to unmount " + 'was rendered by React and is not a top-level container. %s', isContainerReactRoot ? 'You may have accidentally passed in a React root node instead ' + 'of its container.' : 'Instead, have the parent component update its state and ' + 'rerender in order to remove this component.') : void 0;
       }
 
       return false;
@@ -26182,7 +30073,7 @@ var ReactMount = {
   },
 
   _mountImageIntoNode: function (markup, container, instance, shouldReuseMarkup, transaction) {
-    !isValidContainer(container) ? "production" !== 'production' ? invariant(false, 'mountComponentIntoNode(...): Target container is not valid.') : _prodInvariant('41') : void 0;
+    !isValidContainer(container) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'mountComponentIntoNode(...): Target container is not valid.') : _prodInvariant('41') : void 0;
 
     if (shouldReuseMarkup) {
       var rootElement = getReactRootElementInContainer(container);
@@ -26197,7 +30088,7 @@ var ReactMount = {
         rootElement.setAttribute(ReactMarkupChecksum.CHECKSUM_ATTR_NAME, checksum);
 
         var normalizedMarkup = markup;
-        if ("production" !== 'production') {
+        if (process.env.NODE_ENV !== 'production') {
           // because rootMarkup is retrieved from the DOM, various normalizations
           // will have occurred which will not be present in `markup`. Here,
           // insert markup into a <div> or <iframe> depending on the container
@@ -26219,15 +30110,15 @@ var ReactMount = {
         var diffIndex = firstDifferenceIndex(normalizedMarkup, rootMarkup);
         var difference = ' (client) ' + normalizedMarkup.substring(diffIndex - 20, diffIndex + 20) + '\n (server) ' + rootMarkup.substring(diffIndex - 20, diffIndex + 20);
 
-        !(container.nodeType !== DOC_NODE_TYPE) ? "production" !== 'production' ? invariant(false, 'You\'re trying to render a component to the document using server rendering but the checksum was invalid. This usually means you rendered a different component type or props on the client from the one on the server, or your render() methods are impure. React cannot handle this case due to cross-browser quirks by rendering at the document root. You should look for environment dependent code in your components and ensure the props are the same client and server side:\n%s', difference) : _prodInvariant('42', difference) : void 0;
+        !(container.nodeType !== DOC_NODE_TYPE) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'You\'re trying to render a component to the document using server rendering but the checksum was invalid. This usually means you rendered a different component type or props on the client from the one on the server, or your render() methods are impure. React cannot handle this case due to cross-browser quirks by rendering at the document root. You should look for environment dependent code in your components and ensure the props are the same client and server side:\n%s', difference) : _prodInvariant('42', difference) : void 0;
 
-        if ("production" !== 'production') {
-          "production" !== 'production' ? warning(false, 'React attempted to reuse markup in a container but the ' + 'checksum was invalid. This generally means that you are ' + 'using server rendering and the markup generated on the ' + 'server was not what the client was expecting. React injected ' + 'new markup to compensate which works but you have lost many ' + 'of the benefits of server rendering. Instead, figure out ' + 'why the markup being generated is different on the client ' + 'or server:\n%s', difference) : void 0;
+        if (process.env.NODE_ENV !== 'production') {
+          process.env.NODE_ENV !== 'production' ? warning(false, 'React attempted to reuse markup in a container but the ' + 'checksum was invalid. This generally means that you are ' + 'using server rendering and the markup generated on the ' + 'server was not what the client was expecting. React injected ' + 'new markup to compensate which works but you have lost many ' + 'of the benefits of server rendering. Instead, figure out ' + 'why the markup being generated is different on the client ' + 'or server:\n%s', difference) : void 0;
         }
       }
     }
 
-    !(container.nodeType !== DOC_NODE_TYPE) ? "production" !== 'production' ? invariant(false, 'You\'re trying to render a component to the document but you didn\'t use server rendering. We can\'t do this without using server rendering due to cross-browser quirks. See ReactDOMServer.renderToString() for server rendering.') : _prodInvariant('43') : void 0;
+    !(container.nodeType !== DOC_NODE_TYPE) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'You\'re trying to render a component to the document but you didn\'t use server rendering. We can\'t do this without using server rendering due to cross-browser quirks. See ReactDOMServer.renderToString() for server rendering.') : _prodInvariant('43') : void 0;
 
     if (transaction.useCreateElement) {
       while (container.lastChild) {
@@ -26239,7 +30130,7 @@ var ReactMount = {
       ReactDOMComponentTree.precacheNode(instance, container.firstChild);
     }
 
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       var hostNode = ReactDOMComponentTree.getInstanceFromNode(container.firstChild);
       if (hostNode._debugID !== 0) {
         ReactInstrumentation.debugTool.onHostOperation({
@@ -26253,7 +30144,9 @@ var ReactMount = {
 };
 
 module.exports = ReactMount;
-},{"./DOMLazyTree":77,"./DOMProperty":79,"./ReactBrowserEventEmitter":93,"./ReactDOMComponentTree":101,"./ReactDOMContainerInfo":102,"./ReactDOMFeatureFlags":104,"./ReactFeatureFlags":124,"./ReactInstanceMap":129,"./ReactInstrumentation":130,"./ReactMarkupChecksum":132,"./ReactReconciler":140,"./ReactUpdateQueue":144,"./ReactUpdates":145,"./instantiateReactComponent":184,"./reactProdInvariant":188,"./setInnerHTML":190,"./shouldUpdateReactComponent":192,"fbjs/lib/emptyObject":51,"fbjs/lib/invariant":58,"fbjs/lib/warning":65,"react/lib/React":197,"react/lib/ReactCurrentOwner":202}],134:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./DOMLazyTree":87,"./DOMProperty":89,"./ReactBrowserEventEmitter":103,"./ReactDOMComponentTree":111,"./ReactDOMContainerInfo":112,"./ReactDOMFeatureFlags":114,"./ReactFeatureFlags":134,"./ReactInstanceMap":139,"./ReactInstrumentation":140,"./ReactMarkupChecksum":142,"./ReactReconciler":150,"./ReactUpdateQueue":154,"./ReactUpdates":155,"./instantiateReactComponent":194,"./reactProdInvariant":198,"./setInnerHTML":200,"./shouldUpdateReactComponent":202,"_process":74,"fbjs/lib/emptyObject":57,"fbjs/lib/invariant":64,"fbjs/lib/warning":71,"react/lib/React":207,"react/lib/ReactCurrentOwner":211}],144:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -26394,7 +30287,7 @@ function processQueue(inst, updateQueue) {
 }
 
 var setChildrenForInstrumentation = emptyFunction;
-if ("production" !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
   var getDebugID = function (inst) {
     if (!inst._debugID) {
       // Check for ART-like instances. TODO: This is silly/gross.
@@ -26424,7 +30317,6 @@ if ("production" !== 'production') {
  * @internal
  */
 var ReactMultiChild = {
-
   /**
    * Provides common functionality for components that must reconcile multiple
    * children. This is used by `ReactDOMComponent` to mount, update, and
@@ -26433,9 +30325,8 @@ var ReactMultiChild = {
    * @lends {ReactMultiChild.prototype}
    */
   Mixin: {
-
     _reconcilerInstantiateChildren: function (nestedChildren, transaction, context) {
-      if ("production" !== 'production') {
+      if (process.env.NODE_ENV !== 'production') {
         var selfDebugID = getDebugID(this);
         if (this._currentElement) {
           try {
@@ -26452,7 +30343,7 @@ var ReactMultiChild = {
     _reconcilerUpdateChildren: function (prevChildren, nextNestedChildrenElements, mountImages, removedNodes, transaction, context) {
       var nextChildren;
       var selfDebugID = 0;
-      if ("production" !== 'production') {
+      if (process.env.NODE_ENV !== 'production') {
         selfDebugID = getDebugID(this);
         if (this._currentElement) {
           try {
@@ -26488,7 +30379,7 @@ var ReactMultiChild = {
         if (children.hasOwnProperty(name)) {
           var child = children[name];
           var selfDebugID = 0;
-          if ("production" !== 'production') {
+          if (process.env.NODE_ENV !== 'production') {
             selfDebugID = getDebugID(this);
           }
           var mountImage = ReactReconciler.mountComponent(child, transaction, this, this._hostContainerInfo, context, selfDebugID);
@@ -26497,7 +30388,7 @@ var ReactMultiChild = {
         }
       }
 
-      if ("production" !== 'production') {
+      if (process.env.NODE_ENV !== 'production') {
         setChildrenForInstrumentation.call(this, children);
       }
 
@@ -26516,7 +30407,7 @@ var ReactMultiChild = {
       ReactChildReconciler.unmountChildren(prevChildren, false);
       for (var name in prevChildren) {
         if (prevChildren.hasOwnProperty(name)) {
-          !false ? "production" !== 'production' ? invariant(false, 'updateTextContent called on non-empty component.') : _prodInvariant('118') : void 0;
+          !false ? process.env.NODE_ENV !== 'production' ? invariant(false, 'updateTextContent called on non-empty component.') : _prodInvariant('118') : void 0;
         }
       }
       // Set new text content.
@@ -26536,7 +30427,7 @@ var ReactMultiChild = {
       ReactChildReconciler.unmountChildren(prevChildren, false);
       for (var name in prevChildren) {
         if (prevChildren.hasOwnProperty(name)) {
-          !false ? "production" !== 'production' ? invariant(false, 'updateTextContent called on non-empty component.') : _prodInvariant('118') : void 0;
+          !false ? process.env.NODE_ENV !== 'production' ? invariant(false, 'updateTextContent called on non-empty component.') : _prodInvariant('118') : void 0;
         }
       }
       var updates = [makeSetMarkup(nextMarkup)];
@@ -26612,7 +30503,7 @@ var ReactMultiChild = {
       }
       this._renderedChildren = nextChildren;
 
-      if ("production" !== 'production') {
+      if (process.env.NODE_ENV !== 'production') {
         setChildrenForInstrumentation.call(this, nextChildren);
       }
     },
@@ -26697,13 +30588,13 @@ var ReactMultiChild = {
       child._mountIndex = null;
       return update;
     }
-
   }
-
 };
 
 module.exports = ReactMultiChild;
-},{"./ReactChildReconciler":94,"./ReactComponentEnvironment":96,"./ReactInstanceMap":129,"./ReactInstrumentation":130,"./ReactReconciler":140,"./flattenChildren":172,"./reactProdInvariant":188,"fbjs/lib/emptyFunction":50,"fbjs/lib/invariant":58,"react/lib/ReactCurrentOwner":202}],135:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./ReactChildReconciler":104,"./ReactComponentEnvironment":106,"./ReactInstanceMap":139,"./ReactInstrumentation":140,"./ReactReconciler":150,"./flattenChildren":182,"./reactProdInvariant":198,"_process":74,"fbjs/lib/emptyFunction":56,"fbjs/lib/invariant":64,"react/lib/ReactCurrentOwner":211}],145:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -26738,12 +30629,14 @@ var ReactNodeTypes = {
         return ReactNodeTypes.HOST;
       }
     }
-    !false ? "production" !== 'production' ? invariant(false, 'Unexpected node: %s', node) : _prodInvariant('26', node) : void 0;
+    !false ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Unexpected node: %s', node) : _prodInvariant('26', node) : void 0;
   }
 };
 
 module.exports = ReactNodeTypes;
-},{"./reactProdInvariant":188,"fbjs/lib/invariant":58,"react/lib/React":197}],136:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./reactProdInvariant":198,"_process":74,"fbjs/lib/invariant":64,"react/lib/React":207}],146:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -26811,7 +30704,7 @@ var ReactOwner = {
    * @internal
    */
   addComponentAsRefTo: function (component, ref, owner) {
-    !isValidOwner(owner) ? "production" !== 'production' ? invariant(false, 'addComponentAsRefTo(...): Only a ReactOwner can have refs. You might be adding a ref to a component that was not created inside a component\'s `render` method, or you have multiple copies of React loaded (details: https://fb.me/react-refs-must-have-owner).') : _prodInvariant('119') : void 0;
+    !isValidOwner(owner) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'addComponentAsRefTo(...): Only a ReactOwner can have refs. You might be adding a ref to a component that was not created inside a component\'s `render` method, or you have multiple copies of React loaded (details: https://fb.me/react-refs-must-have-owner).') : _prodInvariant('119') : void 0;
     owner.attachRef(ref, component);
   },
 
@@ -26825,7 +30718,7 @@ var ReactOwner = {
    * @internal
    */
   removeComponentAsRefFrom: function (component, ref, owner) {
-    !isValidOwner(owner) ? "production" !== 'production' ? invariant(false, 'removeComponentAsRefFrom(...): Only a ReactOwner can have refs. You might be removing a ref to a component that was not created inside a component\'s `render` method, or you have multiple copies of React loaded (details: https://fb.me/react-refs-must-have-owner).') : _prodInvariant('120') : void 0;
+    !isValidOwner(owner) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'removeComponentAsRefFrom(...): Only a ReactOwner can have refs. You might be removing a ref to a component that was not created inside a component\'s `render` method, or you have multiple copies of React loaded (details: https://fb.me/react-refs-must-have-owner).') : _prodInvariant('120') : void 0;
     var ownerPublicInstance = owner.getPublicInstance();
     // Check that `component`'s owner is still alive and that `component` is still the current ref
     // because we do not want to detach the ref if another component stole it.
@@ -26833,11 +30726,12 @@ var ReactOwner = {
       owner.detachRef(ref);
     }
   }
-
 };
 
 module.exports = ReactOwner;
-},{"./reactProdInvariant":188,"fbjs/lib/invariant":58}],137:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./reactProdInvariant":198,"_process":74,"fbjs/lib/invariant":64}],147:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -26853,7 +30747,7 @@ module.exports = ReactOwner;
 
 var ReactPropTypeLocationNames = {};
 
-if ("production" !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
   ReactPropTypeLocationNames = {
     prop: 'prop',
     context: 'context',
@@ -26862,7 +30756,8 @@ if ("production" !== 'production') {
 }
 
 module.exports = ReactPropTypeLocationNames;
-},{}],138:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"_process":74}],148:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -26879,7 +30774,8 @@ module.exports = ReactPropTypeLocationNames;
 var ReactPropTypesSecret = 'SECRET_DO_NOT_PASS_THIS_OR_YOU_WILL_BE_FIRED';
 
 module.exports = ReactPropTypesSecret;
-},{}],139:[function(require,module,exports){
+},{}],149:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -26970,7 +30866,7 @@ var ON_DOM_READY_QUEUEING = {
  */
 var TRANSACTION_WRAPPERS = [SELECTION_RESTORATION, EVENT_SUPPRESSION, ON_DOM_READY_QUEUEING];
 
-if ("production" !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
   TRANSACTION_WRAPPERS.push({
     initialize: ReactInstrumentation.debugTool.onBeginFlush,
     close: ReactInstrumentation.debugTool.onEndFlush
@@ -27057,7 +30953,9 @@ _assign(ReactReconcileTransaction.prototype, Transaction, Mixin);
 PooledClass.addPoolingTo(ReactReconcileTransaction);
 
 module.exports = ReactReconcileTransaction;
-},{"./CallbackQueue":74,"./PooledClass":92,"./ReactBrowserEventEmitter":93,"./ReactInputSelection":128,"./ReactInstrumentation":130,"./ReactUpdateQueue":144,"./Transaction":163,"object-assign":67}],140:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./CallbackQueue":84,"./PooledClass":102,"./ReactBrowserEventEmitter":103,"./ReactInputSelection":138,"./ReactInstrumentation":140,"./ReactUpdateQueue":154,"./Transaction":173,"_process":74,"object-assign":73}],150:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -27084,7 +30982,6 @@ function attachRefs() {
 }
 
 var ReactReconciler = {
-
   /**
    * Initializes the component, renders markup, and registers event listeners.
    *
@@ -27096,9 +30993,9 @@ var ReactReconciler = {
    * @final
    * @internal
    */
-  mountComponent: function (internalInstance, transaction, hostParent, hostContainerInfo, context, parentDebugID // 0 in production and for roots
-  ) {
-    if ("production" !== 'production') {
+  mountComponent: function (internalInstance, transaction, hostParent, hostContainerInfo, context, parentDebugID) // 0 in production and for roots
+  {
+    if (process.env.NODE_ENV !== 'production') {
       if (internalInstance._debugID !== 0) {
         ReactInstrumentation.debugTool.onBeforeMountComponent(internalInstance._debugID, internalInstance._currentElement, parentDebugID);
       }
@@ -27107,7 +31004,7 @@ var ReactReconciler = {
     if (internalInstance._currentElement && internalInstance._currentElement.ref != null) {
       transaction.getReactMountReady().enqueue(attachRefs, internalInstance);
     }
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       if (internalInstance._debugID !== 0) {
         ReactInstrumentation.debugTool.onMountComponent(internalInstance._debugID);
       }
@@ -27130,14 +31027,14 @@ var ReactReconciler = {
    * @internal
    */
   unmountComponent: function (internalInstance, safely) {
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       if (internalInstance._debugID !== 0) {
         ReactInstrumentation.debugTool.onBeforeUnmountComponent(internalInstance._debugID);
       }
     }
     ReactRef.detachRefs(internalInstance, internalInstance._currentElement);
     internalInstance.unmountComponent(safely);
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       if (internalInstance._debugID !== 0) {
         ReactInstrumentation.debugTool.onUnmountComponent(internalInstance._debugID);
       }
@@ -27170,7 +31067,7 @@ var ReactReconciler = {
       return;
     }
 
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       if (internalInstance._debugID !== 0) {
         ReactInstrumentation.debugTool.onBeforeUpdateComponent(internalInstance._debugID, nextElement);
       }
@@ -27188,7 +31085,7 @@ var ReactReconciler = {
       transaction.getReactMountReady().enqueue(attachRefs, internalInstance);
     }
 
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       if (internalInstance._debugID !== 0) {
         ReactInstrumentation.debugTool.onUpdateComponent(internalInstance._debugID);
       }
@@ -27206,26 +31103,26 @@ var ReactReconciler = {
     if (internalInstance._updateBatchNumber !== updateBatchNumber) {
       // The component's enqueued batch number should always be the current
       // batch or the following one.
-      "production" !== 'production' ? warning(internalInstance._updateBatchNumber == null || internalInstance._updateBatchNumber === updateBatchNumber + 1, 'performUpdateIfNecessary: Unexpected batch number (current %s, ' + 'pending %s)', updateBatchNumber, internalInstance._updateBatchNumber) : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(internalInstance._updateBatchNumber == null || internalInstance._updateBatchNumber === updateBatchNumber + 1, 'performUpdateIfNecessary: Unexpected batch number (current %s, ' + 'pending %s)', updateBatchNumber, internalInstance._updateBatchNumber) : void 0;
       return;
     }
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       if (internalInstance._debugID !== 0) {
         ReactInstrumentation.debugTool.onBeforeUpdateComponent(internalInstance._debugID, internalInstance._currentElement);
       }
     }
     internalInstance.performUpdateIfNecessary(transaction);
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       if (internalInstance._debugID !== 0) {
         ReactInstrumentation.debugTool.onUpdateComponent(internalInstance._debugID);
       }
     }
   }
-
 };
 
 module.exports = ReactReconciler;
-},{"./ReactInstrumentation":130,"./ReactRef":141,"fbjs/lib/warning":65}],141:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./ReactInstrumentation":140,"./ReactRef":151,"_process":74,"fbjs/lib/warning":71}],151:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -27314,7 +31211,8 @@ ReactRef.detachRefs = function (instance, element) {
 };
 
 module.exports = ReactRef;
-},{"./ReactOwner":136}],142:[function(require,module,exports){
+},{"./ReactOwner":146}],152:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2014-present, Facebook, Inc.
  * All rights reserved.
@@ -27341,7 +31239,7 @@ var ReactServerUpdateQueue = require('./ReactServerUpdateQueue');
  */
 var TRANSACTION_WRAPPERS = [];
 
-if ("production" !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
   TRANSACTION_WRAPPERS.push({
     initialize: ReactInstrumentation.debugTool.onBeginFlush,
     close: ReactInstrumentation.debugTool.onEndFlush
@@ -27404,7 +31302,9 @@ _assign(ReactServerRenderingTransaction.prototype, Transaction, Mixin);
 PooledClass.addPoolingTo(ReactServerRenderingTransaction);
 
 module.exports = ReactServerRenderingTransaction;
-},{"./PooledClass":92,"./ReactInstrumentation":130,"./ReactServerUpdateQueue":143,"./Transaction":163,"object-assign":67}],143:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./PooledClass":102,"./ReactInstrumentation":140,"./ReactServerUpdateQueue":153,"./Transaction":173,"_process":74,"object-assign":73}],153:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2015-present, Facebook, Inc.
  * All rights reserved.
@@ -27425,9 +31325,9 @@ var ReactUpdateQueue = require('./ReactUpdateQueue');
 var warning = require('fbjs/lib/warning');
 
 function warnNoop(publicInstance, callerName) {
-  if ("production" !== 'production') {
+  if (process.env.NODE_ENV !== 'production') {
     var constructor = publicInstance.constructor;
-    "production" !== 'production' ? warning(false, '%s(...): Can only update a mounting component. ' + 'This usually means you called %s() outside componentWillMount() on the server. ' + 'This is a no-op. Please check the code for the %s component.', callerName, callerName, constructor && (constructor.displayName || constructor.name) || 'ReactClass') : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(false, '%s(...): Can only update a mounting component. ' + 'This usually means you called %s() outside componentWillMount() on the server. ' + 'This is a no-op. Please check the code for the %s component.', callerName, callerName, constructor && (constructor.displayName || constructor.name) || 'ReactClass') : void 0;
   }
 }
 
@@ -27543,7 +31443,9 @@ var ReactServerUpdateQueue = function () {
 }();
 
 module.exports = ReactServerUpdateQueue;
-},{"./ReactUpdateQueue":144,"fbjs/lib/warning":65}],144:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./ReactUpdateQueue":154,"_process":74,"fbjs/lib/warning":71}],154:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2015-present, Facebook, Inc.
  * All rights reserved.
@@ -27586,18 +31488,18 @@ function formatUnexpectedArgument(arg) {
 function getInternalInstanceReadyForUpdate(publicInstance, callerName) {
   var internalInstance = ReactInstanceMap.get(publicInstance);
   if (!internalInstance) {
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       var ctor = publicInstance.constructor;
       // Only warn when we have a callerName. Otherwise we should be silent.
       // We're probably calling from enqueueCallback. We don't want to warn
       // there because we already warned for the corresponding lifecycle method.
-      "production" !== 'production' ? warning(!callerName, '%s(...): Can only update a mounted or mounting component. ' + 'This usually means you called %s() on an unmounted component. ' + 'This is a no-op. Please check the code for the %s component.', callerName, callerName, ctor && (ctor.displayName || ctor.name) || 'ReactClass') : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(!callerName, '%s(...): Can only update a mounted or mounting component. ' + 'This usually means you called %s() on an unmounted component. ' + 'This is a no-op. Please check the code for the %s component.', callerName, callerName, ctor && (ctor.displayName || ctor.name) || 'ReactClass') : void 0;
     }
     return null;
   }
 
-  if ("production" !== 'production') {
-    "production" !== 'production' ? warning(ReactCurrentOwner.current == null, '%s(...): Cannot update during an existing state transition (such as ' + 'within `render` or another component\'s constructor). Render methods ' + 'should be a pure function of props and state; constructor ' + 'side-effects are an anti-pattern, but can be moved to ' + '`componentWillMount`.', callerName) : void 0;
+  if (process.env.NODE_ENV !== 'production') {
+    process.env.NODE_ENV !== 'production' ? warning(ReactCurrentOwner.current == null, '%s(...): Cannot update during an existing state transition (such as ' + "within `render` or another component's constructor). Render methods " + 'should be a pure function of props and state; constructor ' + 'side-effects are an anti-pattern, but can be moved to ' + '`componentWillMount`.', callerName) : void 0;
   }
 
   return internalInstance;
@@ -27608,7 +31510,6 @@ function getInternalInstanceReadyForUpdate(publicInstance, callerName) {
  * reconciliation step.
  */
 var ReactUpdateQueue = {
-
   /**
    * Checks whether or not this composite component is mounted.
    * @param {ReactClass} publicInstance The instance we want to test.
@@ -27617,10 +31518,10 @@ var ReactUpdateQueue = {
    * @final
    */
   isMounted: function (publicInstance) {
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       var owner = ReactCurrentOwner.current;
       if (owner !== null) {
-        "production" !== 'production' ? warning(owner._warnedAboutRefsInRender, '%s is accessing isMounted inside its render() function. ' + 'render() should be a pure function of props and state. It should ' + 'never access something that requires stale data from the previous ' + 'render, such as refs. Move this logic to componentDidMount and ' + 'componentDidUpdate instead.', owner.getName() || 'A component') : void 0;
+        process.env.NODE_ENV !== 'production' ? warning(owner._warnedAboutRefsInRender, '%s is accessing isMounted inside its render() function. ' + 'render() should be a pure function of props and state. It should ' + 'never access something that requires stale data from the previous ' + 'render, such as refs. Move this logic to componentDidMount and ' + 'componentDidUpdate instead.', owner.getName() || 'A component') : void 0;
         owner._warnedAboutRefsInRender = true;
       }
     }
@@ -27714,7 +31615,7 @@ var ReactUpdateQueue = {
    * @param {object} completeState Next state.
    * @internal
    */
-  enqueueReplaceState: function (publicInstance, completeState) {
+  enqueueReplaceState: function (publicInstance, completeState, callback) {
     var internalInstance = getInternalInstanceReadyForUpdate(publicInstance, 'replaceState');
 
     if (!internalInstance) {
@@ -27723,6 +31624,16 @@ var ReactUpdateQueue = {
 
     internalInstance._pendingStateQueue = [completeState];
     internalInstance._pendingReplaceState = true;
+
+    // Future-proof 15.5
+    if (callback !== undefined && callback !== null) {
+      ReactUpdateQueue.validateCallback(callback, 'replaceState');
+      if (internalInstance._pendingCallbacks) {
+        internalInstance._pendingCallbacks.push(callback);
+      } else {
+        internalInstance._pendingCallbacks = [callback];
+      }
+    }
 
     enqueueUpdate(internalInstance);
   },
@@ -27738,9 +31649,9 @@ var ReactUpdateQueue = {
    * @internal
    */
   enqueueSetState: function (publicInstance, partialState) {
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       ReactInstrumentation.debugTool.onSetState();
-      "production" !== 'production' ? warning(partialState != null, 'setState(...): You passed an undefined or null state object; ' + 'instead, use forceUpdate().') : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(partialState != null, 'setState(...): You passed an undefined or null state object; ' + 'instead, use forceUpdate().') : void 0;
     }
 
     var internalInstance = getInternalInstanceReadyForUpdate(publicInstance, 'setState');
@@ -27763,13 +31674,14 @@ var ReactUpdateQueue = {
   },
 
   validateCallback: function (callback, callerName) {
-    !(!callback || typeof callback === 'function') ? "production" !== 'production' ? invariant(false, '%s(...): Expected the last optional `callback` argument to be a function. Instead received: %s.', callerName, formatUnexpectedArgument(callback)) : _prodInvariant('122', callerName, formatUnexpectedArgument(callback)) : void 0;
+    !(!callback || typeof callback === 'function') ? process.env.NODE_ENV !== 'production' ? invariant(false, '%s(...): Expected the last optional `callback` argument to be a function. Instead received: %s.', callerName, formatUnexpectedArgument(callback)) : _prodInvariant('122', callerName, formatUnexpectedArgument(callback)) : void 0;
   }
-
 };
 
 module.exports = ReactUpdateQueue;
-},{"./ReactInstanceMap":129,"./ReactInstrumentation":130,"./ReactUpdates":145,"./reactProdInvariant":188,"fbjs/lib/invariant":58,"fbjs/lib/warning":65,"react/lib/ReactCurrentOwner":202}],145:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./ReactInstanceMap":139,"./ReactInstrumentation":140,"./ReactUpdates":155,"./reactProdInvariant":198,"_process":74,"fbjs/lib/invariant":64,"fbjs/lib/warning":71,"react/lib/ReactCurrentOwner":211}],155:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -27801,7 +31713,7 @@ var asapEnqueued = false;
 var batchingStrategy = null;
 
 function ensureInjected() {
-  !(ReactUpdates.ReactReconcileTransaction && batchingStrategy) ? "production" !== 'production' ? invariant(false, 'ReactUpdates: must inject a reconcile transaction class and batching strategy') : _prodInvariant('123') : void 0;
+  !(ReactUpdates.ReactReconcileTransaction && batchingStrategy) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'ReactUpdates: must inject a reconcile transaction class and batching strategy') : _prodInvariant('123') : void 0;
 }
 
 var NESTED_UPDATES = {
@@ -27882,7 +31794,7 @@ function mountOrderComparator(c1, c2) {
 
 function runBatchedUpdates(transaction) {
   var len = transaction.dirtyComponentsLength;
-  !(len === dirtyComponents.length) ? "production" !== 'production' ? invariant(false, 'Expected flush transaction\'s stored dirty-components length (%s) to match dirty-components array length (%s).', len, dirtyComponents.length) : _prodInvariant('124', len, dirtyComponents.length) : void 0;
+  !(len === dirtyComponents.length) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Expected flush transaction\'s stored dirty-components length (%s) to match dirty-components array length (%s).', len, dirtyComponents.length) : _prodInvariant('124', len, dirtyComponents.length) : void 0;
 
   // Since reconciling a component higher in the owner hierarchy usually (not
   // always -- see shouldComponentUpdate()) will reconcile children, reconcile
@@ -27984,21 +31896,21 @@ function enqueueUpdate(component) {
  * if no updates are currently being performed.
  */
 function asap(callback, context) {
-  !batchingStrategy.isBatchingUpdates ? "production" !== 'production' ? invariant(false, 'ReactUpdates.asap: Can\'t enqueue an asap callback in a context whereupdates are not being batched.') : _prodInvariant('125') : void 0;
+  !batchingStrategy.isBatchingUpdates ? process.env.NODE_ENV !== 'production' ? invariant(false, 'ReactUpdates.asap: Can\'t enqueue an asap callback in a context whereupdates are not being batched.') : _prodInvariant('125') : void 0;
   asapCallbackQueue.enqueue(callback, context);
   asapEnqueued = true;
 }
 
 var ReactUpdatesInjection = {
   injectReconcileTransaction: function (ReconcileTransaction) {
-    !ReconcileTransaction ? "production" !== 'production' ? invariant(false, 'ReactUpdates: must provide a reconcile transaction class') : _prodInvariant('126') : void 0;
+    !ReconcileTransaction ? process.env.NODE_ENV !== 'production' ? invariant(false, 'ReactUpdates: must provide a reconcile transaction class') : _prodInvariant('126') : void 0;
     ReactUpdates.ReactReconcileTransaction = ReconcileTransaction;
   },
 
   injectBatchingStrategy: function (_batchingStrategy) {
-    !_batchingStrategy ? "production" !== 'production' ? invariant(false, 'ReactUpdates: must provide a batching strategy') : _prodInvariant('127') : void 0;
-    !(typeof _batchingStrategy.batchedUpdates === 'function') ? "production" !== 'production' ? invariant(false, 'ReactUpdates: must provide a batchedUpdates() function') : _prodInvariant('128') : void 0;
-    !(typeof _batchingStrategy.isBatchingUpdates === 'boolean') ? "production" !== 'production' ? invariant(false, 'ReactUpdates: must provide an isBatchingUpdates boolean attribute') : _prodInvariant('129') : void 0;
+    !_batchingStrategy ? process.env.NODE_ENV !== 'production' ? invariant(false, 'ReactUpdates: must provide a batching strategy') : _prodInvariant('127') : void 0;
+    !(typeof _batchingStrategy.batchedUpdates === 'function') ? process.env.NODE_ENV !== 'production' ? invariant(false, 'ReactUpdates: must provide a batchedUpdates() function') : _prodInvariant('128') : void 0;
+    !(typeof _batchingStrategy.isBatchingUpdates === 'boolean') ? process.env.NODE_ENV !== 'production' ? invariant(false, 'ReactUpdates: must provide an isBatchingUpdates boolean attribute') : _prodInvariant('129') : void 0;
     batchingStrategy = _batchingStrategy;
   }
 };
@@ -28020,7 +31932,8 @@ var ReactUpdates = {
 };
 
 module.exports = ReactUpdates;
-},{"./CallbackQueue":74,"./PooledClass":92,"./ReactFeatureFlags":124,"./ReactReconciler":140,"./Transaction":163,"./reactProdInvariant":188,"fbjs/lib/invariant":58,"object-assign":67}],146:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./CallbackQueue":84,"./PooledClass":102,"./ReactFeatureFlags":134,"./ReactReconciler":150,"./Transaction":173,"./reactProdInvariant":198,"_process":74,"fbjs/lib/invariant":64,"object-assign":73}],156:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -28033,8 +31946,8 @@ module.exports = ReactUpdates;
 
 'use strict';
 
-module.exports = '15.4.1';
-},{}],147:[function(require,module,exports){
+module.exports = '15.6.1';
+},{}],157:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -28336,7 +32249,7 @@ Object.keys(ATTRS).forEach(function (key) {
 });
 
 module.exports = SVGDOMPropertyConfig;
-},{}],148:[function(require,module,exports){
+},{}],158:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -28462,7 +32375,6 @@ function constructSelectEvent(nativeEvent, nativeEventTarget) {
  * - Fires after user input.
  */
 var SelectEventPlugin = {
-
   eventTypes: eventTypes,
 
   extractEvents: function (topLevelType, targetInst, nativeEvent, nativeEventTarget) {
@@ -28486,7 +32398,6 @@ var SelectEventPlugin = {
         activeElementInst = null;
         lastSelection = null;
         break;
-
       // Don't fire the event while the user is dragging. This matches the
       // semantics of the native select event.
       case 'topMouseDown':
@@ -28496,7 +32407,6 @@ var SelectEventPlugin = {
       case 'topMouseUp':
         mouseDown = false;
         return constructSelectEvent(nativeEvent, nativeEventTarget);
-
       // Chrome and IE fire non-standard event when selection is changed (and
       // sometimes when it hasn't). IE's event fires out of order with respect
       // to key and input events on deletion, so we discard it.
@@ -28527,7 +32437,8 @@ var SelectEventPlugin = {
 };
 
 module.exports = SelectEventPlugin;
-},{"./EventPropagators":87,"./ReactDOMComponentTree":101,"./ReactInputSelection":128,"./SyntheticEvent":154,"./isTextInputElement":186,"fbjs/lib/ExecutionEnvironment":44,"fbjs/lib/getActiveElement":53,"fbjs/lib/shallowEqual":64}],149:[function(require,module,exports){
+},{"./EventPropagators":97,"./ReactDOMComponentTree":111,"./ReactInputSelection":138,"./SyntheticEvent":164,"./isTextInputElement":196,"fbjs/lib/ExecutionEnvironment":50,"fbjs/lib/getActiveElement":59,"fbjs/lib/shallowEqual":70}],159:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -28611,7 +32522,6 @@ function isInteractive(tag) {
 }
 
 var SimpleEventPlugin = {
-
   eventTypes: eventTypes,
 
   extractEvents: function (topLevelType, targetInst, nativeEvent, nativeEventTarget) {
@@ -28723,7 +32633,7 @@ var SimpleEventPlugin = {
         EventConstructor = SyntheticClipboardEvent;
         break;
     }
-    !EventConstructor ? "production" !== 'production' ? invariant(false, 'SimpleEventPlugin: Unhandled event type, `%s`.', topLevelType) : _prodInvariant('86', topLevelType) : void 0;
+    !EventConstructor ? process.env.NODE_ENV !== 'production' ? invariant(false, 'SimpleEventPlugin: Unhandled event type, `%s`.', topLevelType) : _prodInvariant('86', topLevelType) : void 0;
     var event = EventConstructor.getPooled(dispatchConfig, targetInst, nativeEvent, nativeEventTarget);
     EventPropagators.accumulateTwoPhaseDispatches(event);
     return event;
@@ -28751,11 +32661,11 @@ var SimpleEventPlugin = {
       delete onClickListeners[key];
     }
   }
-
 };
 
 module.exports = SimpleEventPlugin;
-},{"./EventPropagators":87,"./ReactDOMComponentTree":101,"./SyntheticAnimationEvent":150,"./SyntheticClipboardEvent":151,"./SyntheticDragEvent":153,"./SyntheticEvent":154,"./SyntheticFocusEvent":155,"./SyntheticKeyboardEvent":157,"./SyntheticMouseEvent":158,"./SyntheticTouchEvent":159,"./SyntheticTransitionEvent":160,"./SyntheticUIEvent":161,"./SyntheticWheelEvent":162,"./getEventCharCode":174,"./reactProdInvariant":188,"fbjs/lib/EventListener":43,"fbjs/lib/emptyFunction":50,"fbjs/lib/invariant":58}],150:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./EventPropagators":97,"./ReactDOMComponentTree":111,"./SyntheticAnimationEvent":160,"./SyntheticClipboardEvent":161,"./SyntheticDragEvent":163,"./SyntheticEvent":164,"./SyntheticFocusEvent":165,"./SyntheticKeyboardEvent":167,"./SyntheticMouseEvent":168,"./SyntheticTouchEvent":169,"./SyntheticTransitionEvent":170,"./SyntheticUIEvent":171,"./SyntheticWheelEvent":172,"./getEventCharCode":184,"./reactProdInvariant":198,"_process":74,"fbjs/lib/EventListener":49,"fbjs/lib/emptyFunction":56,"fbjs/lib/invariant":64}],160:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -28794,7 +32704,7 @@ function SyntheticAnimationEvent(dispatchConfig, dispatchMarker, nativeEvent, na
 SyntheticEvent.augmentClass(SyntheticAnimationEvent, AnimationEventInterface);
 
 module.exports = SyntheticAnimationEvent;
-},{"./SyntheticEvent":154}],151:[function(require,module,exports){
+},{"./SyntheticEvent":164}],161:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -28832,7 +32742,7 @@ function SyntheticClipboardEvent(dispatchConfig, dispatchMarker, nativeEvent, na
 SyntheticEvent.augmentClass(SyntheticClipboardEvent, ClipboardEventInterface);
 
 module.exports = SyntheticClipboardEvent;
-},{"./SyntheticEvent":154}],152:[function(require,module,exports){
+},{"./SyntheticEvent":164}],162:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -28868,7 +32778,7 @@ function SyntheticCompositionEvent(dispatchConfig, dispatchMarker, nativeEvent, 
 SyntheticEvent.augmentClass(SyntheticCompositionEvent, CompositionEventInterface);
 
 module.exports = SyntheticCompositionEvent;
-},{"./SyntheticEvent":154}],153:[function(require,module,exports){
+},{"./SyntheticEvent":164}],163:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -28904,7 +32814,8 @@ function SyntheticDragEvent(dispatchConfig, dispatchMarker, nativeEvent, nativeE
 SyntheticMouseEvent.augmentClass(SyntheticDragEvent, DragEventInterface);
 
 module.exports = SyntheticDragEvent;
-},{"./SyntheticMouseEvent":158}],154:[function(require,module,exports){
+},{"./SyntheticMouseEvent":168}],164:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -28967,7 +32878,7 @@ var EventInterface = {
  * @param {DOMEventTarget} nativeEventTarget Target node.
  */
 function SyntheticEvent(dispatchConfig, targetInst, nativeEvent, nativeEventTarget) {
-  if ("production" !== 'production') {
+  if (process.env.NODE_ENV !== 'production') {
     // these have a getter/setter for warnings
     delete this.nativeEvent;
     delete this.preventDefault;
@@ -28983,7 +32894,7 @@ function SyntheticEvent(dispatchConfig, targetInst, nativeEvent, nativeEventTarg
     if (!Interface.hasOwnProperty(propName)) {
       continue;
     }
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       delete this[propName]; // this has a getter/setter for warnings
     }
     var normalize = Interface[propName];
@@ -29009,7 +32920,6 @@ function SyntheticEvent(dispatchConfig, targetInst, nativeEvent, nativeEventTarg
 }
 
 _assign(SyntheticEvent.prototype, {
-
   preventDefault: function () {
     this.defaultPrevented = true;
     var event = this.nativeEvent;
@@ -29019,8 +32929,8 @@ _assign(SyntheticEvent.prototype, {
 
     if (event.preventDefault) {
       event.preventDefault();
+      // eslint-disable-next-line valid-typeof
     } else if (typeof event.returnValue !== 'unknown') {
-      // eslint-disable-line valid-typeof
       event.returnValue = false;
     }
     this.isDefaultPrevented = emptyFunction.thatReturnsTrue;
@@ -29034,8 +32944,8 @@ _assign(SyntheticEvent.prototype, {
 
     if (event.stopPropagation) {
       event.stopPropagation();
+      // eslint-disable-next-line valid-typeof
     } else if (typeof event.cancelBubble !== 'unknown') {
-      // eslint-disable-line valid-typeof
       // The ChangeEventPlugin registers a "propertychange" event for
       // IE. This event does not support bubbling or cancelling, and
       // any references to cancelBubble throw "Member not found".  A
@@ -29069,7 +32979,7 @@ _assign(SyntheticEvent.prototype, {
   destructor: function () {
     var Interface = this.constructor.Interface;
     for (var propName in Interface) {
-      if ("production" !== 'production') {
+      if (process.env.NODE_ENV !== 'production') {
         Object.defineProperty(this, propName, getPooledWarningPropertyDefinition(propName, Interface[propName]));
       } else {
         this[propName] = null;
@@ -29078,18 +32988,17 @@ _assign(SyntheticEvent.prototype, {
     for (var i = 0; i < shouldBeReleasedProperties.length; i++) {
       this[shouldBeReleasedProperties[i]] = null;
     }
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       Object.defineProperty(this, 'nativeEvent', getPooledWarningPropertyDefinition('nativeEvent', null));
       Object.defineProperty(this, 'preventDefault', getPooledWarningPropertyDefinition('preventDefault', emptyFunction));
       Object.defineProperty(this, 'stopPropagation', getPooledWarningPropertyDefinition('stopPropagation', emptyFunction));
     }
   }
-
 });
 
 SyntheticEvent.Interface = EventInterface;
 
-if ("production" !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
   if (isProxySupported) {
     /*eslint-disable no-func-assign */
     SyntheticEvent = new Proxy(SyntheticEvent, {
@@ -29100,7 +33009,7 @@ if ("production" !== 'production') {
         return new Proxy(constructor.apply(that, args), {
           set: function (target, prop, value) {
             if (prop !== 'isPersistent' && !target.constructor.Interface.hasOwnProperty(prop) && shouldBeReleasedProperties.indexOf(prop) === -1) {
-              "production" !== 'production' ? warning(didWarnForAddedNewProperty || target.isPersistent(), 'This synthetic event is reused for performance reasons. If you\'re ' + 'seeing this, you\'re adding a new property in the synthetic event object. ' + 'The property is never released. See ' + 'https://fb.me/react-event-pooling for more information.') : void 0;
+              process.env.NODE_ENV !== 'production' ? warning(didWarnForAddedNewProperty || target.isPersistent(), "This synthetic event is reused for performance reasons. If you're " + "seeing this, you're adding a new property in the synthetic event object. " + 'The property is never released. See ' + 'https://fb.me/react-event-pooling for more information.') : void 0;
               didWarnForAddedNewProperty = true;
             }
             target[prop] = value;
@@ -29169,10 +33078,11 @@ function getPooledWarningPropertyDefinition(propName, getVal) {
 
   function warn(action, result) {
     var warningCondition = false;
-    "production" !== 'production' ? warning(warningCondition, 'This synthetic event is reused for performance reasons. If you\'re seeing this, ' + 'you\'re %s `%s` on a released/nullified synthetic event. %s. ' + 'If you must keep the original synthetic event around, use event.persist(). ' + 'See https://fb.me/react-event-pooling for more information.', action, propName, result) : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(warningCondition, "This synthetic event is reused for performance reasons. If you're seeing this, " + "you're %s `%s` on a released/nullified synthetic event. %s. " + 'If you must keep the original synthetic event around, use event.persist(). ' + 'See https://fb.me/react-event-pooling for more information.', action, propName, result) : void 0;
   }
 }
-},{"./PooledClass":92,"fbjs/lib/emptyFunction":50,"fbjs/lib/warning":65,"object-assign":67}],155:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./PooledClass":102,"_process":74,"fbjs/lib/emptyFunction":56,"fbjs/lib/warning":71,"object-assign":73}],165:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -29208,7 +33118,7 @@ function SyntheticFocusEvent(dispatchConfig, dispatchMarker, nativeEvent, native
 SyntheticUIEvent.augmentClass(SyntheticFocusEvent, FocusEventInterface);
 
 module.exports = SyntheticFocusEvent;
-},{"./SyntheticUIEvent":161}],156:[function(require,module,exports){
+},{"./SyntheticUIEvent":171}],166:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -29245,7 +33155,7 @@ function SyntheticInputEvent(dispatchConfig, dispatchMarker, nativeEvent, native
 SyntheticEvent.augmentClass(SyntheticInputEvent, InputEventInterface);
 
 module.exports = SyntheticInputEvent;
-},{"./SyntheticEvent":154}],157:[function(require,module,exports){
+},{"./SyntheticEvent":164}],167:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -29329,7 +33239,7 @@ function SyntheticKeyboardEvent(dispatchConfig, dispatchMarker, nativeEvent, nat
 SyntheticUIEvent.augmentClass(SyntheticKeyboardEvent, KeyboardEventInterface);
 
 module.exports = SyntheticKeyboardEvent;
-},{"./SyntheticUIEvent":161,"./getEventCharCode":174,"./getEventKey":175,"./getEventModifierState":176}],158:[function(require,module,exports){
+},{"./SyntheticUIEvent":171,"./getEventCharCode":184,"./getEventKey":185,"./getEventModifierState":186}],168:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -29401,7 +33311,7 @@ function SyntheticMouseEvent(dispatchConfig, dispatchMarker, nativeEvent, native
 SyntheticUIEvent.augmentClass(SyntheticMouseEvent, MouseEventInterface);
 
 module.exports = SyntheticMouseEvent;
-},{"./SyntheticUIEvent":161,"./ViewportMetrics":164,"./getEventModifierState":176}],159:[function(require,module,exports){
+},{"./SyntheticUIEvent":171,"./ViewportMetrics":174,"./getEventModifierState":186}],169:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -29446,7 +33356,7 @@ function SyntheticTouchEvent(dispatchConfig, dispatchMarker, nativeEvent, native
 SyntheticUIEvent.augmentClass(SyntheticTouchEvent, TouchEventInterface);
 
 module.exports = SyntheticTouchEvent;
-},{"./SyntheticUIEvent":161,"./getEventModifierState":176}],160:[function(require,module,exports){
+},{"./SyntheticUIEvent":171,"./getEventModifierState":186}],170:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -29485,7 +33395,7 @@ function SyntheticTransitionEvent(dispatchConfig, dispatchMarker, nativeEvent, n
 SyntheticEvent.augmentClass(SyntheticTransitionEvent, TransitionEventInterface);
 
 module.exports = SyntheticTransitionEvent;
-},{"./SyntheticEvent":154}],161:[function(require,module,exports){
+},{"./SyntheticEvent":164}],171:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -29544,7 +33454,7 @@ function SyntheticUIEvent(dispatchConfig, dispatchMarker, nativeEvent, nativeEve
 SyntheticEvent.augmentClass(SyntheticUIEvent, UIEventInterface);
 
 module.exports = SyntheticUIEvent;
-},{"./SyntheticEvent":154,"./getEventTarget":177}],162:[function(require,module,exports){
+},{"./SyntheticEvent":164,"./getEventTarget":187}],172:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -29565,15 +33475,12 @@ var SyntheticMouseEvent = require('./SyntheticMouseEvent');
  */
 var WheelEventInterface = {
   deltaX: function (event) {
-    return 'deltaX' in event ? event.deltaX :
-    // Fallback to `wheelDeltaX` for Webkit and normalize (right is positive).
+    return 'deltaX' in event ? event.deltaX : // Fallback to `wheelDeltaX` for Webkit and normalize (right is positive).
     'wheelDeltaX' in event ? -event.wheelDeltaX : 0;
   },
   deltaY: function (event) {
-    return 'deltaY' in event ? event.deltaY :
-    // Fallback to `wheelDeltaY` for Webkit and normalize (down is positive).
-    'wheelDeltaY' in event ? -event.wheelDeltaY :
-    // Fallback to `wheelDelta` for IE<9 and normalize (down is positive).
+    return 'deltaY' in event ? event.deltaY : // Fallback to `wheelDeltaY` for Webkit and normalize (down is positive).
+    'wheelDeltaY' in event ? -event.wheelDeltaY : // Fallback to `wheelDelta` for IE<9 and normalize (down is positive).
     'wheelDelta' in event ? -event.wheelDelta : 0;
   },
   deltaZ: null,
@@ -29598,7 +33505,8 @@ function SyntheticWheelEvent(dispatchConfig, dispatchMarker, nativeEvent, native
 SyntheticMouseEvent.augmentClass(SyntheticWheelEvent, WheelEventInterface);
 
 module.exports = SyntheticWheelEvent;
-},{"./SyntheticMouseEvent":158}],163:[function(require,module,exports){
+},{"./SyntheticMouseEvent":168}],173:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -29709,6 +33617,8 @@ var TransactionImpl = {
     return !!this._isInTransaction;
   },
 
+  /* eslint-disable space-before-function-paren */
+
   /**
    * Executes the function within a safety window. Use this for the top level
    * methods that result in large amounts of computation/mutations that would
@@ -29727,7 +33637,8 @@ var TransactionImpl = {
    * @return {*} Return value from `method`.
    */
   perform: function (method, scope, a, b, c, d, e, f) {
-    !!this.isInTransaction() ? "production" !== 'production' ? invariant(false, 'Transaction.perform(...): Cannot initialize a transaction when there is already an outstanding transaction.') : _prodInvariant('27') : void 0;
+    /* eslint-enable space-before-function-paren */
+    !!this.isInTransaction() ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Transaction.perform(...): Cannot initialize a transaction when there is already an outstanding transaction.') : _prodInvariant('27') : void 0;
     var errorThrown;
     var ret;
     try {
@@ -29791,7 +33702,7 @@ var TransactionImpl = {
    * invoked).
    */
   closeAll: function (startIndex) {
-    !this.isInTransaction() ? "production" !== 'production' ? invariant(false, 'Transaction.closeAll(): Cannot close transaction when none are open.') : _prodInvariant('28') : void 0;
+    !this.isInTransaction() ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Transaction.closeAll(): Cannot close transaction when none are open.') : _prodInvariant('28') : void 0;
     var transactionWrappers = this.transactionWrappers;
     for (var i = startIndex; i < transactionWrappers.length; i++) {
       var wrapper = transactionWrappers[i];
@@ -29823,7 +33734,8 @@ var TransactionImpl = {
 };
 
 module.exports = TransactionImpl;
-},{"./reactProdInvariant":188,"fbjs/lib/invariant":58}],164:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./reactProdInvariant":198,"_process":74,"fbjs/lib/invariant":64}],174:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -29837,7 +33749,6 @@ module.exports = TransactionImpl;
 'use strict';
 
 var ViewportMetrics = {
-
   currentScrollLeft: 0,
 
   currentScrollTop: 0,
@@ -29846,11 +33757,11 @@ var ViewportMetrics = {
     ViewportMetrics.currentScrollLeft = scrollPosition.x;
     ViewportMetrics.currentScrollTop = scrollPosition.y;
   }
-
 };
 
 module.exports = ViewportMetrics;
-},{}],165:[function(require,module,exports){
+},{}],175:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2014-present, Facebook, Inc.
  * All rights reserved.
@@ -29882,7 +33793,7 @@ var invariant = require('fbjs/lib/invariant');
  */
 
 function accumulateInto(current, next) {
-  !(next != null) ? "production" !== 'production' ? invariant(false, 'accumulateInto(...): Accumulated items must not be null or undefined.') : _prodInvariant('30') : void 0;
+  !(next != null) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'accumulateInto(...): Accumulated items must not be null or undefined.') : _prodInvariant('30') : void 0;
 
   if (current == null) {
     return next;
@@ -29908,7 +33819,8 @@ function accumulateInto(current, next) {
 }
 
 module.exports = accumulateInto;
-},{"./reactProdInvariant":188,"fbjs/lib/invariant":58}],166:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./reactProdInvariant":198,"_process":74,"fbjs/lib/invariant":64}],176:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -29952,7 +33864,7 @@ function adler32(data) {
 }
 
 module.exports = adler32;
-},{}],167:[function(require,module,exports){
+},{}],177:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
@@ -29976,7 +33888,7 @@ var warning = require('fbjs/lib/warning');
 
 var ReactComponentTreeHook;
 
-if (typeof process !== 'undefined' && process.env && "production" === 'test') {
+if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'test') {
   // Temporary hack.
   // Inline requires don't work well with Jest:
   // https://github.com/facebook/react/issues/7240
@@ -30009,12 +33921,12 @@ function checkReactTypeSpec(typeSpecs, values, location, componentName, element,
       try {
         // This is intentionally an invariant that gets caught. It's the same
         // behavior as without this statement except with a better message.
-        !(typeof typeSpecs[typeSpecName] === 'function') ? "production" !== 'production' ? invariant(false, '%s: %s type `%s` is invalid; it must be a function, usually from React.PropTypes.', componentName || 'React class', ReactPropTypeLocationNames[location], typeSpecName) : _prodInvariant('84', componentName || 'React class', ReactPropTypeLocationNames[location], typeSpecName) : void 0;
+        !(typeof typeSpecs[typeSpecName] === 'function') ? process.env.NODE_ENV !== 'production' ? invariant(false, '%s: %s type `%s` is invalid; it must be a function, usually from React.PropTypes.', componentName || 'React class', ReactPropTypeLocationNames[location], typeSpecName) : _prodInvariant('84', componentName || 'React class', ReactPropTypeLocationNames[location], typeSpecName) : void 0;
         error = typeSpecs[typeSpecName](values, typeSpecName, componentName, location, null, ReactPropTypesSecret);
       } catch (ex) {
         error = ex;
       }
-      "production" !== 'production' ? warning(!error || error instanceof Error, '%s: type specification of %s `%s` is invalid; the type checker ' + 'function must return `null` or an `Error` but returned a %s. ' + 'You may have forgotten to pass an argument to the type checker ' + 'creator (arrayOf, instanceOf, objectOf, oneOf, oneOfType, and ' + 'shape all require an argument).', componentName || 'React class', ReactPropTypeLocationNames[location], typeSpecName, typeof error) : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(!error || error instanceof Error, '%s: type specification of %s `%s` is invalid; the type checker ' + 'function must return `null` or an `Error` but returned a %s. ' + 'You may have forgotten to pass an argument to the type checker ' + 'creator (arrayOf, instanceOf, objectOf, oneOf, oneOfType, and ' + 'shape all require an argument).', componentName || 'React class', ReactPropTypeLocationNames[location], typeSpecName, typeof error) : void 0;
       if (error instanceof Error && !(error.message in loggedTypeFailures)) {
         // Only monitor this failure once because there tends to be a lot of the
         // same error.
@@ -30022,7 +33934,7 @@ function checkReactTypeSpec(typeSpecs, values, location, componentName, element,
 
         var componentStackInfo = '';
 
-        if ("production" !== 'production') {
+        if (process.env.NODE_ENV !== 'production') {
           if (!ReactComponentTreeHook) {
             ReactComponentTreeHook = require('react/lib/ReactComponentTreeHook');
           }
@@ -30033,7 +33945,7 @@ function checkReactTypeSpec(typeSpecs, values, location, componentName, element,
           }
         }
 
-        "production" !== 'production' ? warning(false, 'Failed %s type: %s%s', location, error.message, componentStackInfo) : void 0;
+        process.env.NODE_ENV !== 'production' ? warning(false, 'Failed %s type: %s%s', location, error.message, componentStackInfo) : void 0;
       }
     }
   }
@@ -30041,7 +33953,7 @@ function checkReactTypeSpec(typeSpecs, values, location, componentName, element,
 
 module.exports = checkReactTypeSpec;
 }).call(this,require('_process'))
-},{"./ReactPropTypeLocationNames":137,"./ReactPropTypesSecret":138,"./reactProdInvariant":188,"_process":68,"fbjs/lib/invariant":58,"fbjs/lib/warning":65,"react/lib/ReactComponentTreeHook":201}],168:[function(require,module,exports){
+},{"./ReactPropTypeLocationNames":147,"./ReactPropTypesSecret":148,"./reactProdInvariant":198,"_process":74,"fbjs/lib/invariant":64,"fbjs/lib/warning":71,"react/lib/ReactComponentTreeHook":210}],178:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -30073,7 +33985,8 @@ var createMicrosoftUnsafeLocalFunction = function (func) {
 };
 
 module.exports = createMicrosoftUnsafeLocalFunction;
-},{}],169:[function(require,module,exports){
+},{}],179:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -30102,7 +34015,7 @@ var styleWarnings = {};
  * @param {ReactDOMComponent} component
  * @return {string} Normalized style value with dimensions applied.
  */
-function dangerousStyleValue(name, value, component) {
+function dangerousStyleValue(name, value, component, isCustomProperty) {
   // Note that we've removed escapeTextForBrowser() calls here since the
   // whole string will be escaped when the attribute is injected into
   // the markup. If you provide unsafe user data here they can inject
@@ -30119,12 +34032,12 @@ function dangerousStyleValue(name, value, component) {
   }
 
   var isNonNumeric = isNaN(value);
-  if (isNonNumeric || value === 0 || isUnitlessNumber.hasOwnProperty(name) && isUnitlessNumber[name]) {
+  if (isCustomProperty || isNonNumeric || value === 0 || isUnitlessNumber.hasOwnProperty(name) && isUnitlessNumber[name]) {
     return '' + value; // cast to string
   }
 
   if (typeof value === 'string') {
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       // Allow '0' to pass through without warning. 0 is already special and
       // doesn't require units, so we don't need to warn about it.
       if (component && value !== '0') {
@@ -30142,7 +34055,7 @@ function dangerousStyleValue(name, value, component) {
           }
         }
         if (!warned) {
-          "production" !== 'production' ? warning(false, 'a `%s` tag (owner: `%s`) was passed a numeric string value ' + 'for CSS property `%s` (value: `%s`) which will be treated ' + 'as a unitless number in a future version of React.', component._currentElement.type, ownerName || 'unknown', name, value) : void 0;
+          process.env.NODE_ENV !== 'production' ? warning(false, 'a `%s` tag (owner: `%s`) was passed a numeric string value ' + 'for CSS property `%s` (value: `%s`) which will be treated ' + 'as a unitless number in a future version of React.', component._currentElement.type, ownerName || 'unknown', name, value) : void 0;
         }
       }
     }
@@ -30152,7 +34065,8 @@ function dangerousStyleValue(name, value, component) {
 }
 
 module.exports = dangerousStyleValue;
-},{"./CSSProperty":72,"fbjs/lib/warning":65}],170:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./CSSProperty":82,"_process":74,"fbjs/lib/warning":71}],180:[function(require,module,exports){
 /**
  * Copyright 2016-present, Facebook, Inc.
  * All rights reserved.
@@ -30257,7 +34171,6 @@ function escapeHtml(string) {
 }
 // end code copied and modified from escape-html
 
-
 /**
  * Escapes text to prevent scripting attacks.
  *
@@ -30275,7 +34188,8 @@ function escapeTextContentForBrowser(text) {
 }
 
 module.exports = escapeTextContentForBrowser;
-},{}],171:[function(require,module,exports){
+},{}],181:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -30307,10 +34221,10 @@ var warning = require('fbjs/lib/warning');
  * @return {?DOMElement} The root node of this element.
  */
 function findDOMNode(componentOrElement) {
-  if ("production" !== 'production') {
+  if (process.env.NODE_ENV !== 'production') {
     var owner = ReactCurrentOwner.current;
     if (owner !== null) {
-      "production" !== 'production' ? warning(owner._warnedAboutRefsInRender, '%s is accessing findDOMNode inside its render(). ' + 'render() should be a pure function of props and state. It should ' + 'never access something that requires stale data from the previous ' + 'render, such as refs. Move this logic to componentDidMount and ' + 'componentDidUpdate instead.', owner.getName() || 'A component') : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(owner._warnedAboutRefsInRender, '%s is accessing findDOMNode inside its render(). ' + 'render() should be a pure function of props and state. It should ' + 'never access something that requires stale data from the previous ' + 'render, such as refs. Move this logic to componentDidMount and ' + 'componentDidUpdate instead.', owner.getName() || 'A component') : void 0;
       owner._warnedAboutRefsInRender = true;
     }
   }
@@ -30328,14 +34242,15 @@ function findDOMNode(componentOrElement) {
   }
 
   if (typeof componentOrElement.render === 'function') {
-    !false ? "production" !== 'production' ? invariant(false, 'findDOMNode was called on an unmounted component.') : _prodInvariant('44') : void 0;
+    !false ? process.env.NODE_ENV !== 'production' ? invariant(false, 'findDOMNode was called on an unmounted component.') : _prodInvariant('44') : void 0;
   } else {
-    !false ? "production" !== 'production' ? invariant(false, 'Element appears to be neither ReactComponent nor DOMNode (keys: %s)', Object.keys(componentOrElement)) : _prodInvariant('45', Object.keys(componentOrElement)) : void 0;
+    !false ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Element appears to be neither ReactComponent nor DOMNode (keys: %s)', Object.keys(componentOrElement)) : _prodInvariant('45', Object.keys(componentOrElement)) : void 0;
   }
 }
 
 module.exports = findDOMNode;
-},{"./ReactDOMComponentTree":101,"./ReactInstanceMap":129,"./getHostComponentFromComposite":178,"./reactProdInvariant":188,"fbjs/lib/invariant":58,"fbjs/lib/warning":65,"react/lib/ReactCurrentOwner":202}],172:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./ReactDOMComponentTree":111,"./ReactInstanceMap":139,"./getHostComponentFromComposite":188,"./reactProdInvariant":198,"_process":74,"fbjs/lib/invariant":64,"fbjs/lib/warning":71,"react/lib/ReactCurrentOwner":211}],182:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
@@ -30356,7 +34271,7 @@ var warning = require('fbjs/lib/warning');
 
 var ReactComponentTreeHook;
 
-if (typeof process !== 'undefined' && process.env && "production" === 'test') {
+if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'test') {
   // Temporary hack.
   // Inline requires don't work well with Jest:
   // https://github.com/facebook/react/issues/7240
@@ -30376,12 +34291,12 @@ function flattenSingleChildIntoContext(traverseContext, child, name, selfDebugID
   if (traverseContext && typeof traverseContext === 'object') {
     var result = traverseContext;
     var keyUnique = result[name] === undefined;
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       if (!ReactComponentTreeHook) {
         ReactComponentTreeHook = require('react/lib/ReactComponentTreeHook');
       }
       if (!keyUnique) {
-        "production" !== 'production' ? warning(false, 'flattenChildren(...): Encountered two children with the same key, ' + '`%s`. Child keys must be unique; when two children share a key, only ' + 'the first child will be used.%s', KeyEscapeUtils.unescape(name), ReactComponentTreeHook.getStackAddendumByID(selfDebugID)) : void 0;
+        process.env.NODE_ENV !== 'production' ? warning(false, 'flattenChildren(...): Encountered two children with the same key, ' + '`%s`. Child keys must be unique; when two children share a key, only ' + 'the first child will be used.%s', KeyEscapeUtils.unescape(name), ReactComponentTreeHook.getStackAddendumByID(selfDebugID)) : void 0;
       }
     }
     if (keyUnique && child != null) {
@@ -30401,7 +34316,7 @@ function flattenChildren(children, selfDebugID) {
   }
   var result = {};
 
-  if ("production" !== 'production') {
+  if (process.env.NODE_ENV !== 'production') {
     traverseAllChildren(children, function (traverseContext, child, name) {
       return flattenSingleChildIntoContext(traverseContext, child, name, selfDebugID);
     }, result);
@@ -30413,7 +34328,7 @@ function flattenChildren(children, selfDebugID) {
 
 module.exports = flattenChildren;
 }).call(this,require('_process'))
-},{"./KeyEscapeUtils":90,"./traverseAllChildren":193,"_process":68,"fbjs/lib/warning":65,"react/lib/ReactComponentTreeHook":201}],173:[function(require,module,exports){
+},{"./KeyEscapeUtils":100,"./traverseAllChildren":203,"_process":74,"fbjs/lib/warning":71,"react/lib/ReactComponentTreeHook":210}],183:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -30444,7 +34359,7 @@ function forEachAccumulated(arr, cb, scope) {
 }
 
 module.exports = forEachAccumulated;
-},{}],174:[function(require,module,exports){
+},{}],184:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -30494,7 +34409,7 @@ function getEventCharCode(nativeEvent) {
 }
 
 module.exports = getEventCharCode;
-},{}],175:[function(require,module,exports){
+},{}],185:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -30514,18 +34429,18 @@ var getEventCharCode = require('./getEventCharCode');
  * @see https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent#Key_names
  */
 var normalizeKey = {
-  'Esc': 'Escape',
-  'Spacebar': ' ',
-  'Left': 'ArrowLeft',
-  'Up': 'ArrowUp',
-  'Right': 'ArrowRight',
-  'Down': 'ArrowDown',
-  'Del': 'Delete',
-  'Win': 'OS',
-  'Menu': 'ContextMenu',
-  'Apps': 'ContextMenu',
-  'Scroll': 'ScrollLock',
-  'MozPrintableKey': 'Unidentified'
+  Esc: 'Escape',
+  Spacebar: ' ',
+  Left: 'ArrowLeft',
+  Up: 'ArrowUp',
+  Right: 'ArrowRight',
+  Down: 'ArrowDown',
+  Del: 'Delete',
+  Win: 'OS',
+  Menu: 'ContextMenu',
+  Apps: 'ContextMenu',
+  Scroll: 'ScrollLock',
+  MozPrintableKey: 'Unidentified'
 };
 
 /**
@@ -30555,8 +34470,18 @@ var translateToKey = {
   40: 'ArrowDown',
   45: 'Insert',
   46: 'Delete',
-  112: 'F1', 113: 'F2', 114: 'F3', 115: 'F4', 116: 'F5', 117: 'F6',
-  118: 'F7', 119: 'F8', 120: 'F9', 121: 'F10', 122: 'F11', 123: 'F12',
+  112: 'F1',
+  113: 'F2',
+  114: 'F3',
+  115: 'F4',
+  116: 'F5',
+  117: 'F6',
+  118: 'F7',
+  119: 'F8',
+  120: 'F9',
+  121: 'F10',
+  122: 'F11',
+  123: 'F12',
   144: 'NumLock',
   145: 'ScrollLock',
   224: 'Meta'
@@ -30596,7 +34521,7 @@ function getEventKey(nativeEvent) {
 }
 
 module.exports = getEventKey;
-},{"./getEventCharCode":174}],176:[function(require,module,exports){
+},{"./getEventCharCode":184}],186:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -30615,10 +34540,10 @@ module.exports = getEventKey;
  */
 
 var modifierKeyToProp = {
-  'Alt': 'altKey',
-  'Control': 'ctrlKey',
-  'Meta': 'metaKey',
-  'Shift': 'shiftKey'
+  Alt: 'altKey',
+  Control: 'ctrlKey',
+  Meta: 'metaKey',
+  Shift: 'shiftKey'
 };
 
 // IE8 does not implement getModifierState so we simply map it to the only
@@ -30639,7 +34564,7 @@ function getEventModifierState(nativeEvent) {
 }
 
 module.exports = getEventModifierState;
-},{}],177:[function(require,module,exports){
+},{}],187:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -30674,7 +34599,7 @@ function getEventTarget(nativeEvent) {
 }
 
 module.exports = getEventTarget;
-},{}],178:[function(require,module,exports){
+},{}],188:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -30704,7 +34629,7 @@ function getHostComponentFromComposite(inst) {
 }
 
 module.exports = getHostComponentFromComposite;
-},{"./ReactNodeTypes":135}],179:[function(require,module,exports){
+},{"./ReactNodeTypes":145}],189:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -30745,28 +34670,7 @@ function getIteratorFn(maybeIterable) {
 }
 
 module.exports = getIteratorFn;
-},{}],180:[function(require,module,exports){
-/**
- * Copyright 2013-present, Facebook, Inc.
- * All rights reserved.
- *
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
- *
- * 
- */
-
-'use strict';
-
-var nextDebugID = 1;
-
-function getNextDebugID() {
-  return nextDebugID++;
-}
-
-module.exports = getNextDebugID;
-},{}],181:[function(require,module,exports){
+},{}],190:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -30840,7 +34744,7 @@ function getNodeForCharacterOffset(root, offset) {
 }
 
 module.exports = getNodeForCharacterOffset;
-},{}],182:[function(require,module,exports){
+},{}],191:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -30873,7 +34777,7 @@ function getTextContentAccessor() {
 }
 
 module.exports = getTextContentAccessor;
-},{"fbjs/lib/ExecutionEnvironment":44}],183:[function(require,module,exports){
+},{"fbjs/lib/ExecutionEnvironment":50}],192:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -30974,7 +34878,131 @@ function getVendorPrefixedEventName(eventName) {
 }
 
 module.exports = getVendorPrefixedEventName;
-},{"fbjs/lib/ExecutionEnvironment":44}],184:[function(require,module,exports){
+},{"fbjs/lib/ExecutionEnvironment":50}],193:[function(require,module,exports){
+/**
+ * Copyright 2013-present, Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ *
+ */
+
+'use strict';
+
+var ReactDOMComponentTree = require('./ReactDOMComponentTree');
+
+function isCheckable(elem) {
+  var type = elem.type;
+  var nodeName = elem.nodeName;
+  return nodeName && nodeName.toLowerCase() === 'input' && (type === 'checkbox' || type === 'radio');
+}
+
+function getTracker(inst) {
+  return inst._wrapperState.valueTracker;
+}
+
+function attachTracker(inst, tracker) {
+  inst._wrapperState.valueTracker = tracker;
+}
+
+function detachTracker(inst) {
+  delete inst._wrapperState.valueTracker;
+}
+
+function getValueFromNode(node) {
+  var value;
+  if (node) {
+    value = isCheckable(node) ? '' + node.checked : node.value;
+  }
+  return value;
+}
+
+var inputValueTracking = {
+  // exposed for testing
+  _getTrackerFromNode: function (node) {
+    return getTracker(ReactDOMComponentTree.getInstanceFromNode(node));
+  },
+
+
+  track: function (inst) {
+    if (getTracker(inst)) {
+      return;
+    }
+
+    var node = ReactDOMComponentTree.getNodeFromInstance(inst);
+    var valueField = isCheckable(node) ? 'checked' : 'value';
+    var descriptor = Object.getOwnPropertyDescriptor(node.constructor.prototype, valueField);
+
+    var currentValue = '' + node[valueField];
+
+    // if someone has already defined a value or Safari, then bail
+    // and don't track value will cause over reporting of changes,
+    // but it's better then a hard failure
+    // (needed for certain tests that spyOn input values and Safari)
+    if (node.hasOwnProperty(valueField) || typeof descriptor.get !== 'function' || typeof descriptor.set !== 'function') {
+      return;
+    }
+
+    Object.defineProperty(node, valueField, {
+      enumerable: descriptor.enumerable,
+      configurable: true,
+      get: function () {
+        return descriptor.get.call(this);
+      },
+      set: function (value) {
+        currentValue = '' + value;
+        descriptor.set.call(this, value);
+      }
+    });
+
+    attachTracker(inst, {
+      getValue: function () {
+        return currentValue;
+      },
+      setValue: function (value) {
+        currentValue = '' + value;
+      },
+      stopTracking: function () {
+        detachTracker(inst);
+        delete node[valueField];
+      }
+    });
+  },
+
+  updateValueIfChanged: function (inst) {
+    if (!inst) {
+      return false;
+    }
+    var tracker = getTracker(inst);
+
+    if (!tracker) {
+      inputValueTracking.track(inst);
+      return true;
+    }
+
+    var lastValue = tracker.getValue();
+    var nextValue = getValueFromNode(ReactDOMComponentTree.getNodeFromInstance(inst));
+
+    if (nextValue !== lastValue) {
+      tracker.setValue(nextValue);
+      return true;
+    }
+
+    return false;
+  },
+  stopTracking: function (inst) {
+    var tracker = getTracker(inst);
+    if (tracker) {
+      tracker.stopTracking();
+    }
+  }
+};
+
+module.exports = inputValueTracking;
+},{"./ReactDOMComponentTree":111}],194:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -30994,7 +35022,7 @@ var ReactCompositeComponent = require('./ReactCompositeComponent');
 var ReactEmptyComponent = require('./ReactEmptyComponent');
 var ReactHostComponent = require('./ReactHostComponent');
 
-var getNextDebugID = require('./getNextDebugID');
+var getNextDebugID = require('react/lib/getNextDebugID');
 var invariant = require('fbjs/lib/invariant');
 var warning = require('fbjs/lib/warning');
 
@@ -31002,9 +35030,6 @@ var warning = require('fbjs/lib/warning');
 var ReactCompositeComponentWrapper = function (element) {
   this.construct(element);
 };
-_assign(ReactCompositeComponentWrapper.prototype, ReactCompositeComponent, {
-  _instantiateReactComponent: instantiateReactComponent
-});
 
 function getDeclarationErrorAddendum(owner) {
   if (owner) {
@@ -31042,7 +35067,17 @@ function instantiateReactComponent(node, shouldHaveDebugID) {
     instance = ReactEmptyComponent.create(instantiateReactComponent);
   } else if (typeof node === 'object') {
     var element = node;
-    !(element && (typeof element.type === 'function' || typeof element.type === 'string')) ? "production" !== 'production' ? invariant(false, 'Element type is invalid: expected a string (for built-in components) or a class/function (for composite components) but got: %s.%s', element.type == null ? element.type : typeof element.type, getDeclarationErrorAddendum(element._owner)) : _prodInvariant('130', element.type == null ? element.type : typeof element.type, getDeclarationErrorAddendum(element._owner)) : void 0;
+    var type = element.type;
+    if (typeof type !== 'function' && typeof type !== 'string') {
+      var info = '';
+      if (process.env.NODE_ENV !== 'production') {
+        if (type === undefined || typeof type === 'object' && type !== null && Object.keys(type).length === 0) {
+          info += ' You likely forgot to export your component from the file ' + "it's defined in.";
+        }
+      }
+      info += getDeclarationErrorAddendum(element._owner);
+      !false ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Element type is invalid: expected a string (for built-in components) or a class/function (for composite components) but got: %s.%s', type == null ? type : typeof type, info) : _prodInvariant('130', type == null ? type : typeof type, info) : void 0;
+    }
 
     // Special case string values
     if (typeof element.type === 'string') {
@@ -31063,11 +35098,11 @@ function instantiateReactComponent(node, shouldHaveDebugID) {
   } else if (typeof node === 'string' || typeof node === 'number') {
     instance = ReactHostComponent.createInstanceForText(node);
   } else {
-    !false ? "production" !== 'production' ? invariant(false, 'Encountered invalid React node of type %s', typeof node) : _prodInvariant('131', typeof node) : void 0;
+    !false ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Encountered invalid React node of type %s', typeof node) : _prodInvariant('131', typeof node) : void 0;
   }
 
-  if ("production" !== 'production') {
-    "production" !== 'production' ? warning(typeof instance.mountComponent === 'function' && typeof instance.receiveComponent === 'function' && typeof instance.getHostNode === 'function' && typeof instance.unmountComponent === 'function', 'Only React Components can be mounted.') : void 0;
+  if (process.env.NODE_ENV !== 'production') {
+    process.env.NODE_ENV !== 'production' ? warning(typeof instance.mountComponent === 'function' && typeof instance.receiveComponent === 'function' && typeof instance.getHostNode === 'function' && typeof instance.unmountComponent === 'function', 'Only React Components can be mounted.') : void 0;
   }
 
   // These two fields are used by the DOM and ART diffing algorithms
@@ -31076,13 +35111,13 @@ function instantiateReactComponent(node, shouldHaveDebugID) {
   instance._mountIndex = 0;
   instance._mountImage = null;
 
-  if ("production" !== 'production') {
+  if (process.env.NODE_ENV !== 'production') {
     instance._debugID = shouldHaveDebugID ? getNextDebugID() : 0;
   }
 
   // Internal instances should fully constructed at this point, so they should
   // not get any new fields added to them at this point.
-  if ("production" !== 'production') {
+  if (process.env.NODE_ENV !== 'production') {
     if (Object.preventExtensions) {
       Object.preventExtensions(instance);
     }
@@ -31091,8 +35126,13 @@ function instantiateReactComponent(node, shouldHaveDebugID) {
   return instance;
 }
 
+_assign(ReactCompositeComponentWrapper.prototype, ReactCompositeComponent, {
+  _instantiateReactComponent: instantiateReactComponent
+});
+
 module.exports = instantiateReactComponent;
-},{"./ReactCompositeComponent":97,"./ReactEmptyComponent":120,"./ReactHostComponent":125,"./getNextDebugID":180,"./reactProdInvariant":188,"fbjs/lib/invariant":58,"fbjs/lib/warning":65,"object-assign":67}],185:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./ReactCompositeComponent":107,"./ReactEmptyComponent":130,"./ReactHostComponent":135,"./reactProdInvariant":198,"_process":74,"fbjs/lib/invariant":64,"fbjs/lib/warning":71,"object-assign":73,"react/lib/getNextDebugID":225}],195:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -31152,7 +35192,7 @@ function isEventSupported(eventNameSuffix, capture) {
 }
 
 module.exports = isEventSupported;
-},{"fbjs/lib/ExecutionEnvironment":44}],186:[function(require,module,exports){
+},{"fbjs/lib/ExecutionEnvironment":50}],196:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -31171,21 +35211,21 @@ module.exports = isEventSupported;
  */
 
 var supportedInputTypes = {
-  'color': true,
-  'date': true,
-  'datetime': true,
+  color: true,
+  date: true,
+  datetime: true,
   'datetime-local': true,
-  'email': true,
-  'month': true,
-  'number': true,
-  'password': true,
-  'range': true,
-  'search': true,
-  'tel': true,
-  'text': true,
-  'time': true,
-  'url': true,
-  'week': true
+  email: true,
+  month: true,
+  number: true,
+  password: true,
+  range: true,
+  search: true,
+  tel: true,
+  text: true,
+  time: true,
+  url: true,
+  week: true
 };
 
 function isTextInputElement(elem) {
@@ -31203,7 +35243,7 @@ function isTextInputElement(elem) {
 }
 
 module.exports = isTextInputElement;
-},{}],187:[function(require,module,exports){
+},{}],197:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -31229,7 +35269,7 @@ function quoteAttributeValueForBrowser(value) {
 }
 
 module.exports = quoteAttributeValueForBrowser;
-},{"./escapeTextContentForBrowser":170}],188:[function(require,module,exports){
+},{"./escapeTextContentForBrowser":180}],198:[function(require,module,exports){
 /**
  * Copyright (c) 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -31268,7 +35308,7 @@ function reactProdInvariant(code) {
 }
 
 module.exports = reactProdInvariant;
-},{}],189:[function(require,module,exports){
+},{}],199:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -31284,7 +35324,7 @@ module.exports = reactProdInvariant;
 var ReactMount = require('./ReactMount');
 
 module.exports = ReactMount.renderSubtreeIntoContainer;
-},{"./ReactMount":133}],190:[function(require,module,exports){
+},{"./ReactMount":143}],200:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -31363,7 +35403,7 @@ if (ExecutionEnvironment.canUseDOM) {
         // in hopes that this is preserved even if "\uFEFF" is transformed to
         // the actual Unicode character (by Babel, for example).
         // https://github.com/mishoo/UglifyJS2/blob/v2.4.20/lib/parse.js#L216
-        node.innerHTML = String.fromCharCode(0xFEFF) + html;
+        node.innerHTML = String.fromCharCode(0xfeff) + html;
 
         // deleteData leaves an empty `TextNode` which offsets the index of all
         // children. Definitely want to avoid this.
@@ -31382,7 +35422,7 @@ if (ExecutionEnvironment.canUseDOM) {
 }
 
 module.exports = setInnerHTML;
-},{"./DOMNamespaces":78,"./createMicrosoftUnsafeLocalFunction":168,"fbjs/lib/ExecutionEnvironment":44}],191:[function(require,module,exports){
+},{"./DOMNamespaces":88,"./createMicrosoftUnsafeLocalFunction":178,"fbjs/lib/ExecutionEnvironment":50}],201:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -31434,7 +35474,7 @@ if (ExecutionEnvironment.canUseDOM) {
 }
 
 module.exports = setTextContent;
-},{"./escapeTextContentForBrowser":170,"./setInnerHTML":190,"fbjs/lib/ExecutionEnvironment":44}],192:[function(require,module,exports){
+},{"./escapeTextContentForBrowser":180,"./setInnerHTML":200,"fbjs/lib/ExecutionEnvironment":50}],202:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -31476,7 +35516,8 @@ function shouldUpdateReactComponent(prevElement, nextElement) {
 }
 
 module.exports = shouldUpdateReactComponent;
-},{}],193:[function(require,module,exports){
+},{}],203:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -31584,7 +35625,7 @@ function traverseAllChildrenImpl(children, nameSoFar, callback, traverseContext)
           subtreeCount += traverseAllChildrenImpl(child, nextName, callback, traverseContext);
         }
       } else {
-        if ("production" !== 'production') {
+        if (process.env.NODE_ENV !== 'production') {
           var mapsAsChildrenAddendum = '';
           if (ReactCurrentOwner.current) {
             var mapsAsChildrenOwnerName = ReactCurrentOwner.current.getName();
@@ -31592,7 +35633,7 @@ function traverseAllChildrenImpl(children, nameSoFar, callback, traverseContext)
               mapsAsChildrenAddendum = ' Check the render method of `' + mapsAsChildrenOwnerName + '`.';
             }
           }
-          "production" !== 'production' ? warning(didWarnAboutMaps, 'Using Maps as children is not yet fully supported. It is an ' + 'experimental feature that might be removed. Convert it to a ' + 'sequence / iterable of keyed ReactElements instead.%s', mapsAsChildrenAddendum) : void 0;
+          process.env.NODE_ENV !== 'production' ? warning(didWarnAboutMaps, 'Using Maps as children is not yet fully supported. It is an ' + 'experimental feature that might be removed. Convert it to a ' + 'sequence / iterable of keyed ReactElements instead.%s', mapsAsChildrenAddendum) : void 0;
           didWarnAboutMaps = true;
         }
         // Iterator will provide entry [k,v] tuples rather than values.
@@ -31607,10 +35648,10 @@ function traverseAllChildrenImpl(children, nameSoFar, callback, traverseContext)
       }
     } else if (type === 'object') {
       var addendum = '';
-      if ("production" !== 'production') {
+      if (process.env.NODE_ENV !== 'production') {
         addendum = ' If you meant to render a collection of children, use an array ' + 'instead or wrap the object using createFragment(object) from the ' + 'React add-ons.';
         if (children._isReactElement) {
-          addendum = ' It looks like you\'re using an element created by a different ' + 'version of React. Make sure to use only one copy of React.';
+          addendum = " It looks like you're using an element created by a different " + 'version of React. Make sure to use only one copy of React.';
         }
         if (ReactCurrentOwner.current) {
           var name = ReactCurrentOwner.current.getName();
@@ -31620,7 +35661,7 @@ function traverseAllChildrenImpl(children, nameSoFar, callback, traverseContext)
         }
       }
       var childrenString = String(children);
-      !false ? "production" !== 'production' ? invariant(false, 'Objects are not valid as a React child (found: %s).%s', childrenString === '[object Object]' ? 'object with keys {' + Object.keys(children).join(', ') + '}' : childrenString, addendum) : _prodInvariant('31', childrenString === '[object Object]' ? 'object with keys {' + Object.keys(children).join(', ') + '}' : childrenString, addendum) : void 0;
+      !false ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Objects are not valid as a React child (found: %s).%s', childrenString === '[object Object]' ? 'object with keys {' + Object.keys(children).join(', ') + '}' : childrenString, addendum) : _prodInvariant('31', childrenString === '[object Object]' ? 'object with keys {' + Object.keys(children).join(', ') + '}' : childrenString, addendum) : void 0;
     }
   }
 
@@ -31652,7 +35693,9 @@ function traverseAllChildren(children, callback, traverseContext) {
 }
 
 module.exports = traverseAllChildren;
-},{"./KeyEscapeUtils":90,"./ReactElementSymbol":119,"./getIteratorFn":179,"./reactProdInvariant":188,"fbjs/lib/invariant":58,"fbjs/lib/warning":65,"react/lib/ReactCurrentOwner":202}],194:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./KeyEscapeUtils":100,"./ReactElementSymbol":129,"./getIteratorFn":189,"./reactProdInvariant":198,"_process":74,"fbjs/lib/invariant":64,"fbjs/lib/warning":71,"react/lib/ReactCurrentOwner":211}],204:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2015-present, Facebook, Inc.
  * All rights reserved.
@@ -31672,7 +35715,7 @@ var warning = require('fbjs/lib/warning');
 
 var validateDOMNesting = emptyFunction;
 
-if ("production" !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
   // This validation code was written based on the HTML5 parsing spec:
   // https://html.spec.whatwg.org/multipage/syntax.html#has-an-element-in-scope
   //
@@ -31776,7 +35819,6 @@ if ("production" !== 'production') {
       // but
       case 'option':
         return tag === '#text';
-
       // https://html.spec.whatwg.org/multipage/syntax.html#parsing-main-intd
       // https://html.spec.whatwg.org/multipage/syntax.html#parsing-main-incaption
       // No special behavior since these rules fall back to "in body" mode for
@@ -31785,25 +35827,20 @@ if ("production" !== 'production') {
       // https://html.spec.whatwg.org/multipage/syntax.html#parsing-main-intr
       case 'tr':
         return tag === 'th' || tag === 'td' || tag === 'style' || tag === 'script' || tag === 'template';
-
       // https://html.spec.whatwg.org/multipage/syntax.html#parsing-main-intbody
       case 'tbody':
       case 'thead':
       case 'tfoot':
         return tag === 'tr' || tag === 'style' || tag === 'script' || tag === 'template';
-
       // https://html.spec.whatwg.org/multipage/syntax.html#parsing-main-incolgroup
       case 'colgroup':
         return tag === 'col' || tag === 'template';
-
       // https://html.spec.whatwg.org/multipage/syntax.html#parsing-main-intable
       case 'table':
         return tag === 'caption' || tag === 'colgroup' || tag === 'tbody' || tag === 'tfoot' || tag === 'thead' || tag === 'style' || tag === 'script' || tag === 'template';
-
       // https://html.spec.whatwg.org/multipage/syntax.html#parsing-main-inhead
       case 'head':
         return tag === 'base' || tag === 'basefont' || tag === 'bgsound' || tag === 'link' || tag === 'meta' || tag === 'title' || tag === 'noscript' || tag === 'noframes' || tag === 'style' || tag === 'script' || tag === 'template';
-
       // https://html.spec.whatwg.org/multipage/semantics.html#the-html-element
       case 'html':
         return tag === 'head' || tag === 'body';
@@ -31879,16 +35916,11 @@ if ("production" !== 'production') {
       case 'section':
       case 'summary':
       case 'ul':
-
       case 'pre':
       case 'listing':
-
       case 'table':
-
       case 'hr':
-
       case 'xmp':
-
       case 'h1':
       case 'h2':
       case 'h3':
@@ -31947,7 +35979,7 @@ if ("production" !== 'production') {
     var parentTag = parentInfo && parentInfo.tag;
 
     if (childText != null) {
-      "production" !== 'production' ? warning(childTag == null, 'validateDOMNesting: when childText is passed, childTag should be null') : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(childTag == null, 'validateDOMNesting: when childText is passed, childTag should be null') : void 0;
       childTag = '#text';
     }
 
@@ -32004,7 +36036,7 @@ if ("production" !== 'production') {
           tagDisplayName = 'Text nodes';
         } else {
           tagDisplayName = 'Whitespace text nodes';
-          whitespaceInfo = ' Make sure you don\'t have any extra whitespace between tags on ' + 'each line of your source code.';
+          whitespaceInfo = " Make sure you don't have any extra whitespace between tags on " + 'each line of your source code.';
         }
       } else {
         tagDisplayName = '<' + childTag + '>';
@@ -32015,9 +36047,9 @@ if ("production" !== 'production') {
         if (ancestorTag === 'table' && childTag === 'tr') {
           info += ' Add a <tbody> to your code to match the DOM tree generated by ' + 'the browser.';
         }
-        "production" !== 'production' ? warning(false, 'validateDOMNesting(...): %s cannot appear as a child of <%s>.%s ' + 'See %s.%s', tagDisplayName, ancestorTag, whitespaceInfo, ownerInfo, info) : void 0;
+        process.env.NODE_ENV !== 'production' ? warning(false, 'validateDOMNesting(...): %s cannot appear as a child of <%s>.%s ' + 'See %s.%s', tagDisplayName, ancestorTag, whitespaceInfo, ownerInfo, info) : void 0;
       } else {
-        "production" !== 'production' ? warning(false, 'validateDOMNesting(...): %s cannot appear as a descendant of ' + '<%s>. See %s.', tagDisplayName, ancestorTag, ownerInfo) : void 0;
+        process.env.NODE_ENV !== 'production' ? warning(false, 'validateDOMNesting(...): %s cannot appear as a descendant of ' + '<%s>. See %s.', tagDisplayName, ancestorTag, ownerInfo) : void 0;
       }
     }
   };
@@ -32034,11 +36066,13 @@ if ("production" !== 'production') {
 }
 
 module.exports = validateDOMNesting;
-},{"fbjs/lib/emptyFunction":50,"fbjs/lib/warning":65,"object-assign":67}],195:[function(require,module,exports){
-arguments[4][90][0].apply(exports,arguments)
-},{"dup":90}],196:[function(require,module,exports){
-arguments[4][92][0].apply(exports,arguments)
-},{"./reactProdInvariant":217,"dup":92,"fbjs/lib/invariant":58}],197:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"_process":74,"fbjs/lib/emptyFunction":56,"fbjs/lib/warning":71,"object-assign":73}],205:[function(require,module,exports){
+arguments[4][100][0].apply(exports,arguments)
+},{"dup":100}],206:[function(require,module,exports){
+arguments[4][102][0].apply(exports,arguments)
+},{"./reactProdInvariant":228,"_process":74,"dup":102,"fbjs/lib/invariant":64}],207:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -32053,42 +36087,52 @@ arguments[4][92][0].apply(exports,arguments)
 
 var _assign = require('object-assign');
 
+var ReactBaseClasses = require('./ReactBaseClasses');
 var ReactChildren = require('./ReactChildren');
-var ReactComponent = require('./ReactComponent');
-var ReactPureComponent = require('./ReactPureComponent');
-var ReactClass = require('./ReactClass');
 var ReactDOMFactories = require('./ReactDOMFactories');
 var ReactElement = require('./ReactElement');
 var ReactPropTypes = require('./ReactPropTypes');
 var ReactVersion = require('./ReactVersion');
 
+var createReactClass = require('./createClass');
 var onlyChild = require('./onlyChild');
-var warning = require('fbjs/lib/warning');
 
 var createElement = ReactElement.createElement;
 var createFactory = ReactElement.createFactory;
 var cloneElement = ReactElement.cloneElement;
 
-if ("production" !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
+  var lowPriorityWarning = require('./lowPriorityWarning');
+  var canDefineProperty = require('./canDefineProperty');
   var ReactElementValidator = require('./ReactElementValidator');
+  var didWarnPropTypesDeprecated = false;
   createElement = ReactElementValidator.createElement;
   createFactory = ReactElementValidator.createFactory;
   cloneElement = ReactElementValidator.cloneElement;
 }
 
 var __spread = _assign;
+var createMixin = function (mixin) {
+  return mixin;
+};
 
-if ("production" !== 'production') {
-  var warned = false;
+if (process.env.NODE_ENV !== 'production') {
+  var warnedForSpread = false;
+  var warnedForCreateMixin = false;
   __spread = function () {
-    "production" !== 'production' ? warning(warned, 'React.__spread is deprecated and should not be used. Use ' + 'Object.assign directly or another helper function with similar ' + 'semantics. You may be seeing this warning due to your compiler. ' + 'See https://fb.me/react-spread-deprecation for more details.') : void 0;
-    warned = true;
+    lowPriorityWarning(warnedForSpread, 'React.__spread is deprecated and should not be used. Use ' + 'Object.assign directly or another helper function with similar ' + 'semantics. You may be seeing this warning due to your compiler. ' + 'See https://fb.me/react-spread-deprecation for more details.');
+    warnedForSpread = true;
     return _assign.apply(null, arguments);
+  };
+
+  createMixin = function (mixin) {
+    lowPriorityWarning(warnedForCreateMixin, 'React.createMixin is deprecated and should not be used. ' + 'In React v16.0, it will be removed. ' + 'You can use this mixin directly instead. ' + 'See https://fb.me/createmixin-was-never-implemented for more info.');
+    warnedForCreateMixin = true;
+    return mixin;
   };
 }
 
 var React = {
-
   // Modern
 
   Children: {
@@ -32099,8 +36143,8 @@ var React = {
     only: onlyChild
   },
 
-  Component: ReactComponent,
-  PureComponent: ReactPureComponent,
+  Component: ReactBaseClasses.Component,
+  PureComponent: ReactBaseClasses.PureComponent,
 
   createElement: createElement,
   cloneElement: cloneElement,
@@ -32109,12 +36153,9 @@ var React = {
   // Classic
 
   PropTypes: ReactPropTypes,
-  createClass: ReactClass.createClass,
+  createClass: createReactClass,
   createFactory: createFactory,
-  createMixin: function (mixin) {
-    // Currently a noop. Will be used to validate and trace mixins.
-    return mixin;
-  },
+  createMixin: createMixin,
 
   // This looks DOM specific but these are actually isomorphic helpers
   // since they are just generating DOM strings.
@@ -32126,8 +36167,190 @@ var React = {
   __spread: __spread
 };
 
+if (process.env.NODE_ENV !== 'production') {
+  var warnedForCreateClass = false;
+  if (canDefineProperty) {
+    Object.defineProperty(React, 'PropTypes', {
+      get: function () {
+        lowPriorityWarning(didWarnPropTypesDeprecated, 'Accessing PropTypes via the main React package is deprecated,' + ' and will be removed in  React v16.0.' + ' Use the latest available v15.* prop-types package from npm instead.' + ' For info on usage, compatibility, migration and more, see ' + 'https://fb.me/prop-types-docs');
+        didWarnPropTypesDeprecated = true;
+        return ReactPropTypes;
+      }
+    });
+
+    Object.defineProperty(React, 'createClass', {
+      get: function () {
+        lowPriorityWarning(warnedForCreateClass, 'Accessing createClass via the main React package is deprecated,' + ' and will be removed in React v16.0.' + " Use a plain JavaScript class instead. If you're not yet " + 'ready to migrate, create-react-class v15.* is available ' + 'on npm as a temporary, drop-in replacement. ' + 'For more info see https://fb.me/react-create-class');
+        warnedForCreateClass = true;
+        return createReactClass;
+      }
+    });
+  }
+
+  // React.DOM factories are deprecated. Wrap these methods so that
+  // invocations of the React.DOM namespace and alert users to switch
+  // to the `react-dom-factories` package.
+  React.DOM = {};
+  var warnedForFactories = false;
+  Object.keys(ReactDOMFactories).forEach(function (factory) {
+    React.DOM[factory] = function () {
+      if (!warnedForFactories) {
+        lowPriorityWarning(false, 'Accessing factories like React.DOM.%s has been deprecated ' + 'and will be removed in v16.0+. Use the ' + 'react-dom-factories package instead. ' + ' Version 1.0 provides a drop-in replacement.' + ' For more info, see https://fb.me/react-dom-factories', factory);
+        warnedForFactories = true;
+      }
+      return ReactDOMFactories[factory].apply(ReactDOMFactories, arguments);
+    };
+  });
+}
+
 module.exports = React;
-},{"./ReactChildren":198,"./ReactClass":199,"./ReactComponent":200,"./ReactDOMFactories":203,"./ReactElement":204,"./ReactElementValidator":206,"./ReactPropTypes":209,"./ReactPureComponent":211,"./ReactVersion":212,"./onlyChild":216,"fbjs/lib/warning":65,"object-assign":67}],198:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./ReactBaseClasses":208,"./ReactChildren":209,"./ReactDOMFactories":212,"./ReactElement":213,"./ReactElementValidator":215,"./ReactPropTypes":218,"./ReactVersion":220,"./canDefineProperty":221,"./createClass":223,"./lowPriorityWarning":226,"./onlyChild":227,"_process":74,"object-assign":73}],208:[function(require,module,exports){
+(function (process){
+/**
+ * Copyright 2013-present, Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ *
+ */
+
+'use strict';
+
+var _prodInvariant = require('./reactProdInvariant'),
+    _assign = require('object-assign');
+
+var ReactNoopUpdateQueue = require('./ReactNoopUpdateQueue');
+
+var canDefineProperty = require('./canDefineProperty');
+var emptyObject = require('fbjs/lib/emptyObject');
+var invariant = require('fbjs/lib/invariant');
+var lowPriorityWarning = require('./lowPriorityWarning');
+
+/**
+ * Base class helpers for the updating state of a component.
+ */
+function ReactComponent(props, context, updater) {
+  this.props = props;
+  this.context = context;
+  this.refs = emptyObject;
+  // We initialize the default updater but the real one gets injected by the
+  // renderer.
+  this.updater = updater || ReactNoopUpdateQueue;
+}
+
+ReactComponent.prototype.isReactComponent = {};
+
+/**
+ * Sets a subset of the state. Always use this to mutate
+ * state. You should treat `this.state` as immutable.
+ *
+ * There is no guarantee that `this.state` will be immediately updated, so
+ * accessing `this.state` after calling this method may return the old value.
+ *
+ * There is no guarantee that calls to `setState` will run synchronously,
+ * as they may eventually be batched together.  You can provide an optional
+ * callback that will be executed when the call to setState is actually
+ * completed.
+ *
+ * When a function is provided to setState, it will be called at some point in
+ * the future (not synchronously). It will be called with the up to date
+ * component arguments (state, props, context). These values can be different
+ * from this.* because your function may be called after receiveProps but before
+ * shouldComponentUpdate, and this new state, props, and context will not yet be
+ * assigned to this.
+ *
+ * @param {object|function} partialState Next partial state or function to
+ *        produce next partial state to be merged with current state.
+ * @param {?function} callback Called after state is updated.
+ * @final
+ * @protected
+ */
+ReactComponent.prototype.setState = function (partialState, callback) {
+  !(typeof partialState === 'object' || typeof partialState === 'function' || partialState == null) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'setState(...): takes an object of state variables to update or a function which returns an object of state variables.') : _prodInvariant('85') : void 0;
+  this.updater.enqueueSetState(this, partialState);
+  if (callback) {
+    this.updater.enqueueCallback(this, callback, 'setState');
+  }
+};
+
+/**
+ * Forces an update. This should only be invoked when it is known with
+ * certainty that we are **not** in a DOM transaction.
+ *
+ * You may want to call this when you know that some deeper aspect of the
+ * component's state has changed but `setState` was not called.
+ *
+ * This will not invoke `shouldComponentUpdate`, but it will invoke
+ * `componentWillUpdate` and `componentDidUpdate`.
+ *
+ * @param {?function} callback Called after update is complete.
+ * @final
+ * @protected
+ */
+ReactComponent.prototype.forceUpdate = function (callback) {
+  this.updater.enqueueForceUpdate(this);
+  if (callback) {
+    this.updater.enqueueCallback(this, callback, 'forceUpdate');
+  }
+};
+
+/**
+ * Deprecated APIs. These APIs used to exist on classic React classes but since
+ * we would like to deprecate them, we're not going to move them over to this
+ * modern base class. Instead, we define a getter that warns if it's accessed.
+ */
+if (process.env.NODE_ENV !== 'production') {
+  var deprecatedAPIs = {
+    isMounted: ['isMounted', 'Instead, make sure to clean up subscriptions and pending requests in ' + 'componentWillUnmount to prevent memory leaks.'],
+    replaceState: ['replaceState', 'Refactor your code to use setState instead (see ' + 'https://github.com/facebook/react/issues/3236).']
+  };
+  var defineDeprecationWarning = function (methodName, info) {
+    if (canDefineProperty) {
+      Object.defineProperty(ReactComponent.prototype, methodName, {
+        get: function () {
+          lowPriorityWarning(false, '%s(...) is deprecated in plain JavaScript React classes. %s', info[0], info[1]);
+          return undefined;
+        }
+      });
+    }
+  };
+  for (var fnName in deprecatedAPIs) {
+    if (deprecatedAPIs.hasOwnProperty(fnName)) {
+      defineDeprecationWarning(fnName, deprecatedAPIs[fnName]);
+    }
+  }
+}
+
+/**
+ * Base class helpers for the updating state of a component.
+ */
+function ReactPureComponent(props, context, updater) {
+  // Duplicated from ReactComponent.
+  this.props = props;
+  this.context = context;
+  this.refs = emptyObject;
+  // We initialize the default updater but the real one gets injected by the
+  // renderer.
+  this.updater = updater || ReactNoopUpdateQueue;
+}
+
+function ComponentDummy() {}
+ComponentDummy.prototype = ReactComponent.prototype;
+ReactPureComponent.prototype = new ComponentDummy();
+ReactPureComponent.prototype.constructor = ReactPureComponent;
+// Avoid an extra prototype jump for these methods.
+_assign(ReactPureComponent.prototype, ReactComponent.prototype);
+ReactPureComponent.prototype.isPureReactComponent = true;
+
+module.exports = {
+  Component: ReactComponent,
+  PureComponent: ReactPureComponent
+};
+}).call(this,require('_process'))
+},{"./ReactNoopUpdateQueue":216,"./canDefineProperty":221,"./lowPriorityWarning":226,"./reactProdInvariant":228,"_process":74,"fbjs/lib/emptyObject":57,"fbjs/lib/invariant":64,"object-assign":73}],209:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -32318,842 +36541,8 @@ var ReactChildren = {
 };
 
 module.exports = ReactChildren;
-},{"./PooledClass":196,"./ReactElement":204,"./traverseAllChildren":218,"fbjs/lib/emptyFunction":50}],199:[function(require,module,exports){
-/**
- * Copyright 2013-present, Facebook, Inc.
- * All rights reserved.
- *
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
- *
- */
-
-'use strict';
-
-var _prodInvariant = require('./reactProdInvariant'),
-    _assign = require('object-assign');
-
-var ReactComponent = require('./ReactComponent');
-var ReactElement = require('./ReactElement');
-var ReactPropTypeLocationNames = require('./ReactPropTypeLocationNames');
-var ReactNoopUpdateQueue = require('./ReactNoopUpdateQueue');
-
-var emptyObject = require('fbjs/lib/emptyObject');
-var invariant = require('fbjs/lib/invariant');
-var warning = require('fbjs/lib/warning');
-
-var MIXINS_KEY = 'mixins';
-
-// Helper function to allow the creation of anonymous functions which do not
-// have .name set to the name of the variable being assigned to.
-function identity(fn) {
-  return fn;
-}
-
-/**
- * Policies that describe methods in `ReactClassInterface`.
- */
-
-
-var injectedMixins = [];
-
-/**
- * Composite components are higher-level components that compose other composite
- * or host components.
- *
- * To create a new type of `ReactClass`, pass a specification of
- * your new class to `React.createClass`. The only requirement of your class
- * specification is that you implement a `render` method.
- *
- *   var MyComponent = React.createClass({
- *     render: function() {
- *       return <div>Hello World</div>;
- *     }
- *   });
- *
- * The class specification supports a specific protocol of methods that have
- * special meaning (e.g. `render`). See `ReactClassInterface` for
- * more the comprehensive protocol. Any other properties and methods in the
- * class specification will be available on the prototype.
- *
- * @interface ReactClassInterface
- * @internal
- */
-var ReactClassInterface = {
-
-  /**
-   * An array of Mixin objects to include when defining your component.
-   *
-   * @type {array}
-   * @optional
-   */
-  mixins: 'DEFINE_MANY',
-
-  /**
-   * An object containing properties and methods that should be defined on
-   * the component's constructor instead of its prototype (static methods).
-   *
-   * @type {object}
-   * @optional
-   */
-  statics: 'DEFINE_MANY',
-
-  /**
-   * Definition of prop types for this component.
-   *
-   * @type {object}
-   * @optional
-   */
-  propTypes: 'DEFINE_MANY',
-
-  /**
-   * Definition of context types for this component.
-   *
-   * @type {object}
-   * @optional
-   */
-  contextTypes: 'DEFINE_MANY',
-
-  /**
-   * Definition of context types this component sets for its children.
-   *
-   * @type {object}
-   * @optional
-   */
-  childContextTypes: 'DEFINE_MANY',
-
-  // ==== Definition methods ====
-
-  /**
-   * Invoked when the component is mounted. Values in the mapping will be set on
-   * `this.props` if that prop is not specified (i.e. using an `in` check).
-   *
-   * This method is invoked before `getInitialState` and therefore cannot rely
-   * on `this.state` or use `this.setState`.
-   *
-   * @return {object}
-   * @optional
-   */
-  getDefaultProps: 'DEFINE_MANY_MERGED',
-
-  /**
-   * Invoked once before the component is mounted. The return value will be used
-   * as the initial value of `this.state`.
-   *
-   *   getInitialState: function() {
-   *     return {
-   *       isOn: false,
-   *       fooBaz: new BazFoo()
-   *     }
-   *   }
-   *
-   * @return {object}
-   * @optional
-   */
-  getInitialState: 'DEFINE_MANY_MERGED',
-
-  /**
-   * @return {object}
-   * @optional
-   */
-  getChildContext: 'DEFINE_MANY_MERGED',
-
-  /**
-   * Uses props from `this.props` and state from `this.state` to render the
-   * structure of the component.
-   *
-   * No guarantees are made about when or how often this method is invoked, so
-   * it must not have side effects.
-   *
-   *   render: function() {
-   *     var name = this.props.name;
-   *     return <div>Hello, {name}!</div>;
-   *   }
-   *
-   * @return {ReactComponent}
-   * @nosideeffects
-   * @required
-   */
-  render: 'DEFINE_ONCE',
-
-  // ==== Delegate methods ====
-
-  /**
-   * Invoked when the component is initially created and about to be mounted.
-   * This may have side effects, but any external subscriptions or data created
-   * by this method must be cleaned up in `componentWillUnmount`.
-   *
-   * @optional
-   */
-  componentWillMount: 'DEFINE_MANY',
-
-  /**
-   * Invoked when the component has been mounted and has a DOM representation.
-   * However, there is no guarantee that the DOM node is in the document.
-   *
-   * Use this as an opportunity to operate on the DOM when the component has
-   * been mounted (initialized and rendered) for the first time.
-   *
-   * @param {DOMElement} rootNode DOM element representing the component.
-   * @optional
-   */
-  componentDidMount: 'DEFINE_MANY',
-
-  /**
-   * Invoked before the component receives new props.
-   *
-   * Use this as an opportunity to react to a prop transition by updating the
-   * state using `this.setState`. Current props are accessed via `this.props`.
-   *
-   *   componentWillReceiveProps: function(nextProps, nextContext) {
-   *     this.setState({
-   *       likesIncreasing: nextProps.likeCount > this.props.likeCount
-   *     });
-   *   }
-   *
-   * NOTE: There is no equivalent `componentWillReceiveState`. An incoming prop
-   * transition may cause a state change, but the opposite is not true. If you
-   * need it, you are probably looking for `componentWillUpdate`.
-   *
-   * @param {object} nextProps
-   * @optional
-   */
-  componentWillReceiveProps: 'DEFINE_MANY',
-
-  /**
-   * Invoked while deciding if the component should be updated as a result of
-   * receiving new props, state and/or context.
-   *
-   * Use this as an opportunity to `return false` when you're certain that the
-   * transition to the new props/state/context will not require a component
-   * update.
-   *
-   *   shouldComponentUpdate: function(nextProps, nextState, nextContext) {
-   *     return !equal(nextProps, this.props) ||
-   *       !equal(nextState, this.state) ||
-   *       !equal(nextContext, this.context);
-   *   }
-   *
-   * @param {object} nextProps
-   * @param {?object} nextState
-   * @param {?object} nextContext
-   * @return {boolean} True if the component should update.
-   * @optional
-   */
-  shouldComponentUpdate: 'DEFINE_ONCE',
-
-  /**
-   * Invoked when the component is about to update due to a transition from
-   * `this.props`, `this.state` and `this.context` to `nextProps`, `nextState`
-   * and `nextContext`.
-   *
-   * Use this as an opportunity to perform preparation before an update occurs.
-   *
-   * NOTE: You **cannot** use `this.setState()` in this method.
-   *
-   * @param {object} nextProps
-   * @param {?object} nextState
-   * @param {?object} nextContext
-   * @param {ReactReconcileTransaction} transaction
-   * @optional
-   */
-  componentWillUpdate: 'DEFINE_MANY',
-
-  /**
-   * Invoked when the component's DOM representation has been updated.
-   *
-   * Use this as an opportunity to operate on the DOM when the component has
-   * been updated.
-   *
-   * @param {object} prevProps
-   * @param {?object} prevState
-   * @param {?object} prevContext
-   * @param {DOMElement} rootNode DOM element representing the component.
-   * @optional
-   */
-  componentDidUpdate: 'DEFINE_MANY',
-
-  /**
-   * Invoked when the component is about to be removed from its parent and have
-   * its DOM representation destroyed.
-   *
-   * Use this as an opportunity to deallocate any external resources.
-   *
-   * NOTE: There is no `componentDidUnmount` since your component will have been
-   * destroyed by that point.
-   *
-   * @optional
-   */
-  componentWillUnmount: 'DEFINE_MANY',
-
-  // ==== Advanced methods ====
-
-  /**
-   * Updates the component's currently mounted DOM representation.
-   *
-   * By default, this implements React's rendering and reconciliation algorithm.
-   * Sophisticated clients may wish to override this.
-   *
-   * @param {ReactReconcileTransaction} transaction
-   * @internal
-   * @overridable
-   */
-  updateComponent: 'OVERRIDE_BASE'
-
-};
-
-/**
- * Mapping from class specification keys to special processing functions.
- *
- * Although these are declared like instance properties in the specification
- * when defining classes using `React.createClass`, they are actually static
- * and are accessible on the constructor instead of the prototype. Despite
- * being static, they must be defined outside of the "statics" key under
- * which all other static methods are defined.
- */
-var RESERVED_SPEC_KEYS = {
-  displayName: function (Constructor, displayName) {
-    Constructor.displayName = displayName;
-  },
-  mixins: function (Constructor, mixins) {
-    if (mixins) {
-      for (var i = 0; i < mixins.length; i++) {
-        mixSpecIntoComponent(Constructor, mixins[i]);
-      }
-    }
-  },
-  childContextTypes: function (Constructor, childContextTypes) {
-    if ("production" !== 'production') {
-      validateTypeDef(Constructor, childContextTypes, 'childContext');
-    }
-    Constructor.childContextTypes = _assign({}, Constructor.childContextTypes, childContextTypes);
-  },
-  contextTypes: function (Constructor, contextTypes) {
-    if ("production" !== 'production') {
-      validateTypeDef(Constructor, contextTypes, 'context');
-    }
-    Constructor.contextTypes = _assign({}, Constructor.contextTypes, contextTypes);
-  },
-  /**
-   * Special case getDefaultProps which should move into statics but requires
-   * automatic merging.
-   */
-  getDefaultProps: function (Constructor, getDefaultProps) {
-    if (Constructor.getDefaultProps) {
-      Constructor.getDefaultProps = createMergedResultFunction(Constructor.getDefaultProps, getDefaultProps);
-    } else {
-      Constructor.getDefaultProps = getDefaultProps;
-    }
-  },
-  propTypes: function (Constructor, propTypes) {
-    if ("production" !== 'production') {
-      validateTypeDef(Constructor, propTypes, 'prop');
-    }
-    Constructor.propTypes = _assign({}, Constructor.propTypes, propTypes);
-  },
-  statics: function (Constructor, statics) {
-    mixStaticSpecIntoComponent(Constructor, statics);
-  },
-  autobind: function () {} };
-
-function validateTypeDef(Constructor, typeDef, location) {
-  for (var propName in typeDef) {
-    if (typeDef.hasOwnProperty(propName)) {
-      // use a warning instead of an invariant so components
-      // don't show up in prod but only in __DEV__
-      "production" !== 'production' ? warning(typeof typeDef[propName] === 'function', '%s: %s type `%s` is invalid; it must be a function, usually from ' + 'React.PropTypes.', Constructor.displayName || 'ReactClass', ReactPropTypeLocationNames[location], propName) : void 0;
-    }
-  }
-}
-
-function validateMethodOverride(isAlreadyDefined, name) {
-  var specPolicy = ReactClassInterface.hasOwnProperty(name) ? ReactClassInterface[name] : null;
-
-  // Disallow overriding of base class methods unless explicitly allowed.
-  if (ReactClassMixin.hasOwnProperty(name)) {
-    !(specPolicy === 'OVERRIDE_BASE') ? "production" !== 'production' ? invariant(false, 'ReactClassInterface: You are attempting to override `%s` from your class specification. Ensure that your method names do not overlap with React methods.', name) : _prodInvariant('73', name) : void 0;
-  }
-
-  // Disallow defining methods more than once unless explicitly allowed.
-  if (isAlreadyDefined) {
-    !(specPolicy === 'DEFINE_MANY' || specPolicy === 'DEFINE_MANY_MERGED') ? "production" !== 'production' ? invariant(false, 'ReactClassInterface: You are attempting to define `%s` on your component more than once. This conflict may be due to a mixin.', name) : _prodInvariant('74', name) : void 0;
-  }
-}
-
-/**
- * Mixin helper which handles policy validation and reserved
- * specification keys when building React classes.
- */
-function mixSpecIntoComponent(Constructor, spec) {
-  if (!spec) {
-    if ("production" !== 'production') {
-      var typeofSpec = typeof spec;
-      var isMixinValid = typeofSpec === 'object' && spec !== null;
-
-      "production" !== 'production' ? warning(isMixinValid, '%s: You\'re attempting to include a mixin that is either null ' + 'or not an object. Check the mixins included by the component, ' + 'as well as any mixins they include themselves. ' + 'Expected object but got %s.', Constructor.displayName || 'ReactClass', spec === null ? null : typeofSpec) : void 0;
-    }
-
-    return;
-  }
-
-  !(typeof spec !== 'function') ? "production" !== 'production' ? invariant(false, 'ReactClass: You\'re attempting to use a component class or function as a mixin. Instead, just use a regular object.') : _prodInvariant('75') : void 0;
-  !!ReactElement.isValidElement(spec) ? "production" !== 'production' ? invariant(false, 'ReactClass: You\'re attempting to use a component as a mixin. Instead, just use a regular object.') : _prodInvariant('76') : void 0;
-
-  var proto = Constructor.prototype;
-  var autoBindPairs = proto.__reactAutoBindPairs;
-
-  // By handling mixins before any other properties, we ensure the same
-  // chaining order is applied to methods with DEFINE_MANY policy, whether
-  // mixins are listed before or after these methods in the spec.
-  if (spec.hasOwnProperty(MIXINS_KEY)) {
-    RESERVED_SPEC_KEYS.mixins(Constructor, spec.mixins);
-  }
-
-  for (var name in spec) {
-    if (!spec.hasOwnProperty(name)) {
-      continue;
-    }
-
-    if (name === MIXINS_KEY) {
-      // We have already handled mixins in a special case above.
-      continue;
-    }
-
-    var property = spec[name];
-    var isAlreadyDefined = proto.hasOwnProperty(name);
-    validateMethodOverride(isAlreadyDefined, name);
-
-    if (RESERVED_SPEC_KEYS.hasOwnProperty(name)) {
-      RESERVED_SPEC_KEYS[name](Constructor, property);
-    } else {
-      // Setup methods on prototype:
-      // The following member methods should not be automatically bound:
-      // 1. Expected ReactClass methods (in the "interface").
-      // 2. Overridden methods (that were mixed in).
-      var isReactClassMethod = ReactClassInterface.hasOwnProperty(name);
-      var isFunction = typeof property === 'function';
-      var shouldAutoBind = isFunction && !isReactClassMethod && !isAlreadyDefined && spec.autobind !== false;
-
-      if (shouldAutoBind) {
-        autoBindPairs.push(name, property);
-        proto[name] = property;
-      } else {
-        if (isAlreadyDefined) {
-          var specPolicy = ReactClassInterface[name];
-
-          // These cases should already be caught by validateMethodOverride.
-          !(isReactClassMethod && (specPolicy === 'DEFINE_MANY_MERGED' || specPolicy === 'DEFINE_MANY')) ? "production" !== 'production' ? invariant(false, 'ReactClass: Unexpected spec policy %s for key %s when mixing in component specs.', specPolicy, name) : _prodInvariant('77', specPolicy, name) : void 0;
-
-          // For methods which are defined more than once, call the existing
-          // methods before calling the new property, merging if appropriate.
-          if (specPolicy === 'DEFINE_MANY_MERGED') {
-            proto[name] = createMergedResultFunction(proto[name], property);
-          } else if (specPolicy === 'DEFINE_MANY') {
-            proto[name] = createChainedFunction(proto[name], property);
-          }
-        } else {
-          proto[name] = property;
-          if ("production" !== 'production') {
-            // Add verbose displayName to the function, which helps when looking
-            // at profiling tools.
-            if (typeof property === 'function' && spec.displayName) {
-              proto[name].displayName = spec.displayName + '_' + name;
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
-function mixStaticSpecIntoComponent(Constructor, statics) {
-  if (!statics) {
-    return;
-  }
-  for (var name in statics) {
-    var property = statics[name];
-    if (!statics.hasOwnProperty(name)) {
-      continue;
-    }
-
-    var isReserved = name in RESERVED_SPEC_KEYS;
-    !!isReserved ? "production" !== 'production' ? invariant(false, 'ReactClass: You are attempting to define a reserved property, `%s`, that shouldn\'t be on the "statics" key. Define it as an instance property instead; it will still be accessible on the constructor.', name) : _prodInvariant('78', name) : void 0;
-
-    var isInherited = name in Constructor;
-    !!isInherited ? "production" !== 'production' ? invariant(false, 'ReactClass: You are attempting to define `%s` on your component more than once. This conflict may be due to a mixin.', name) : _prodInvariant('79', name) : void 0;
-    Constructor[name] = property;
-  }
-}
-
-/**
- * Merge two objects, but throw if both contain the same key.
- *
- * @param {object} one The first object, which is mutated.
- * @param {object} two The second object
- * @return {object} one after it has been mutated to contain everything in two.
- */
-function mergeIntoWithNoDuplicateKeys(one, two) {
-  !(one && two && typeof one === 'object' && typeof two === 'object') ? "production" !== 'production' ? invariant(false, 'mergeIntoWithNoDuplicateKeys(): Cannot merge non-objects.') : _prodInvariant('80') : void 0;
-
-  for (var key in two) {
-    if (two.hasOwnProperty(key)) {
-      !(one[key] === undefined) ? "production" !== 'production' ? invariant(false, 'mergeIntoWithNoDuplicateKeys(): Tried to merge two objects with the same key: `%s`. This conflict may be due to a mixin; in particular, this may be caused by two getInitialState() or getDefaultProps() methods returning objects with clashing keys.', key) : _prodInvariant('81', key) : void 0;
-      one[key] = two[key];
-    }
-  }
-  return one;
-}
-
-/**
- * Creates a function that invokes two functions and merges their return values.
- *
- * @param {function} one Function to invoke first.
- * @param {function} two Function to invoke second.
- * @return {function} Function that invokes the two argument functions.
- * @private
- */
-function createMergedResultFunction(one, two) {
-  return function mergedResult() {
-    var a = one.apply(this, arguments);
-    var b = two.apply(this, arguments);
-    if (a == null) {
-      return b;
-    } else if (b == null) {
-      return a;
-    }
-    var c = {};
-    mergeIntoWithNoDuplicateKeys(c, a);
-    mergeIntoWithNoDuplicateKeys(c, b);
-    return c;
-  };
-}
-
-/**
- * Creates a function that invokes two functions and ignores their return vales.
- *
- * @param {function} one Function to invoke first.
- * @param {function} two Function to invoke second.
- * @return {function} Function that invokes the two argument functions.
- * @private
- */
-function createChainedFunction(one, two) {
-  return function chainedFunction() {
-    one.apply(this, arguments);
-    two.apply(this, arguments);
-  };
-}
-
-/**
- * Binds a method to the component.
- *
- * @param {object} component Component whose method is going to be bound.
- * @param {function} method Method to be bound.
- * @return {function} The bound method.
- */
-function bindAutoBindMethod(component, method) {
-  var boundMethod = method.bind(component);
-  if ("production" !== 'production') {
-    boundMethod.__reactBoundContext = component;
-    boundMethod.__reactBoundMethod = method;
-    boundMethod.__reactBoundArguments = null;
-    var componentName = component.constructor.displayName;
-    var _bind = boundMethod.bind;
-    boundMethod.bind = function (newThis) {
-      for (var _len = arguments.length, args = Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++) {
-        args[_key - 1] = arguments[_key];
-      }
-
-      // User is trying to bind() an autobound method; we effectively will
-      // ignore the value of "this" that the user is trying to use, so
-      // let's warn.
-      if (newThis !== component && newThis !== null) {
-        "production" !== 'production' ? warning(false, 'bind(): React component methods may only be bound to the ' + 'component instance. See %s', componentName) : void 0;
-      } else if (!args.length) {
-        "production" !== 'production' ? warning(false, 'bind(): You are binding a component method to the component. ' + 'React does this for you automatically in a high-performance ' + 'way, so you can safely remove this call. See %s', componentName) : void 0;
-        return boundMethod;
-      }
-      var reboundMethod = _bind.apply(boundMethod, arguments);
-      reboundMethod.__reactBoundContext = component;
-      reboundMethod.__reactBoundMethod = method;
-      reboundMethod.__reactBoundArguments = args;
-      return reboundMethod;
-    };
-  }
-  return boundMethod;
-}
-
-/**
- * Binds all auto-bound methods in a component.
- *
- * @param {object} component Component whose method is going to be bound.
- */
-function bindAutoBindMethods(component) {
-  var pairs = component.__reactAutoBindPairs;
-  for (var i = 0; i < pairs.length; i += 2) {
-    var autoBindKey = pairs[i];
-    var method = pairs[i + 1];
-    component[autoBindKey] = bindAutoBindMethod(component, method);
-  }
-}
-
-/**
- * Add more to the ReactClass base class. These are all legacy features and
- * therefore not already part of the modern ReactComponent.
- */
-var ReactClassMixin = {
-
-  /**
-   * TODO: This will be deprecated because state should always keep a consistent
-   * type signature and the only use case for this, is to avoid that.
-   */
-  replaceState: function (newState, callback) {
-    this.updater.enqueueReplaceState(this, newState);
-    if (callback) {
-      this.updater.enqueueCallback(this, callback, 'replaceState');
-    }
-  },
-
-  /**
-   * Checks whether or not this composite component is mounted.
-   * @return {boolean} True if mounted, false otherwise.
-   * @protected
-   * @final
-   */
-  isMounted: function () {
-    return this.updater.isMounted(this);
-  }
-};
-
-var ReactClassComponent = function () {};
-_assign(ReactClassComponent.prototype, ReactComponent.prototype, ReactClassMixin);
-
-/**
- * Module for creating composite components.
- *
- * @class ReactClass
- */
-var ReactClass = {
-
-  /**
-   * Creates a composite component class given a class specification.
-   * See https://facebook.github.io/react/docs/top-level-api.html#react.createclass
-   *
-   * @param {object} spec Class specification (which must define `render`).
-   * @return {function} Component constructor function.
-   * @public
-   */
-  createClass: function (spec) {
-    // To keep our warnings more understandable, we'll use a little hack here to
-    // ensure that Constructor.name !== 'Constructor'. This makes sure we don't
-    // unnecessarily identify a class without displayName as 'Constructor'.
-    var Constructor = identity(function (props, context, updater) {
-      // This constructor gets overridden by mocks. The argument is used
-      // by mocks to assert on what gets mounted.
-
-      if ("production" !== 'production') {
-        "production" !== 'production' ? warning(this instanceof Constructor, 'Something is calling a React component directly. Use a factory or ' + 'JSX instead. See: https://fb.me/react-legacyfactory') : void 0;
-      }
-
-      // Wire up auto-binding
-      if (this.__reactAutoBindPairs.length) {
-        bindAutoBindMethods(this);
-      }
-
-      this.props = props;
-      this.context = context;
-      this.refs = emptyObject;
-      this.updater = updater || ReactNoopUpdateQueue;
-
-      this.state = null;
-
-      // ReactClasses doesn't have constructors. Instead, they use the
-      // getInitialState and componentWillMount methods for initialization.
-
-      var initialState = this.getInitialState ? this.getInitialState() : null;
-      if ("production" !== 'production') {
-        // We allow auto-mocks to proceed as if they're returning null.
-        if (initialState === undefined && this.getInitialState._isMockFunction) {
-          // This is probably bad practice. Consider warning here and
-          // deprecating this convenience.
-          initialState = null;
-        }
-      }
-      !(typeof initialState === 'object' && !Array.isArray(initialState)) ? "production" !== 'production' ? invariant(false, '%s.getInitialState(): must return an object or null', Constructor.displayName || 'ReactCompositeComponent') : _prodInvariant('82', Constructor.displayName || 'ReactCompositeComponent') : void 0;
-
-      this.state = initialState;
-    });
-    Constructor.prototype = new ReactClassComponent();
-    Constructor.prototype.constructor = Constructor;
-    Constructor.prototype.__reactAutoBindPairs = [];
-
-    injectedMixins.forEach(mixSpecIntoComponent.bind(null, Constructor));
-
-    mixSpecIntoComponent(Constructor, spec);
-
-    // Initialize the defaultProps property after all mixins have been merged.
-    if (Constructor.getDefaultProps) {
-      Constructor.defaultProps = Constructor.getDefaultProps();
-    }
-
-    if ("production" !== 'production') {
-      // This is a tag to indicate that the use of these method names is ok,
-      // since it's used with createClass. If it's not, then it's likely a
-      // mistake so we'll warn you to use the static property, property
-      // initializer or constructor respectively.
-      if (Constructor.getDefaultProps) {
-        Constructor.getDefaultProps.isReactClassApproved = {};
-      }
-      if (Constructor.prototype.getInitialState) {
-        Constructor.prototype.getInitialState.isReactClassApproved = {};
-      }
-    }
-
-    !Constructor.prototype.render ? "production" !== 'production' ? invariant(false, 'createClass(...): Class specification must implement a `render` method.') : _prodInvariant('83') : void 0;
-
-    if ("production" !== 'production') {
-      "production" !== 'production' ? warning(!Constructor.prototype.componentShouldUpdate, '%s has a method called ' + 'componentShouldUpdate(). Did you mean shouldComponentUpdate()? ' + 'The name is phrased as a question because the function is ' + 'expected to return a value.', spec.displayName || 'A component') : void 0;
-      "production" !== 'production' ? warning(!Constructor.prototype.componentWillRecieveProps, '%s has a method called ' + 'componentWillRecieveProps(). Did you mean componentWillReceiveProps()?', spec.displayName || 'A component') : void 0;
-    }
-
-    // Reduce time spent doing lookups by setting these on the prototype.
-    for (var methodName in ReactClassInterface) {
-      if (!Constructor.prototype[methodName]) {
-        Constructor.prototype[methodName] = null;
-      }
-    }
-
-    return Constructor;
-  },
-
-  injection: {
-    injectMixin: function (mixin) {
-      injectedMixins.push(mixin);
-    }
-  }
-
-};
-
-module.exports = ReactClass;
-},{"./ReactComponent":200,"./ReactElement":204,"./ReactNoopUpdateQueue":207,"./ReactPropTypeLocationNames":208,"./reactProdInvariant":217,"fbjs/lib/emptyObject":51,"fbjs/lib/invariant":58,"fbjs/lib/warning":65,"object-assign":67}],200:[function(require,module,exports){
-/**
- * Copyright 2013-present, Facebook, Inc.
- * All rights reserved.
- *
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
- *
- */
-
-'use strict';
-
-var _prodInvariant = require('./reactProdInvariant');
-
-var ReactNoopUpdateQueue = require('./ReactNoopUpdateQueue');
-
-var canDefineProperty = require('./canDefineProperty');
-var emptyObject = require('fbjs/lib/emptyObject');
-var invariant = require('fbjs/lib/invariant');
-var warning = require('fbjs/lib/warning');
-
-/**
- * Base class helpers for the updating state of a component.
- */
-function ReactComponent(props, context, updater) {
-  this.props = props;
-  this.context = context;
-  this.refs = emptyObject;
-  // We initialize the default updater but the real one gets injected by the
-  // renderer.
-  this.updater = updater || ReactNoopUpdateQueue;
-}
-
-ReactComponent.prototype.isReactComponent = {};
-
-/**
- * Sets a subset of the state. Always use this to mutate
- * state. You should treat `this.state` as immutable.
- *
- * There is no guarantee that `this.state` will be immediately updated, so
- * accessing `this.state` after calling this method may return the old value.
- *
- * There is no guarantee that calls to `setState` will run synchronously,
- * as they may eventually be batched together.  You can provide an optional
- * callback that will be executed when the call to setState is actually
- * completed.
- *
- * When a function is provided to setState, it will be called at some point in
- * the future (not synchronously). It will be called with the up to date
- * component arguments (state, props, context). These values can be different
- * from this.* because your function may be called after receiveProps but before
- * shouldComponentUpdate, and this new state, props, and context will not yet be
- * assigned to this.
- *
- * @param {object|function} partialState Next partial state or function to
- *        produce next partial state to be merged with current state.
- * @param {?function} callback Called after state is updated.
- * @final
- * @protected
- */
-ReactComponent.prototype.setState = function (partialState, callback) {
-  !(typeof partialState === 'object' || typeof partialState === 'function' || partialState == null) ? "production" !== 'production' ? invariant(false, 'setState(...): takes an object of state variables to update or a function which returns an object of state variables.') : _prodInvariant('85') : void 0;
-  this.updater.enqueueSetState(this, partialState);
-  if (callback) {
-    this.updater.enqueueCallback(this, callback, 'setState');
-  }
-};
-
-/**
- * Forces an update. This should only be invoked when it is known with
- * certainty that we are **not** in a DOM transaction.
- *
- * You may want to call this when you know that some deeper aspect of the
- * component's state has changed but `setState` was not called.
- *
- * This will not invoke `shouldComponentUpdate`, but it will invoke
- * `componentWillUpdate` and `componentDidUpdate`.
- *
- * @param {?function} callback Called after update is complete.
- * @final
- * @protected
- */
-ReactComponent.prototype.forceUpdate = function (callback) {
-  this.updater.enqueueForceUpdate(this);
-  if (callback) {
-    this.updater.enqueueCallback(this, callback, 'forceUpdate');
-  }
-};
-
-/**
- * Deprecated APIs. These APIs used to exist on classic React classes but since
- * we would like to deprecate them, we're not going to move them over to this
- * modern base class. Instead, we define a getter that warns if it's accessed.
- */
-if ("production" !== 'production') {
-  var deprecatedAPIs = {
-    isMounted: ['isMounted', 'Instead, make sure to clean up subscriptions and pending requests in ' + 'componentWillUnmount to prevent memory leaks.'],
-    replaceState: ['replaceState', 'Refactor your code to use setState instead (see ' + 'https://github.com/facebook/react/issues/3236).']
-  };
-  var defineDeprecationWarning = function (methodName, info) {
-    if (canDefineProperty) {
-      Object.defineProperty(ReactComponent.prototype, methodName, {
-        get: function () {
-          "production" !== 'production' ? warning(false, '%s(...) is deprecated in plain JavaScript React classes. %s', info[0], info[1]) : void 0;
-          return undefined;
-        }
-      });
-    }
-  };
-  for (var fnName in deprecatedAPIs) {
-    if (deprecatedAPIs.hasOwnProperty(fnName)) {
-      defineDeprecationWarning(fnName, deprecatedAPIs[fnName]);
-    }
-  }
-}
-
-module.exports = ReactComponent;
-},{"./ReactNoopUpdateQueue":207,"./canDefineProperty":213,"./reactProdInvariant":217,"fbjs/lib/emptyObject":51,"fbjs/lib/invariant":58,"fbjs/lib/warning":65}],201:[function(require,module,exports){
+},{"./PooledClass":206,"./ReactElement":213,"./traverseAllChildren":229,"fbjs/lib/emptyFunction":56}],210:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2016-present, Facebook, Inc.
  * All rights reserved.
@@ -33180,11 +36569,11 @@ function isNative(fn) {
   var hasOwnProperty = Object.prototype.hasOwnProperty;
   var reIsNative = RegExp('^' + funcToString
   // Take an example native function source for comparison
-  .call(hasOwnProperty)
+  .call(hasOwnProperty
   // Strip regex characters so we can use it for regex
-  .replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')
+  ).replace(/[\\^$.*+?()[\]{}|]/g, '\\$&'
   // Remove hasOwnProperty from the template to make it generic
-  .replace(/hasOwnProperty|(function).*?(?=\\\()| for .+?(?=\\\])/g, '$1.*?') + '$');
+  ).replace(/hasOwnProperty|(function).*?(?=\\\()| for .+?(?=\\\])/g, '$1.*?') + '$');
   try {
     var source = funcToString.call(fn);
     return reIsNative.test(source);
@@ -33317,29 +36706,29 @@ function describeID(id) {
   if (ownerID) {
     ownerName = ReactComponentTreeHook.getDisplayName(ownerID);
   }
-  "production" !== 'production' ? warning(element, 'ReactComponentTreeHook: Missing React element for debugID %s when ' + 'building stack', id) : void 0;
+  process.env.NODE_ENV !== 'production' ? warning(element, 'ReactComponentTreeHook: Missing React element for debugID %s when ' + 'building stack', id) : void 0;
   return describeComponentFrame(name, element && element._source, ownerName);
 }
 
 var ReactComponentTreeHook = {
   onSetChildren: function (id, nextChildIDs) {
     var item = getItem(id);
-    !item ? "production" !== 'production' ? invariant(false, 'Item must have been set') : _prodInvariant('144') : void 0;
+    !item ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Item must have been set') : _prodInvariant('144') : void 0;
     item.childIDs = nextChildIDs;
 
     for (var i = 0; i < nextChildIDs.length; i++) {
       var nextChildID = nextChildIDs[i];
       var nextChild = getItem(nextChildID);
-      !nextChild ? "production" !== 'production' ? invariant(false, 'Expected hook events to fire for the child before its parent includes it in onSetChildren().') : _prodInvariant('140') : void 0;
-      !(nextChild.childIDs != null || typeof nextChild.element !== 'object' || nextChild.element == null) ? "production" !== 'production' ? invariant(false, 'Expected onSetChildren() to fire for a container child before its parent includes it in onSetChildren().') : _prodInvariant('141') : void 0;
-      !nextChild.isMounted ? "production" !== 'production' ? invariant(false, 'Expected onMountComponent() to fire for the child before its parent includes it in onSetChildren().') : _prodInvariant('71') : void 0;
+      !nextChild ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Expected hook events to fire for the child before its parent includes it in onSetChildren().') : _prodInvariant('140') : void 0;
+      !(nextChild.childIDs != null || typeof nextChild.element !== 'object' || nextChild.element == null) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Expected onSetChildren() to fire for a container child before its parent includes it in onSetChildren().') : _prodInvariant('141') : void 0;
+      !nextChild.isMounted ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Expected onMountComponent() to fire for the child before its parent includes it in onSetChildren().') : _prodInvariant('71') : void 0;
       if (nextChild.parentID == null) {
         nextChild.parentID = id;
         // TODO: This shouldn't be necessary but mounting a new root during in
         // componentWillMount currently causes not-yet-mounted components to
         // be purged from our tree data so their parent id is missing.
       }
-      !(nextChild.parentID === id) ? "production" !== 'production' ? invariant(false, 'Expected onBeforeMountComponent() parent and onSetChildren() to be consistent (%s has parents %s and %s).', nextChildID, nextChild.parentID, id) : _prodInvariant('142', nextChildID, nextChild.parentID, id) : void 0;
+      !(nextChild.parentID === id) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Expected onBeforeMountComponent() parent and onSetChildren() to be consistent (%s has parents %s and %s).', nextChildID, nextChild.parentID, id) : _prodInvariant('142', nextChildID, nextChild.parentID, id) : void 0;
     }
   },
   onBeforeMountComponent: function (id, element, parentID) {
@@ -33364,7 +36753,7 @@ var ReactComponentTreeHook = {
   },
   onMountComponent: function (id) {
     var item = getItem(id);
-    !item ? "production" !== 'production' ? invariant(false, 'Item must have been set') : _prodInvariant('144') : void 0;
+    !item ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Item must have been set') : _prodInvariant('144') : void 0;
     item.isMounted = true;
     var isRoot = item.parentID === 0;
     if (isRoot) {
@@ -33483,11 +36872,57 @@ var ReactComponentTreeHook = {
 
 
   getRootIDs: getRootIDs,
-  getRegisteredIDs: getItemIDs
+  getRegisteredIDs: getItemIDs,
+
+  pushNonStandardWarningStack: function (isCreatingElement, currentSource) {
+    if (typeof console.reactStack !== 'function') {
+      return;
+    }
+
+    var stack = [];
+    var currentOwner = ReactCurrentOwner.current;
+    var id = currentOwner && currentOwner._debugID;
+
+    try {
+      if (isCreatingElement) {
+        stack.push({
+          name: id ? ReactComponentTreeHook.getDisplayName(id) : null,
+          fileName: currentSource ? currentSource.fileName : null,
+          lineNumber: currentSource ? currentSource.lineNumber : null
+        });
+      }
+
+      while (id) {
+        var element = ReactComponentTreeHook.getElement(id);
+        var parentID = ReactComponentTreeHook.getParentID(id);
+        var ownerID = ReactComponentTreeHook.getOwnerID(id);
+        var ownerName = ownerID ? ReactComponentTreeHook.getDisplayName(ownerID) : null;
+        var source = element && element._source;
+        stack.push({
+          name: ownerName,
+          fileName: source ? source.fileName : null,
+          lineNumber: source ? source.lineNumber : null
+        });
+        id = parentID;
+      }
+    } catch (err) {
+      // Internal state is messed up.
+      // Stop building the stack (it's just a nice to have).
+    }
+
+    console.reactStack(stack);
+  },
+  popNonStandardWarningStack: function () {
+    if (typeof console.reactStackEnd !== 'function') {
+      return;
+    }
+    console.reactStackEnd();
+  }
 };
 
 module.exports = ReactComponentTreeHook;
-},{"./ReactCurrentOwner":202,"./reactProdInvariant":217,"fbjs/lib/invariant":58,"fbjs/lib/warning":65}],202:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./ReactCurrentOwner":211,"./reactProdInvariant":228,"_process":74,"fbjs/lib/invariant":64,"fbjs/lib/warning":71}],211:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -33508,17 +36943,16 @@ module.exports = ReactComponentTreeHook;
  * currently being constructed.
  */
 var ReactCurrentOwner = {
-
   /**
    * @internal
    * @type {ReactComponent}
    */
   current: null
-
 };
 
 module.exports = ReactCurrentOwner;
-},{}],203:[function(require,module,exports){
+},{}],212:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -33539,14 +36973,13 @@ var ReactElement = require('./ReactElement');
  * @private
  */
 var createDOMFactory = ReactElement.createFactory;
-if ("production" !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
   var ReactElementValidator = require('./ReactElementValidator');
   createDOMFactory = ReactElementValidator.createFactory;
 }
 
 /**
  * Creates a mapping from supported HTML tags to `ReactDOMComponent` classes.
- * This is also accessible via `React.DOM`.
  *
  * @public
  */
@@ -33688,7 +37121,9 @@ var ReactDOMFactories = {
 };
 
 module.exports = ReactDOMFactories;
-},{"./ReactElement":204,"./ReactElementValidator":206}],204:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./ReactElement":213,"./ReactElementValidator":215,"_process":74}],213:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2014-present, Facebook, Inc.
  * All rights reserved.
@@ -33721,7 +37156,7 @@ var RESERVED_PROPS = {
 var specialPropKeyWarningShown, specialPropRefWarningShown;
 
 function hasValidRef(config) {
-  if ("production" !== 'production') {
+  if (process.env.NODE_ENV !== 'production') {
     if (hasOwnProperty.call(config, 'ref')) {
       var getter = Object.getOwnPropertyDescriptor(config, 'ref').get;
       if (getter && getter.isReactWarning) {
@@ -33733,7 +37168,7 @@ function hasValidRef(config) {
 }
 
 function hasValidKey(config) {
-  if ("production" !== 'production') {
+  if (process.env.NODE_ENV !== 'production') {
     if (hasOwnProperty.call(config, 'key')) {
       var getter = Object.getOwnPropertyDescriptor(config, 'key').get;
       if (getter && getter.isReactWarning) {
@@ -33748,7 +37183,7 @@ function defineKeyPropWarningGetter(props, displayName) {
   var warnAboutAccessingKey = function () {
     if (!specialPropKeyWarningShown) {
       specialPropKeyWarningShown = true;
-      "production" !== 'production' ? warning(false, '%s: `key` is not a prop. Trying to access it will result ' + 'in `undefined` being returned. If you need to access the same ' + 'value within the child component, you should pass it as a different ' + 'prop. (https://fb.me/react-special-props)', displayName) : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(false, '%s: `key` is not a prop. Trying to access it will result ' + 'in `undefined` being returned. If you need to access the same ' + 'value within the child component, you should pass it as a different ' + 'prop. (https://fb.me/react-special-props)', displayName) : void 0;
     }
   };
   warnAboutAccessingKey.isReactWarning = true;
@@ -33762,7 +37197,7 @@ function defineRefPropWarningGetter(props, displayName) {
   var warnAboutAccessingRef = function () {
     if (!specialPropRefWarningShown) {
       specialPropRefWarningShown = true;
-      "production" !== 'production' ? warning(false, '%s: `ref` is not a prop. Trying to access it will result ' + 'in `undefined` being returned. If you need to access the same ' + 'value within the child component, you should pass it as a different ' + 'prop. (https://fb.me/react-special-props)', displayName) : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(false, '%s: `ref` is not a prop. Trying to access it will result ' + 'in `undefined` being returned. If you need to access the same ' + 'value within the child component, you should pass it as a different ' + 'prop. (https://fb.me/react-special-props)', displayName) : void 0;
     }
   };
   warnAboutAccessingRef.isReactWarning = true;
@@ -33807,7 +37242,7 @@ var ReactElement = function (type, key, ref, self, source, owner, props) {
     _owner: owner
   };
 
-  if ("production" !== 'production') {
+  if (process.env.NODE_ENV !== 'production') {
     // The validation flag is currently mutative. We put it on
     // an external backing store so that we can freeze the whole object.
     // This can be replaced with a WeakMap once they are implemented in
@@ -33897,7 +37332,7 @@ ReactElement.createElement = function (type, config, children) {
     for (var i = 0; i < childrenLength; i++) {
       childArray[i] = arguments[i + 2];
     }
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       if (Object.freeze) {
         Object.freeze(childArray);
       }
@@ -33914,7 +37349,7 @@ ReactElement.createElement = function (type, config, children) {
       }
     }
   }
-  if ("production" !== 'production') {
+  if (process.env.NODE_ENV !== 'production') {
     if (key || ref) {
       if (typeof props.$$typeof === 'undefined' || props.$$typeof !== REACT_ELEMENT_TYPE) {
         var displayName = typeof type === 'function' ? type.displayName || type.name || 'Unknown' : type;
@@ -34029,9 +37464,11 @@ ReactElement.isValidElement = function (object) {
 };
 
 module.exports = ReactElement;
-},{"./ReactCurrentOwner":202,"./ReactElementSymbol":205,"./canDefineProperty":213,"fbjs/lib/warning":65,"object-assign":67}],205:[function(require,module,exports){
-arguments[4][119][0].apply(exports,arguments)
-},{"dup":119}],206:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./ReactCurrentOwner":211,"./ReactElementSymbol":214,"./canDefineProperty":221,"_process":74,"fbjs/lib/warning":71,"object-assign":73}],214:[function(require,module,exports){
+arguments[4][129][0].apply(exports,arguments)
+},{"dup":129}],215:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2014-present, Facebook, Inc.
  * All rights reserved.
@@ -34060,6 +37497,7 @@ var checkReactTypeSpec = require('./checkReactTypeSpec');
 var canDefineProperty = require('./canDefineProperty');
 var getIteratorFn = require('./getIteratorFn');
 var warning = require('fbjs/lib/warning');
+var lowPriorityWarning = require('./lowPriorityWarning');
 
 function getDeclarationErrorAddendum() {
   if (ReactCurrentOwner.current) {
@@ -34067,6 +37505,16 @@ function getDeclarationErrorAddendum() {
     if (name) {
       return ' Check the render method of `' + name + '`.';
     }
+  }
+  return '';
+}
+
+function getSourceInfoErrorAddendum(elementProps) {
+  if (elementProps !== null && elementProps !== undefined && elementProps.__source !== undefined) {
+    var source = elementProps.__source;
+    var fileName = source.fileName.replace(/^.*[\\\/]/, '');
+    var lineNumber = source.lineNumber;
+    return ' Check your code at ' + fileName + ':' + lineNumber + '.';
   }
   return '';
 }
@@ -34124,7 +37572,7 @@ function validateExplicitKey(element, parentType) {
     childOwner = ' It was passed a child from ' + element._owner.getName() + '.';
   }
 
-  "production" !== 'production' ? warning(false, 'Each child in an array or iterator should have a unique "key" prop.' + '%s%s See https://fb.me/react-warning-keys for more information.%s', currentComponentErrorInfo, childOwner, ReactComponentTreeHook.getCurrentStackAddendum(element)) : void 0;
+  process.env.NODE_ENV !== 'production' ? warning(false, 'Each child in an array or iterator should have a unique "key" prop.' + '%s%s See https://fb.me/react-warning-keys for more information.%s', currentComponentErrorInfo, childOwner, ReactComponentTreeHook.getCurrentStackAddendum(element)) : void 0;
 }
 
 /**
@@ -34185,18 +37633,36 @@ function validatePropTypes(element) {
     checkReactTypeSpec(componentClass.propTypes, element.props, 'prop', name, element, null);
   }
   if (typeof componentClass.getDefaultProps === 'function') {
-    "production" !== 'production' ? warning(componentClass.getDefaultProps.isReactClassApproved, 'getDefaultProps is only used on classic React.createClass ' + 'definitions. Use a static property named `defaultProps` instead.') : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(componentClass.getDefaultProps.isReactClassApproved, 'getDefaultProps is only used on classic React.createClass ' + 'definitions. Use a static property named `defaultProps` instead.') : void 0;
   }
 }
 
 var ReactElementValidator = {
-
   createElement: function (type, props, children) {
     var validType = typeof type === 'string' || typeof type === 'function';
     // We warn in this case but don't throw. We expect the element creation to
     // succeed and there will likely be errors in render.
     if (!validType) {
-      "production" !== 'production' ? warning(false, 'React.createElement: type should not be null, undefined, boolean, or ' + 'number. It should be a string (for DOM elements) or a ReactClass ' + '(for composite components).%s', getDeclarationErrorAddendum()) : void 0;
+      if (typeof type !== 'function' && typeof type !== 'string') {
+        var info = '';
+        if (type === undefined || typeof type === 'object' && type !== null && Object.keys(type).length === 0) {
+          info += ' You likely forgot to export your component from the file ' + "it's defined in.";
+        }
+
+        var sourceInfo = getSourceInfoErrorAddendum(props);
+        if (sourceInfo) {
+          info += sourceInfo;
+        } else {
+          info += getDeclarationErrorAddendum();
+        }
+
+        info += ReactComponentTreeHook.getCurrentStackAddendum();
+
+        var currentSource = props !== null && props !== undefined && props.__source !== undefined ? props.__source : null;
+        ReactComponentTreeHook.pushNonStandardWarningStack(true, currentSource);
+        process.env.NODE_ENV !== 'production' ? warning(false, 'React.createElement: type is invalid -- expected a string (for ' + 'built-in components) or a class/function (for composite ' + 'components) but got: %s.%s', type == null ? type : typeof type, info) : void 0;
+        ReactComponentTreeHook.popNonStandardWarningStack();
+      }
     }
 
     var element = ReactElement.createElement.apply(this, arguments);
@@ -34228,12 +37694,12 @@ var ReactElementValidator = {
     // Legacy hook TODO: Warn if this is accessed
     validatedFactory.type = type;
 
-    if ("production" !== 'production') {
+    if (process.env.NODE_ENV !== 'production') {
       if (canDefineProperty) {
         Object.defineProperty(validatedFactory, 'type', {
           enumerable: false,
           get: function () {
-            "production" !== 'production' ? warning(false, 'Factory.type is deprecated. Access the class directly ' + 'before passing it to createFactory.') : void 0;
+            lowPriorityWarning(false, 'Factory.type is deprecated. Access the class directly ' + 'before passing it to createFactory.');
             Object.defineProperty(this, 'type', {
               value: type
             });
@@ -34254,11 +37720,12 @@ var ReactElementValidator = {
     validatePropTypes(newElement);
     return newElement;
   }
-
 };
 
 module.exports = ReactElementValidator;
-},{"./ReactComponentTreeHook":201,"./ReactCurrentOwner":202,"./ReactElement":204,"./canDefineProperty":213,"./checkReactTypeSpec":214,"./getIteratorFn":215,"fbjs/lib/warning":65}],207:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./ReactComponentTreeHook":210,"./ReactCurrentOwner":211,"./ReactElement":213,"./canDefineProperty":221,"./checkReactTypeSpec":222,"./getIteratorFn":224,"./lowPriorityWarning":226,"_process":74,"fbjs/lib/warning":71}],216:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2015-present, Facebook, Inc.
  * All rights reserved.
@@ -34274,9 +37741,9 @@ module.exports = ReactElementValidator;
 var warning = require('fbjs/lib/warning');
 
 function warnNoop(publicInstance, callerName) {
-  if ("production" !== 'production') {
+  if (process.env.NODE_ENV !== 'production') {
     var constructor = publicInstance.constructor;
-    "production" !== 'production' ? warning(false, '%s(...): Can only update a mounted or mounting component. ' + 'This usually means you called %s() on an unmounted component. ' + 'This is a no-op. Please check the code for the %s component.', callerName, callerName, constructor && (constructor.displayName || constructor.name) || 'ReactClass') : void 0;
+    process.env.NODE_ENV !== 'production' ? warning(false, '%s(...): Can only update a mounted or mounting component. ' + 'This usually means you called %s() on an unmounted component. ' + 'This is a no-op. Please check the code for the %s component.', callerName, callerName, constructor && (constructor.displayName || constructor.name) || 'ReactClass') : void 0;
   }
 }
 
@@ -34284,7 +37751,6 @@ function warnNoop(publicInstance, callerName) {
  * This is the abstract API for an update queue.
  */
 var ReactNoopUpdateQueue = {
-
   /**
    * Checks whether or not this composite component is mounted.
    * @param {ReactClass} publicInstance The instance we want to test.
@@ -34354,9 +37820,10 @@ var ReactNoopUpdateQueue = {
 };
 
 module.exports = ReactNoopUpdateQueue;
-},{"fbjs/lib/warning":65}],208:[function(require,module,exports){
-arguments[4][137][0].apply(exports,arguments)
-},{"dup":137}],209:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"_process":74,"fbjs/lib/warning":71}],217:[function(require,module,exports){
+arguments[4][147][0].apply(exports,arguments)
+},{"_process":74,"dup":147}],218:[function(require,module,exports){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -34369,474 +37836,18 @@ arguments[4][137][0].apply(exports,arguments)
 
 'use strict';
 
-var ReactElement = require('./ReactElement');
-var ReactPropTypeLocationNames = require('./ReactPropTypeLocationNames');
-var ReactPropTypesSecret = require('./ReactPropTypesSecret');
+var _require = require('./ReactElement'),
+    isValidElement = _require.isValidElement;
 
-var emptyFunction = require('fbjs/lib/emptyFunction');
-var getIteratorFn = require('./getIteratorFn');
-var warning = require('fbjs/lib/warning');
+var factory = require('prop-types/factory');
 
-/**
- * Collection of methods that allow declaration and validation of props that are
- * supplied to React components. Example usage:
- *
- *   var Props = require('ReactPropTypes');
- *   var MyArticle = React.createClass({
- *     propTypes: {
- *       // An optional string prop named "description".
- *       description: Props.string,
- *
- *       // A required enum prop named "category".
- *       category: Props.oneOf(['News','Photos']).isRequired,
- *
- *       // A prop named "dialog" that requires an instance of Dialog.
- *       dialog: Props.instanceOf(Dialog).isRequired
- *     },
- *     render: function() { ... }
- *   });
- *
- * A more formal specification of how these methods are used:
- *
- *   type := array|bool|func|object|number|string|oneOf([...])|instanceOf(...)
- *   decl := ReactPropTypes.{type}(.isRequired)?
- *
- * Each and every declaration produces a function with the same signature. This
- * allows the creation of custom validation functions. For example:
- *
- *  var MyLink = React.createClass({
- *    propTypes: {
- *      // An optional string or URI prop named "href".
- *      href: function(props, propName, componentName) {
- *        var propValue = props[propName];
- *        if (propValue != null && typeof propValue !== 'string' &&
- *            !(propValue instanceof URI)) {
- *          return new Error(
- *            'Expected a string or an URI for ' + propName + ' in ' +
- *            componentName
- *          );
- *        }
- *      }
- *    },
- *    render: function() {...}
- *  });
- *
- * @internal
- */
-
-var ANONYMOUS = '<<anonymous>>';
-
-var ReactPropTypes = {
-  array: createPrimitiveTypeChecker('array'),
-  bool: createPrimitiveTypeChecker('boolean'),
-  func: createPrimitiveTypeChecker('function'),
-  number: createPrimitiveTypeChecker('number'),
-  object: createPrimitiveTypeChecker('object'),
-  string: createPrimitiveTypeChecker('string'),
-  symbol: createPrimitiveTypeChecker('symbol'),
-
-  any: createAnyTypeChecker(),
-  arrayOf: createArrayOfTypeChecker,
-  element: createElementTypeChecker(),
-  instanceOf: createInstanceTypeChecker,
-  node: createNodeChecker(),
-  objectOf: createObjectOfTypeChecker,
-  oneOf: createEnumTypeChecker,
-  oneOfType: createUnionTypeChecker,
-  shape: createShapeTypeChecker
-};
-
-/**
- * inlined Object.is polyfill to avoid requiring consumers ship their own
- * https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/is
- */
-/*eslint-disable no-self-compare*/
-function is(x, y) {
-  // SameValue algorithm
-  if (x === y) {
-    // Steps 1-5, 7-10
-    // Steps 6.b-6.e: +0 != -0
-    return x !== 0 || 1 / x === 1 / y;
-  } else {
-    // Step 6.a: NaN == NaN
-    return x !== x && y !== y;
-  }
-}
-/*eslint-enable no-self-compare*/
-
-/**
- * We use an Error-like object for backward compatibility as people may call
- * PropTypes directly and inspect their output. However we don't use real
- * Errors anymore. We don't inspect their stack anyway, and creating them
- * is prohibitively expensive if they are created too often, such as what
- * happens in oneOfType() for any type before the one that matched.
- */
-function PropTypeError(message) {
-  this.message = message;
-  this.stack = '';
-}
-// Make `instanceof Error` still work for returned errors.
-PropTypeError.prototype = Error.prototype;
-
-function createChainableTypeChecker(validate) {
-  if ("production" !== 'production') {
-    var manualPropTypeCallCache = {};
-  }
-  function checkType(isRequired, props, propName, componentName, location, propFullName, secret) {
-    componentName = componentName || ANONYMOUS;
-    propFullName = propFullName || propName;
-    if ("production" !== 'production') {
-      if (secret !== ReactPropTypesSecret && typeof console !== 'undefined') {
-        var cacheKey = componentName + ':' + propName;
-        if (!manualPropTypeCallCache[cacheKey]) {
-          "production" !== 'production' ? warning(false, 'You are manually calling a React.PropTypes validation ' + 'function for the `%s` prop on `%s`. This is deprecated ' + 'and will not work in production with the next major version. ' + 'You may be seeing this warning due to a third-party PropTypes ' + 'library. See https://fb.me/react-warning-dont-call-proptypes ' + 'for details.', propFullName, componentName) : void 0;
-          manualPropTypeCallCache[cacheKey] = true;
-        }
-      }
-    }
-    if (props[propName] == null) {
-      var locationName = ReactPropTypeLocationNames[location];
-      if (isRequired) {
-        if (props[propName] === null) {
-          return new PropTypeError('The ' + locationName + ' `' + propFullName + '` is marked as required ' + ('in `' + componentName + '`, but its value is `null`.'));
-        }
-        return new PropTypeError('The ' + locationName + ' `' + propFullName + '` is marked as required in ' + ('`' + componentName + '`, but its value is `undefined`.'));
-      }
-      return null;
-    } else {
-      return validate(props, propName, componentName, location, propFullName);
-    }
-  }
-
-  var chainedCheckType = checkType.bind(null, false);
-  chainedCheckType.isRequired = checkType.bind(null, true);
-
-  return chainedCheckType;
-}
-
-function createPrimitiveTypeChecker(expectedType) {
-  function validate(props, propName, componentName, location, propFullName, secret) {
-    var propValue = props[propName];
-    var propType = getPropType(propValue);
-    if (propType !== expectedType) {
-      var locationName = ReactPropTypeLocationNames[location];
-      // `propValue` being instance of, say, date/regexp, pass the 'object'
-      // check, but we can offer a more precise error message here rather than
-      // 'of type `object`'.
-      var preciseType = getPreciseType(propValue);
-
-      return new PropTypeError('Invalid ' + locationName + ' `' + propFullName + '` of type ' + ('`' + preciseType + '` supplied to `' + componentName + '`, expected ') + ('`' + expectedType + '`.'));
-    }
-    return null;
-  }
-  return createChainableTypeChecker(validate);
-}
-
-function createAnyTypeChecker() {
-  return createChainableTypeChecker(emptyFunction.thatReturns(null));
-}
-
-function createArrayOfTypeChecker(typeChecker) {
-  function validate(props, propName, componentName, location, propFullName) {
-    if (typeof typeChecker !== 'function') {
-      return new PropTypeError('Property `' + propFullName + '` of component `' + componentName + '` has invalid PropType notation inside arrayOf.');
-    }
-    var propValue = props[propName];
-    if (!Array.isArray(propValue)) {
-      var locationName = ReactPropTypeLocationNames[location];
-      var propType = getPropType(propValue);
-      return new PropTypeError('Invalid ' + locationName + ' `' + propFullName + '` of type ' + ('`' + propType + '` supplied to `' + componentName + '`, expected an array.'));
-    }
-    for (var i = 0; i < propValue.length; i++) {
-      var error = typeChecker(propValue, i, componentName, location, propFullName + '[' + i + ']', ReactPropTypesSecret);
-      if (error instanceof Error) {
-        return error;
-      }
-    }
-    return null;
-  }
-  return createChainableTypeChecker(validate);
-}
-
-function createElementTypeChecker() {
-  function validate(props, propName, componentName, location, propFullName) {
-    var propValue = props[propName];
-    if (!ReactElement.isValidElement(propValue)) {
-      var locationName = ReactPropTypeLocationNames[location];
-      var propType = getPropType(propValue);
-      return new PropTypeError('Invalid ' + locationName + ' `' + propFullName + '` of type ' + ('`' + propType + '` supplied to `' + componentName + '`, expected a single ReactElement.'));
-    }
-    return null;
-  }
-  return createChainableTypeChecker(validate);
-}
-
-function createInstanceTypeChecker(expectedClass) {
-  function validate(props, propName, componentName, location, propFullName) {
-    if (!(props[propName] instanceof expectedClass)) {
-      var locationName = ReactPropTypeLocationNames[location];
-      var expectedClassName = expectedClass.name || ANONYMOUS;
-      var actualClassName = getClassName(props[propName]);
-      return new PropTypeError('Invalid ' + locationName + ' `' + propFullName + '` of type ' + ('`' + actualClassName + '` supplied to `' + componentName + '`, expected ') + ('instance of `' + expectedClassName + '`.'));
-    }
-    return null;
-  }
-  return createChainableTypeChecker(validate);
-}
-
-function createEnumTypeChecker(expectedValues) {
-  if (!Array.isArray(expectedValues)) {
-    "production" !== 'production' ? warning(false, 'Invalid argument supplied to oneOf, expected an instance of array.') : void 0;
-    return emptyFunction.thatReturnsNull;
-  }
-
-  function validate(props, propName, componentName, location, propFullName) {
-    var propValue = props[propName];
-    for (var i = 0; i < expectedValues.length; i++) {
-      if (is(propValue, expectedValues[i])) {
-        return null;
-      }
-    }
-
-    var locationName = ReactPropTypeLocationNames[location];
-    var valuesString = JSON.stringify(expectedValues);
-    return new PropTypeError('Invalid ' + locationName + ' `' + propFullName + '` of value `' + propValue + '` ' + ('supplied to `' + componentName + '`, expected one of ' + valuesString + '.'));
-  }
-  return createChainableTypeChecker(validate);
-}
-
-function createObjectOfTypeChecker(typeChecker) {
-  function validate(props, propName, componentName, location, propFullName) {
-    if (typeof typeChecker !== 'function') {
-      return new PropTypeError('Property `' + propFullName + '` of component `' + componentName + '` has invalid PropType notation inside objectOf.');
-    }
-    var propValue = props[propName];
-    var propType = getPropType(propValue);
-    if (propType !== 'object') {
-      var locationName = ReactPropTypeLocationNames[location];
-      return new PropTypeError('Invalid ' + locationName + ' `' + propFullName + '` of type ' + ('`' + propType + '` supplied to `' + componentName + '`, expected an object.'));
-    }
-    for (var key in propValue) {
-      if (propValue.hasOwnProperty(key)) {
-        var error = typeChecker(propValue, key, componentName, location, propFullName + '.' + key, ReactPropTypesSecret);
-        if (error instanceof Error) {
-          return error;
-        }
-      }
-    }
-    return null;
-  }
-  return createChainableTypeChecker(validate);
-}
-
-function createUnionTypeChecker(arrayOfTypeCheckers) {
-  if (!Array.isArray(arrayOfTypeCheckers)) {
-    "production" !== 'production' ? warning(false, 'Invalid argument supplied to oneOfType, expected an instance of array.') : void 0;
-    return emptyFunction.thatReturnsNull;
-  }
-
-  function validate(props, propName, componentName, location, propFullName) {
-    for (var i = 0; i < arrayOfTypeCheckers.length; i++) {
-      var checker = arrayOfTypeCheckers[i];
-      if (checker(props, propName, componentName, location, propFullName, ReactPropTypesSecret) == null) {
-        return null;
-      }
-    }
-
-    var locationName = ReactPropTypeLocationNames[location];
-    return new PropTypeError('Invalid ' + locationName + ' `' + propFullName + '` supplied to ' + ('`' + componentName + '`.'));
-  }
-  return createChainableTypeChecker(validate);
-}
-
-function createNodeChecker() {
-  function validate(props, propName, componentName, location, propFullName) {
-    if (!isNode(props[propName])) {
-      var locationName = ReactPropTypeLocationNames[location];
-      return new PropTypeError('Invalid ' + locationName + ' `' + propFullName + '` supplied to ' + ('`' + componentName + '`, expected a ReactNode.'));
-    }
-    return null;
-  }
-  return createChainableTypeChecker(validate);
-}
-
-function createShapeTypeChecker(shapeTypes) {
-  function validate(props, propName, componentName, location, propFullName) {
-    var propValue = props[propName];
-    var propType = getPropType(propValue);
-    if (propType !== 'object') {
-      var locationName = ReactPropTypeLocationNames[location];
-      return new PropTypeError('Invalid ' + locationName + ' `' + propFullName + '` of type `' + propType + '` ' + ('supplied to `' + componentName + '`, expected `object`.'));
-    }
-    for (var key in shapeTypes) {
-      var checker = shapeTypes[key];
-      if (!checker) {
-        continue;
-      }
-      var error = checker(propValue, key, componentName, location, propFullName + '.' + key, ReactPropTypesSecret);
-      if (error) {
-        return error;
-      }
-    }
-    return null;
-  }
-  return createChainableTypeChecker(validate);
-}
-
-function isNode(propValue) {
-  switch (typeof propValue) {
-    case 'number':
-    case 'string':
-    case 'undefined':
-      return true;
-    case 'boolean':
-      return !propValue;
-    case 'object':
-      if (Array.isArray(propValue)) {
-        return propValue.every(isNode);
-      }
-      if (propValue === null || ReactElement.isValidElement(propValue)) {
-        return true;
-      }
-
-      var iteratorFn = getIteratorFn(propValue);
-      if (iteratorFn) {
-        var iterator = iteratorFn.call(propValue);
-        var step;
-        if (iteratorFn !== propValue.entries) {
-          while (!(step = iterator.next()).done) {
-            if (!isNode(step.value)) {
-              return false;
-            }
-          }
-        } else {
-          // Iterator will provide entry [k,v] tuples rather than values.
-          while (!(step = iterator.next()).done) {
-            var entry = step.value;
-            if (entry) {
-              if (!isNode(entry[1])) {
-                return false;
-              }
-            }
-          }
-        }
-      } else {
-        return false;
-      }
-
-      return true;
-    default:
-      return false;
-  }
-}
-
-function isSymbol(propType, propValue) {
-  // Native Symbol.
-  if (propType === 'symbol') {
-    return true;
-  }
-
-  // 19.4.3.5 Symbol.prototype[@@toStringTag] === 'Symbol'
-  if (propValue['@@toStringTag'] === 'Symbol') {
-    return true;
-  }
-
-  // Fallback for non-spec compliant Symbols which are polyfilled.
-  if (typeof Symbol === 'function' && propValue instanceof Symbol) {
-    return true;
-  }
-
-  return false;
-}
-
-// Equivalent of `typeof` but with special handling for array and regexp.
-function getPropType(propValue) {
-  var propType = typeof propValue;
-  if (Array.isArray(propValue)) {
-    return 'array';
-  }
-  if (propValue instanceof RegExp) {
-    // Old webkits (at least until Android 4.0) return 'function' rather than
-    // 'object' for typeof a RegExp. We'll normalize this here so that /bla/
-    // passes PropTypes.object.
-    return 'object';
-  }
-  if (isSymbol(propType, propValue)) {
-    return 'symbol';
-  }
-  return propType;
-}
-
-// This handles more types than `getPropType`. Only used for error messages.
-// See `createPrimitiveTypeChecker`.
-function getPreciseType(propValue) {
-  var propType = getPropType(propValue);
-  if (propType === 'object') {
-    if (propValue instanceof Date) {
-      return 'date';
-    } else if (propValue instanceof RegExp) {
-      return 'regexp';
-    }
-  }
-  return propType;
-}
-
-// Returns class name of the object, if any.
-function getClassName(propValue) {
-  if (!propValue.constructor || !propValue.constructor.name) {
-    return ANONYMOUS;
-  }
-  return propValue.constructor.name;
-}
-
-module.exports = ReactPropTypes;
-},{"./ReactElement":204,"./ReactPropTypeLocationNames":208,"./ReactPropTypesSecret":210,"./getIteratorFn":215,"fbjs/lib/emptyFunction":50,"fbjs/lib/warning":65}],210:[function(require,module,exports){
-arguments[4][138][0].apply(exports,arguments)
-},{"dup":138}],211:[function(require,module,exports){
-/**
- * Copyright 2013-present, Facebook, Inc.
- * All rights reserved.
- *
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
- *
- */
-
-'use strict';
-
-var _assign = require('object-assign');
-
-var ReactComponent = require('./ReactComponent');
-var ReactNoopUpdateQueue = require('./ReactNoopUpdateQueue');
-
-var emptyObject = require('fbjs/lib/emptyObject');
-
-/**
- * Base class helpers for the updating state of a component.
- */
-function ReactPureComponent(props, context, updater) {
-  // Duplicated from ReactComponent.
-  this.props = props;
-  this.context = context;
-  this.refs = emptyObject;
-  // We initialize the default updater but the real one gets injected by the
-  // renderer.
-  this.updater = updater || ReactNoopUpdateQueue;
-}
-
-function ComponentDummy() {}
-ComponentDummy.prototype = ReactComponent.prototype;
-ReactPureComponent.prototype = new ComponentDummy();
-ReactPureComponent.prototype.constructor = ReactPureComponent;
-// Avoid an extra prototype jump for these methods.
-_assign(ReactPureComponent.prototype, ReactComponent.prototype);
-ReactPureComponent.prototype.isPureReactComponent = true;
-
-module.exports = ReactPureComponent;
-},{"./ReactComponent":200,"./ReactNoopUpdateQueue":207,"fbjs/lib/emptyObject":51,"object-assign":67}],212:[function(require,module,exports){
-arguments[4][146][0].apply(exports,arguments)
-},{"dup":146}],213:[function(require,module,exports){
+module.exports = factory(isValidElement);
+},{"./ReactElement":213,"prop-types/factory":76}],219:[function(require,module,exports){
+arguments[4][148][0].apply(exports,arguments)
+},{"dup":148}],220:[function(require,module,exports){
+arguments[4][156][0].apply(exports,arguments)
+},{"dup":156}],221:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -34851,7 +37862,7 @@ arguments[4][146][0].apply(exports,arguments)
 'use strict';
 
 var canDefineProperty = false;
-if ("production" !== 'production') {
+if (process.env.NODE_ENV !== 'production') {
   try {
     // $FlowFixMe https://github.com/facebook/flow/issues/285
     Object.defineProperty({}, 'x', { get: function () {} });
@@ -34862,7 +37873,8 @@ if ("production" !== 'production') {
 }
 
 module.exports = canDefineProperty;
-},{}],214:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"_process":74}],222:[function(require,module,exports){
 (function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
@@ -34886,7 +37898,7 @@ var warning = require('fbjs/lib/warning');
 
 var ReactComponentTreeHook;
 
-if (typeof process !== 'undefined' && process.env && "production" === 'test') {
+if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'test') {
   // Temporary hack.
   // Inline requires don't work well with Jest:
   // https://github.com/facebook/react/issues/7240
@@ -34919,12 +37931,12 @@ function checkReactTypeSpec(typeSpecs, values, location, componentName, element,
       try {
         // This is intentionally an invariant that gets caught. It's the same
         // behavior as without this statement except with a better message.
-        !(typeof typeSpecs[typeSpecName] === 'function') ? "production" !== 'production' ? invariant(false, '%s: %s type `%s` is invalid; it must be a function, usually from React.PropTypes.', componentName || 'React class', ReactPropTypeLocationNames[location], typeSpecName) : _prodInvariant('84', componentName || 'React class', ReactPropTypeLocationNames[location], typeSpecName) : void 0;
+        !(typeof typeSpecs[typeSpecName] === 'function') ? process.env.NODE_ENV !== 'production' ? invariant(false, '%s: %s type `%s` is invalid; it must be a function, usually from React.PropTypes.', componentName || 'React class', ReactPropTypeLocationNames[location], typeSpecName) : _prodInvariant('84', componentName || 'React class', ReactPropTypeLocationNames[location], typeSpecName) : void 0;
         error = typeSpecs[typeSpecName](values, typeSpecName, componentName, location, null, ReactPropTypesSecret);
       } catch (ex) {
         error = ex;
       }
-      "production" !== 'production' ? warning(!error || error instanceof Error, '%s: type specification of %s `%s` is invalid; the type checker ' + 'function must return `null` or an `Error` but returned a %s. ' + 'You may have forgotten to pass an argument to the type checker ' + 'creator (arrayOf, instanceOf, objectOf, oneOf, oneOfType, and ' + 'shape all require an argument).', componentName || 'React class', ReactPropTypeLocationNames[location], typeSpecName, typeof error) : void 0;
+      process.env.NODE_ENV !== 'production' ? warning(!error || error instanceof Error, '%s: type specification of %s `%s` is invalid; the type checker ' + 'function must return `null` or an `Error` but returned a %s. ' + 'You may have forgotten to pass an argument to the type checker ' + 'creator (arrayOf, instanceOf, objectOf, oneOf, oneOfType, and ' + 'shape all require an argument).', componentName || 'React class', ReactPropTypeLocationNames[location], typeSpecName, typeof error) : void 0;
       if (error instanceof Error && !(error.message in loggedTypeFailures)) {
         // Only monitor this failure once because there tends to be a lot of the
         // same error.
@@ -34932,7 +37944,7 @@ function checkReactTypeSpec(typeSpecs, values, location, componentName, element,
 
         var componentStackInfo = '';
 
-        if ("production" !== 'production') {
+        if (process.env.NODE_ENV !== 'production') {
           if (!ReactComponentTreeHook) {
             ReactComponentTreeHook = require('./ReactComponentTreeHook');
           }
@@ -34943,7 +37955,7 @@ function checkReactTypeSpec(typeSpecs, values, location, componentName, element,
           }
         }
 
-        "production" !== 'production' ? warning(false, 'Failed %s type: %s%s', location, error.message, componentStackInfo) : void 0;
+        process.env.NODE_ENV !== 'production' ? warning(false, 'Failed %s type: %s%s', location, error.message, componentStackInfo) : void 0;
       }
     }
   }
@@ -34951,9 +37963,121 @@ function checkReactTypeSpec(typeSpecs, values, location, componentName, element,
 
 module.exports = checkReactTypeSpec;
 }).call(this,require('_process'))
-},{"./ReactComponentTreeHook":201,"./ReactPropTypeLocationNames":208,"./ReactPropTypesSecret":210,"./reactProdInvariant":217,"_process":68,"fbjs/lib/invariant":58,"fbjs/lib/warning":65}],215:[function(require,module,exports){
-arguments[4][179][0].apply(exports,arguments)
-},{"dup":179}],216:[function(require,module,exports){
+},{"./ReactComponentTreeHook":210,"./ReactPropTypeLocationNames":217,"./ReactPropTypesSecret":219,"./reactProdInvariant":228,"_process":74,"fbjs/lib/invariant":64,"fbjs/lib/warning":71}],223:[function(require,module,exports){
+/**
+ * Copyright 2013-present, Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ *
+ */
+
+'use strict';
+
+var _require = require('./ReactBaseClasses'),
+    Component = _require.Component;
+
+var _require2 = require('./ReactElement'),
+    isValidElement = _require2.isValidElement;
+
+var ReactNoopUpdateQueue = require('./ReactNoopUpdateQueue');
+var factory = require('create-react-class/factory');
+
+module.exports = factory(Component, isValidElement, ReactNoopUpdateQueue);
+},{"./ReactBaseClasses":208,"./ReactElement":213,"./ReactNoopUpdateQueue":216,"create-react-class/factory":48}],224:[function(require,module,exports){
+arguments[4][189][0].apply(exports,arguments)
+},{"dup":189}],225:[function(require,module,exports){
+/**
+ * Copyright 2013-present, Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ *
+ * 
+ */
+
+'use strict';
+
+var nextDebugID = 1;
+
+function getNextDebugID() {
+  return nextDebugID++;
+}
+
+module.exports = getNextDebugID;
+},{}],226:[function(require,module,exports){
+(function (process){
+/**
+ * Copyright 2014-2015, Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the BSD-style license found in the
+ * LICENSE file in the root directory of this source tree. An additional grant
+ * of patent rights can be found in the PATENTS file in the same directory.
+ *
+ */
+
+'use strict';
+
+/**
+ * Forked from fbjs/warning:
+ * https://github.com/facebook/fbjs/blob/e66ba20ad5be433eb54423f2b097d829324d9de6/packages/fbjs/src/__forks__/warning.js
+ *
+ * Only change is we use console.warn instead of console.error,
+ * and do nothing when 'console' is not supported.
+ * This really simplifies the code.
+ * ---
+ * Similar to invariant but only logs a warning if the condition is not met.
+ * This can be used to log issues in development environments in critical
+ * paths. Removing the logging code for production environments will keep the
+ * same logic and follow the same code paths.
+ */
+
+var lowPriorityWarning = function () {};
+
+if (process.env.NODE_ENV !== 'production') {
+  var printWarning = function (format) {
+    for (var _len = arguments.length, args = Array(_len > 1 ? _len - 1 : 0), _key = 1; _key < _len; _key++) {
+      args[_key - 1] = arguments[_key];
+    }
+
+    var argIndex = 0;
+    var message = 'Warning: ' + format.replace(/%s/g, function () {
+      return args[argIndex++];
+    });
+    if (typeof console !== 'undefined') {
+      console.warn(message);
+    }
+    try {
+      // --- Welcome to debugging React ---
+      // This error was thrown as a convenience so that you can use this stack
+      // to find the callsite that caused this warning to fire.
+      throw new Error(message);
+    } catch (x) {}
+  };
+
+  lowPriorityWarning = function (condition, format) {
+    if (format === undefined) {
+      throw new Error('`warning(condition, format, ...args)` requires a warning ' + 'message argument');
+    }
+    if (!condition) {
+      for (var _len2 = arguments.length, args = Array(_len2 > 2 ? _len2 - 2 : 0), _key2 = 2; _key2 < _len2; _key2++) {
+        args[_key2 - 2] = arguments[_key2];
+      }
+
+      printWarning.apply(undefined, [format].concat(args));
+    }
+  };
+}
+
+module.exports = lowPriorityWarning;
+}).call(this,require('_process'))
+},{"_process":74}],227:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -34986,14 +38110,16 @@ var invariant = require('fbjs/lib/invariant');
  * structure.
  */
 function onlyChild(children) {
-  !ReactElement.isValidElement(children) ? "production" !== 'production' ? invariant(false, 'React.Children.only expected to receive a single React element child.') : _prodInvariant('143') : void 0;
+  !ReactElement.isValidElement(children) ? process.env.NODE_ENV !== 'production' ? invariant(false, 'React.Children.only expected to receive a single React element child.') : _prodInvariant('143') : void 0;
   return children;
 }
 
 module.exports = onlyChild;
-},{"./ReactElement":204,"./reactProdInvariant":217,"fbjs/lib/invariant":58}],217:[function(require,module,exports){
-arguments[4][188][0].apply(exports,arguments)
-},{"dup":188}],218:[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./ReactElement":213,"./reactProdInvariant":228,"_process":74,"fbjs/lib/invariant":64}],228:[function(require,module,exports){
+arguments[4][198][0].apply(exports,arguments)
+},{"dup":198}],229:[function(require,module,exports){
+(function (process){
 /**
  * Copyright 2013-present, Facebook, Inc.
  * All rights reserved.
@@ -35101,7 +38227,7 @@ function traverseAllChildrenImpl(children, nameSoFar, callback, traverseContext)
           subtreeCount += traverseAllChildrenImpl(child, nextName, callback, traverseContext);
         }
       } else {
-        if ("production" !== 'production') {
+        if (process.env.NODE_ENV !== 'production') {
           var mapsAsChildrenAddendum = '';
           if (ReactCurrentOwner.current) {
             var mapsAsChildrenOwnerName = ReactCurrentOwner.current.getName();
@@ -35109,7 +38235,7 @@ function traverseAllChildrenImpl(children, nameSoFar, callback, traverseContext)
               mapsAsChildrenAddendum = ' Check the render method of `' + mapsAsChildrenOwnerName + '`.';
             }
           }
-          "production" !== 'production' ? warning(didWarnAboutMaps, 'Using Maps as children is not yet fully supported. It is an ' + 'experimental feature that might be removed. Convert it to a ' + 'sequence / iterable of keyed ReactElements instead.%s', mapsAsChildrenAddendum) : void 0;
+          process.env.NODE_ENV !== 'production' ? warning(didWarnAboutMaps, 'Using Maps as children is not yet fully supported. It is an ' + 'experimental feature that might be removed. Convert it to a ' + 'sequence / iterable of keyed ReactElements instead.%s', mapsAsChildrenAddendum) : void 0;
           didWarnAboutMaps = true;
         }
         // Iterator will provide entry [k,v] tuples rather than values.
@@ -35124,10 +38250,10 @@ function traverseAllChildrenImpl(children, nameSoFar, callback, traverseContext)
       }
     } else if (type === 'object') {
       var addendum = '';
-      if ("production" !== 'production') {
+      if (process.env.NODE_ENV !== 'production') {
         addendum = ' If you meant to render a collection of children, use an array ' + 'instead or wrap the object using createFragment(object) from the ' + 'React add-ons.';
         if (children._isReactElement) {
-          addendum = ' It looks like you\'re using an element created by a different ' + 'version of React. Make sure to use only one copy of React.';
+          addendum = " It looks like you're using an element created by a different " + 'version of React. Make sure to use only one copy of React.';
         }
         if (ReactCurrentOwner.current) {
           var name = ReactCurrentOwner.current.getName();
@@ -35137,7 +38263,7 @@ function traverseAllChildrenImpl(children, nameSoFar, callback, traverseContext)
         }
       }
       var childrenString = String(children);
-      !false ? "production" !== 'production' ? invariant(false, 'Objects are not valid as a React child (found: %s).%s', childrenString === '[object Object]' ? 'object with keys {' + Object.keys(children).join(', ') + '}' : childrenString, addendum) : _prodInvariant('31', childrenString === '[object Object]' ? 'object with keys {' + Object.keys(children).join(', ') + '}' : childrenString, addendum) : void 0;
+      !false ? process.env.NODE_ENV !== 'production' ? invariant(false, 'Objects are not valid as a React child (found: %s).%s', childrenString === '[object Object]' ? 'object with keys {' + Object.keys(children).join(', ') + '}' : childrenString, addendum) : _prodInvariant('31', childrenString === '[object Object]' ? 'object with keys {' + Object.keys(children).join(', ') + '}' : childrenString, addendum) : void 0;
     }
   }
 
@@ -35169,24 +38295,26 @@ function traverseAllChildren(children, callback, traverseContext) {
 }
 
 module.exports = traverseAllChildren;
-},{"./KeyEscapeUtils":195,"./ReactCurrentOwner":202,"./ReactElementSymbol":205,"./getIteratorFn":215,"./reactProdInvariant":217,"fbjs/lib/invariant":58,"fbjs/lib/warning":65}],"chart.js":[function(require,module,exports){
+}).call(this,require('_process'))
+},{"./KeyEscapeUtils":205,"./ReactCurrentOwner":211,"./ReactElementSymbol":214,"./getIteratorFn":224,"./reactProdInvariant":228,"_process":74,"fbjs/lib/invariant":64,"fbjs/lib/warning":71}],"chart.js":[function(require,module,exports){
 /**
  * @namespace Chart
  */
 var Chart = require('./core/core.js')();
 
 require('./core/core.helpers')(Chart);
+require('./platforms/platform.js')(Chart);
 require('./core/core.canvasHelpers')(Chart);
 require('./core/core.element')(Chart);
+require('./core/core.plugin.js')(Chart);
 require('./core/core.animation')(Chart);
 require('./core/core.controller')(Chart);
 require('./core/core.datasetController')(Chart);
 require('./core/core.layoutService')(Chart);
 require('./core/core.scaleService')(Chart);
-require('./core/core.plugin.js')(Chart);
+require('./core/core.ticks.js')(Chart);
 require('./core/core.scale')(Chart);
-require('./core/core.title')(Chart);
-require('./core/core.legend')(Chart);
+require('./core/core.interaction')(Chart);
 require('./core/core.tooltip')(Chart);
 
 require('./elements/element.arc')(Chart);
@@ -35218,16 +38346,30 @@ require('./charts/Chart.PolarArea')(Chart);
 require('./charts/Chart.Radar')(Chart);
 require('./charts/Chart.Scatter')(Chart);
 
-window.Chart = module.exports = Chart;
+// Loading built-it plugins
+var plugins = [];
 
-},{"./charts/Chart.Bar":1,"./charts/Chart.Bubble":2,"./charts/Chart.Doughnut":3,"./charts/Chart.Line":4,"./charts/Chart.PolarArea":5,"./charts/Chart.Radar":6,"./charts/Chart.Scatter":7,"./controllers/controller.bar":8,"./controllers/controller.bubble":9,"./controllers/controller.doughnut":10,"./controllers/controller.line":11,"./controllers/controller.polarArea":12,"./controllers/controller.radar":13,"./core/core.animation":14,"./core/core.canvasHelpers":15,"./core/core.controller":16,"./core/core.datasetController":17,"./core/core.element":18,"./core/core.helpers":19,"./core/core.js":20,"./core/core.layoutService":21,"./core/core.legend":22,"./core/core.plugin.js":23,"./core/core.scale":24,"./core/core.scaleService":25,"./core/core.title":26,"./core/core.tooltip":27,"./elements/element.arc":28,"./elements/element.line":29,"./elements/element.point":30,"./elements/element.rectangle":31,"./scales/scale.category":32,"./scales/scale.linear":33,"./scales/scale.linearbase.js":34,"./scales/scale.logarithmic":35,"./scales/scale.radialLinear":36,"./scales/scale.time":37}],"react-dom":[function(require,module,exports){
+plugins.push(
+    require('./plugins/plugin.filler.js')(Chart),
+    require('./plugins/plugin.legend.js')(Chart),
+    require('./plugins/plugin.title.js')(Chart)
+);
+
+Chart.plugins.register(plugins);
+
+module.exports = Chart;
+if (typeof window !== 'undefined') {
+	window.Chart = Chart;
+}
+
+},{"./charts/Chart.Bar":1,"./charts/Chart.Bubble":2,"./charts/Chart.Doughnut":3,"./charts/Chart.Line":4,"./charts/Chart.PolarArea":5,"./charts/Chart.Radar":6,"./charts/Chart.Scatter":7,"./controllers/controller.bar":8,"./controllers/controller.bubble":9,"./controllers/controller.doughnut":10,"./controllers/controller.line":11,"./controllers/controller.polarArea":12,"./controllers/controller.radar":13,"./core/core.animation":14,"./core/core.canvasHelpers":15,"./core/core.controller":16,"./core/core.datasetController":17,"./core/core.element":18,"./core/core.helpers":19,"./core/core.interaction":20,"./core/core.js":21,"./core/core.layoutService":22,"./core/core.plugin.js":23,"./core/core.scale":24,"./core/core.scaleService":25,"./core/core.ticks.js":26,"./core/core.tooltip":27,"./elements/element.arc":28,"./elements/element.line":29,"./elements/element.point":30,"./elements/element.rectangle":31,"./platforms/platform.js":33,"./plugins/plugin.filler.js":34,"./plugins/plugin.legend.js":35,"./plugins/plugin.title.js":36,"./scales/scale.category":37,"./scales/scale.linear":38,"./scales/scale.linearbase.js":39,"./scales/scale.logarithmic":40,"./scales/scale.radialLinear":41,"./scales/scale.time":42}],"react-dom":[function(require,module,exports){
 'use strict';
 
 module.exports = require('./lib/ReactDOM');
 
-},{"./lib/ReactDOM":98}],"react":[function(require,module,exports){
+},{"./lib/ReactDOM":108}],"react":[function(require,module,exports){
 'use strict';
 
 module.exports = require('./lib/React');
 
-},{"./lib/React":197}]},{},[]);
+},{"./lib/React":207}]},{},[]);
