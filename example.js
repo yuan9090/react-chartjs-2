@@ -195,7 +195,7 @@ exports.default = _react2.default.createClass({
 	}
 });
 
-},{"rcolor":15,"react":undefined,"react-chartjs-2":undefined}],4:[function(require,module,exports){
+},{"rcolor":17,"react":undefined,"react-chartjs-2":undefined}],4:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -354,6 +354,168 @@ var _reactChartjs = require('react-chartjs-2');
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 var data = {
+  labels: ['Red', 'Green', 'Yellow'],
+  datasets: [{
+    data: [300, 50, 100],
+    backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56'],
+    hoverBackgroundColor: ['#FF6384', '#36A2EB', '#FFCE56']
+  }]
+};
+
+var legendOpts = {
+  onClick: function onClick(e, item) {
+    return alert('Item with text ' + item.text + ' and index ' + item.index + ' clicked');
+  },
+  onHover: function onHover(e, item) {
+    return alert('Item with text ' + item.text + ' and index ' + item.index + ' hovered');
+  }
+};
+
+exports.default = _react2.default.createClass({
+  displayName: 'LegendExample',
+
+  getInitialState: function getInitialState() {
+    return {
+      legend: legendOpts
+    };
+  },
+  applyLegendSettings: function applyLegendSettings() {
+    var value = this.legendOptsInput.value;
+
+
+    try {
+      var opts = JSON.parse(value);
+      this.setState({
+        legend: opts
+      });
+    } catch (e) {
+      alert(e.message);
+      throw Error(e);
+    }
+  },
+  render: function render() {
+    return _react2.default.createElement(
+      'div',
+      null,
+      _react2.default.createElement(
+        'h2',
+        null,
+        'Legend Handlers Example'
+      ),
+      _react2.default.createElement(
+        'p',
+        null,
+        'Hover over label and click'
+      ),
+      _react2.default.createElement(_reactChartjs.Pie, { data: data, legend: this.state.legend })
+    );
+  }
+});
+
+},{"react":undefined,"react-chartjs-2":undefined}],8:[function(require,module,exports){
+'use strict';
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+
+var _react = require('react');
+
+var _react2 = _interopRequireDefault(_react);
+
+var _reactChartjs = require('react-chartjs-2');
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+var data = {
+  labels: ['Red', 'Green', 'Yellow'],
+  datasets: [{
+    data: [300, 50, 100],
+    backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56'],
+    hoverBackgroundColor: ['#FF6384', '#36A2EB', '#FFCE56']
+  }]
+};
+
+var legendOpts = {
+  display: true,
+  position: 'top',
+  fullWidth: true,
+  reverse: false,
+  labels: {
+    fontColor: 'rgb(255, 99, 132)'
+  }
+};
+
+exports.default = _react2.default.createClass({
+  displayName: 'LegendExample',
+
+  getInitialState: function getInitialState() {
+    return {
+      legend: legendOpts
+    };
+  },
+  applyLegendSettings: function applyLegendSettings() {
+    var value = this.legendOptsInput.value;
+
+
+    try {
+      var opts = JSON.parse(value);
+      this.setState({
+        legend: opts
+      });
+    } catch (e) {
+      alert(e.message);
+      throw Error(e);
+    }
+  },
+  render: function render() {
+    var _this = this;
+
+    return _react2.default.createElement(
+      'div',
+      null,
+      _react2.default.createElement(
+        'h2',
+        null,
+        'Legend Options Example'
+      ),
+      _react2.default.createElement('textarea', {
+        cols: '40',
+        rows: '15',
+        ref: function ref(input) {
+          _this.legendOptsInput = input;
+        },
+        defaultValue: JSON.stringify(this.state.legend, null, 2) }),
+      _react2.default.createElement(
+        'div',
+        null,
+        _react2.default.createElement(
+          'button',
+          { onClick: this.applyLegendSettings },
+          'Apply legend settings'
+        )
+      ),
+      _react2.default.createElement(_reactChartjs.Pie, { data: data, legend: this.state.legend, redraw: true })
+    );
+  }
+});
+
+},{"react":undefined,"react-chartjs-2":undefined}],9:[function(require,module,exports){
+'use strict';
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+
+var _react = require('react');
+
+var _react2 = _interopRequireDefault(_react);
+
+var _reactChartjs = require('react-chartjs-2');
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+var data = {
   labels: ['January', 'February', 'March', 'April', 'May', 'June', 'July'],
   datasets: [{
     label: 'My First dataset',
@@ -395,7 +557,7 @@ exports.default = _react2.default.createClass({
   }
 });
 
-},{"react":undefined,"react-chartjs-2":undefined}],8:[function(require,module,exports){
+},{"react":undefined,"react-chartjs-2":undefined}],10:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -511,7 +673,7 @@ exports.default = _react2.default.createClass({
   }
 });
 
-},{"react":undefined,"react-chartjs-2":undefined}],9:[function(require,module,exports){
+},{"react":undefined,"react-chartjs-2":undefined}],11:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -552,7 +714,7 @@ exports.default = _react2.default.createClass({
 		}
 });
 
-},{"react":undefined,"react-chartjs-2":undefined}],10:[function(require,module,exports){
+},{"react":undefined,"react-chartjs-2":undefined}],12:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -593,7 +755,7 @@ exports.default = _react2.default.createClass({
   }
 });
 
-},{"react":undefined,"react-chartjs-2":undefined}],11:[function(require,module,exports){
+},{"react":undefined,"react-chartjs-2":undefined}],13:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -648,7 +810,7 @@ exports.default = _react2.default.createClass({
   }
 });
 
-},{"react":undefined,"react-chartjs-2":undefined}],12:[function(require,module,exports){
+},{"react":undefined,"react-chartjs-2":undefined}],14:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -740,7 +902,7 @@ exports.default = _react2.default.createClass({
   }
 });
 
-},{"react":undefined,"react-chartjs-2":undefined}],13:[function(require,module,exports){
+},{"react":undefined,"react-chartjs-2":undefined}],15:[function(require,module,exports){
 'use strict';
 
 Object.defineProperty(exports, "__esModule", {
@@ -791,7 +953,7 @@ exports.default = _react2.default.createClass({
   }
 });
 
-},{"react":undefined,"react-chartjs-2":undefined}],14:[function(require,module,exports){
+},{"react":undefined,"react-chartjs-2":undefined}],16:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -856,6 +1018,14 @@ var _crazyLine = require('./components/crazyLine');
 
 var _crazyLine2 = _interopRequireDefault(_crazyLine);
 
+var _legendOptions = require('./components/legend-options');
+
+var _legendOptions2 = _interopRequireDefault(_legendOptions);
+
+var _legendHandlers = require('./components/legend-handlers');
+
+var _legendHandlers2 = _interopRequireDefault(_legendHandlers);
+
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -904,7 +1074,11 @@ var App = function (_React$Component) {
 				_react2.default.createElement('hr', null),
 				_react2.default.createElement(_randomizedLine2.default, null),
 				_react2.default.createElement('hr', null),
-				_react2.default.createElement(_crazyLine2.default, null)
+				_react2.default.createElement(_crazyLine2.default, null),
+				_react2.default.createElement('hr', null),
+				_react2.default.createElement(_legendOptions2.default, null),
+				_react2.default.createElement('hr', null),
+				_react2.default.createElement(_legendHandlers2.default, null)
 			);
 		}
 	}]);
@@ -914,7 +1088,7 @@ var App = function (_React$Component) {
 
 _reactDom2.default.render(_react2.default.createElement(App, null), document.getElementById('app'));
 
-},{"./components/bar":1,"./components/bubble":2,"./components/crazyLine":3,"./components/doughnut":4,"./components/dynamic-doughnut":5,"./components/horizontalBar":6,"./components/line":7,"./components/mix":8,"./components/pie":9,"./components/polar":10,"./components/radar":11,"./components/randomizedLine":12,"./components/scatter":13,"react":undefined,"react-dom":undefined}],15:[function(require,module,exports){
+},{"./components/bar":1,"./components/bubble":2,"./components/crazyLine":3,"./components/doughnut":4,"./components/dynamic-doughnut":5,"./components/horizontalBar":6,"./components/legend-handlers":7,"./components/legend-options":8,"./components/line":9,"./components/mix":10,"./components/pie":11,"./components/polar":12,"./components/radar":13,"./components/randomizedLine":14,"./components/scatter":15,"react":undefined,"react-dom":undefined}],17:[function(require,module,exports){
 module.exports =
 /******/ (function(modules) { // webpackBootstrap
 /******/ 	// The module cache
@@ -1085,4 +1259,4 @@ module.exports = getHex;
 
 /***/ })
 /******/ ]);
-},{}]},{},[14]);
+},{}]},{},[16]);
