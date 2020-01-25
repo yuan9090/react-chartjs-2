@@ -24,9 +24,9 @@ type ChartProps = {
 };
 
 class ChartComponent extends React.Component<ChartProps> {
-  chartInstance: Chart;
-  datasets: [Chart.ChartDataSets];
-  shadowDataProp: Chart.ChartData;
+  chartInstance: any;
+  datasets: any;
+  shadowDataProp: any;
   element: any;
 
   static getLabelAsKey = (dataset: Chart.ChartDataSets) => dataset.label;
@@ -94,7 +94,7 @@ class ChartComponent extends React.Component<ChartProps> {
     this.destroyChart();
   }
 
-  transformDataProp(props) {
+  transformDataProp(props: any) {
     const { data } = props;
     if (typeof data == 'function') {
       const node = this.element;
@@ -198,34 +198,32 @@ class ChartComponent extends React.Component<ChartProps> {
 
     // We can safely replace the dataset array, as long as we retain the _meta property
     // on each dataset.
-    this.chartInstance.config.data!.datasets = nextDatasets.map(
-      (next: Chart.ChartDataSets) => {
-        let current: Chart.ChartDataSets;
+    this.chartInstance.config.data!.datasets = nextDatasets.map((next: any) => {
+      let current: Chart.ChartDataSets;
 
-        if (this.props.datasetKeyProvider) {
-          current = currentDatasetsIndexed[this.props.datasetKeyProvider(next)];
-        }
-
-        if (current! && current!.type === next.type && next.data) {
-          // Be robust to no data. Relevant for other update mechanisms as in chartjs-plugin-streaming.
-          // The data array must be edited in place. As chart.js adds listeners to it.
-          current!.data!.splice(next.data.length);
-          next.data.forEach((_: string, pid: string) => {
-            current!.data![pid] = next.data[pid];
-          });
-          const { data, ...otherProps } = next;
-          // Merge properties. Notice a weakness here. If a property is removed
-          // from next, it will be retained by current and never disappears.
-          // Workaround is to set value to null or undefined in next.
-          return {
-            ...current!,
-            ...otherProps,
-          };
-        } else {
-          return next;
-        }
+      if (this.props.datasetKeyProvider) {
+        current = currentDatasetsIndexed[this.props.datasetKeyProvider(next)];
       }
-    );
+
+      if (current! && current!.type === next.type && next.data) {
+        // Be robust to no data. Relevant for other update mechanisms as in chartjs-plugin-streaming.
+        // The data array must be edited in place. As chart.js adds listeners to it.
+        current!.data!.splice(next.data.length);
+        next.data.forEach((_: any, pid: any) => {
+          current!.data![pid] = next.data[pid];
+        });
+        const { data, ...otherProps } = next;
+        // Merge properties. Notice a weakness here. If a property is removed
+        // from next, it will be retained by current and never disappears.
+        // Workaround is to set value to null or undefined in next.
+        return {
+          ...current!,
+          ...otherProps,
+        };
+      } else {
+        return next;
+      }
+    });
 
     const { datasets, ...rest } = data;
 
@@ -258,16 +256,19 @@ class ChartComponent extends React.Component<ChartProps> {
   }
 
   destroyChart() {
+    // TODO: Write a test that covers this scenario
     // Put all of the datasets that have existed in the chart back on the chart
     // so that the metadata associated with this chart get destroyed.
     // This allows the datasets to be used in another chart. This can happen,
     // for example, in a tabbed UI where the chart gets created each time the
     // tab gets switched to the chart and uses the same data).
-    this.saveCurrentDatasets();
-    const datasets = Object.values(this.datasets);
-    if (this.chartInstance && this.chartInstance.config.data) {
-      this.chartInstance.config.data.datasets = datasets;
-      this.chartInstance.destroy();
+    if (this.datasets) {
+      this.saveCurrentDatasets();
+      const datasets = Object.values(this.datasets);
+      if (this.chartInstance && this.chartInstance.config.data) {
+        this.chartInstance.config.data.datasets = datasets;
+        this.chartInstance.destroy();
+      }
     }
   }
 

@@ -13,7 +13,9 @@
     "start": "tsdx watch",
     "build": "tsdx build",
     "test": "tsdx test --env=jsdom",
-    "lint": "tsdx lint"
+    "lint": "tsdx lint",
+    "storybook": "start-storybook -p 6006",
+    "build-storybook": "build-storybook"
   },
   "peerDependencies": {
     "react": ">=16",
@@ -32,13 +34,24 @@
     "trailingComma": "es5"
   },
   "devDependencies": {
+    "@babel/core": "^7.8.3",
+    "@storybook/addon-actions": "^5.3.9",
+    "@storybook/addon-info": "^5.3.9",
+    "@storybook/addon-links": "^5.3.9",
+    "@storybook/addons": "^5.3.9",
+    "@storybook/preset-typescript": "^1.2.0",
+    "@storybook/react": "^5.3.9",
     "@types/jest": "^24.0.23",
     "@types/react": "^16.9.16",
     "@types/react-dom": "^16.9.4",
+    "awesome-typescript-loader": "^5.2.1",
+    "babel-loader": "^8.0.6",
     "chart.js": "^2.9.3",
     "husky": "^3.1.0",
     "react": "^16.12.0",
+    "react-docgen-typescript-loader": "^3.6.0",
     "react-dom": "^16.12.0",
+    "ts-loader": "^6.2.1",
     "tsdx": "^0.11.0",
     "tslib": "^1.10.0",
     "typescript": "^3.7.3"
