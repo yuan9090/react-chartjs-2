@@ -1,18 +1,16 @@
-[![build status](	https://img.shields.io/travis/jerairrest/react-chartjs-2.svg?branch=master&style=flat-square)](https://travis-ci.org/jerairrest/react-chartjs-2)
-[![version](https://img.shields.io/npm/v/react-chartjs-2.svg?style=flat-square)](https://www.npmjs.com/package/react-chartjs-2)
-[![downloads](https://img.shields.io/npm/dm/react-chartjs-2.svg?style=flat-square)](https://npm-stat.com/charts.html?package=react-chartjs-2&from=2016-01-01)
+[![version](https://badge.fury.io/js/%40iftek%2Freact-chartjs-3.svg)](https://www.npmjs.com/package/@iftek/react-chartjs-3)
+[![downloads](https://img.shields.io/npm/dt/@yuan9090/react-chartjs-3.svg?style=flat-square)](https://npm-stat.com/charts.html?package=@iftek/react-chartjs-3&from=2021-03-24)
 [![license](https://img.shields.io/github/license/mashape/apistatus.svg?style=flat-square)](http://opensource.org/licenses/MIT)
 
-### Looking for maintainers!!
+# react-chartjs-3
 
-# react-chartjs-2
+React wrapper for [Chart.js 3](http://www.chartjs.org/docs/#getting-started)
 
-React wrapper for [Chart.js 2](http://www.chartjs.org/docs/#getting-started)
+- Fork from [react-chartjs-2](https://github.com/reactchartjs/react-chartjs-2)
+- Merge [#599 3.x Migration](https://github.com/reactchartjs/react-chartjs-2/pull/599) from react-chartjs-2
+- Bump dependency [Chart.js](https://github.com/chartjs/Chart.js) version to 3.0.0-rc.3  
+
 Open for PRs and contributions!
-
-# UPDATE to 2.x
-As of 2.x we have made chart.js a peer dependency for greater flexibility. Please add chart.js as a dependency on your project to use 2.x. Currently, 2.5.x is the recommended version of chart.js to use.
-
 ## Demo & Examples
 
 Live demo: [reactchartjs.github.io/react-chartjs-2](https://reactchartjs.github.io/react-chartjs-2/)
@@ -231,5 +229,5 @@ To build, watch and serve the examples (which will also watch the component sour
 ## License
 
 [MIT Licensed](/LICENSE.md)
-Copyright (c) 2017 Jeremy Ayerst
+Copyright (c) 2021 Iftek
 

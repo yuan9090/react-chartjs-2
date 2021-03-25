@@ -1,19 +1,19 @@
 {
-  "name": "react-chartjs-2",
-  "version": "2.11.2",
-  "description": "react-chartjs-2",
+  "name": "@iftek/react-chartjs-3",
+  "version": "1.0.0",
+  "description": "react-chartjs-3",
   "main": "lib/index.js",
   "module": "es/index.js",
   "jsnext:main": "es/index.js",
-  "author": "reactchartjs",
-  "homepage": "https://github.com/reactchartjs/react-chartjs-2",
+  "author": "yuan9090 (yuan9090@gmail.com)",
+  "homepage": "https://github.com/yuan9090/react-chartjs-3",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/reactchartjs/react-chartjs-2.git"
+    "url": "https://github.com/yuan9090/react-chartjs-3.git"
   },
   "bugs": {
-    "url": "https://github.com/reactchartjs/react-chartjs-2/issues"
+    "url": "https://github.com/yuan9090/react-chartjs-3/issues"
   },
   "dependencies": {
     "lodash": "^4.17.19",
@@ -39,7 +39,7 @@
     "brfs": "^2.0.2",
     "canvas": "^2.6.1",
     "chai": "^4.2.0",
-    "chart.js": "^3.0.0-beta.6",
+    "chart.js": "3.0.0-rc.3",
     "cross-env": "^7.0.2",
     "css-loader": "^3.6.0",
     "debug": "^4.1.1",
@@ -68,7 +68,7 @@
     "webpack-dev-server": "^3.11.0"
   },
   "peerDependencies": {
-    "chart.js": "^3.0.0-beta.6",
+    "chart.js": "3.0.0-rc.3",
     "react": "^0.14.0 || ^15.0.0 || ^16.0.0 || ^17.0.0",
     "react-dom": "^0.14.0 || ^15.0.0 || ^16.0.0 || ^17.0.0"
   },
@@ -81,8 +81,8 @@
     "clean": "rimraf lib es dist",
     "build:cjs": "babel src --out-dir lib",
     "build:es": "cross-env BABEL_ENV=jsnext babel src --out-dir es",
-    "build:umd": "cross-env BABEL_ENV=rollup NODE_ENV=development rollup -c -o dist/react-chartjs-2.js",
-    "build:umd:min": "cross-env BABEL_ENV=rollup NODE_ENV=production rollup -c -o dist/react-chartjs-2.min.js",
+    "build:umd": "cross-env BABEL_ENV=rollup NODE_ENV=development rollup -c -o dist/react-chartjs-3.js",
+    "build:umd:min": "cross-env BABEL_ENV=rollup NODE_ENV=production rollup -c -o dist/react-chartjs-3.min.js",
     "build": "npm run clean && npm run build:cjs && npm run build:es && npm run build:umd && npm run build:umd:min",
     "examples": "rollup -w -c example/rollup.config.js",
     "examples:clean": "rimraf example/dist",
@@ -97,7 +97,7 @@
     "chart",
     "chart-js",
     "chart.js",
-    "react-chartjs-2",
+    "react-chartjs-3",
     "react chart.js"
   ],
   "types": "./index.d.ts"
