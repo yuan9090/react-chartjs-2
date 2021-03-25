@@ -21,15 +21,16 @@ import {
   PolarAreaController,
   BubbleController,
   ScatterController,
-  Legend
+  Legend,
+  Tooltip
 } from 'chart.js'
 
 // Line
-Chart.register(LineController, LineElement, PointElement, LinearScale, Title, CategoryScale, Legend);
+Chart.register(LineController, LineElement, PointElement, LinearScale, Title, CategoryScale, Legend, Tooltip);
 // Doughnut
 Chart.register(DoughnutController, ArcElement);
 // Pie
-Chart.register(PieController, ArcElement);
+Chart.register(PieController, ArcElement, Tooltip);
 // Bar
 Chart.register(BarController, BarElement);
 // Horizontal bar was removed
@@ -90,21 +91,6 @@ class ChartComponent extends React.Component {
     height: 150,
     width: 300,
     redraw: false,
-    options: {
-      responsive: true,
-      plugins: {
-        legend: {
-          display: true,
-          labels: {
-            usePointStyle: false
-          }
-        },
-        title: {
-          display: true,
-          text: 'Normal Legend'
-        }
-      }
-    },
     datasetKeyProvider: ChartComponent.getLabelAsKey
   }
 
