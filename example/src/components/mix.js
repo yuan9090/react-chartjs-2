@@ -80,9 +80,9 @@ const options = {
 };
 
 const plugins = [{
-    afterDraw: (chartInstance, easing) => {
-        const ctx = chartInstance.chart.ctx;
-        ctx.fillText("This text drawn by a plugin", 100, 100);
+    afterDraw: (chart, easing) => {
+      const ctx = chart.ctx;
+      ctx.fillText("This text drawn by a plugin", 100, 100);
     }
 }];
 
