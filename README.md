@@ -1,14 +1,15 @@
 [![version](https://badge.fury.io/js/%40iftek%2Freact-chartjs-3.svg)](https://www.npmjs.com/package/@iftek/react-chartjs-3)
-[![downloads](https://img.shields.io/npm/dt/@yuan9090/react-chartjs-3.svg?style=flat-square)](https://npm-stat.com/charts.html?package=@iftek/react-chartjs-3&from=2021-03-24)
+[![downloads](https://img.shields.io/npm/dt/@iftek/react-chartjs-3.svg?style=flat-square)](https://npm-stat.com/charts.html?package=@iftek/react-chartjs-3&from=2021-03-24)
 [![license](https://img.shields.io/github/license/mashape/apistatus.svg?style=flat-square)](http://opensource.org/licenses/MIT)
 
-# react-chartjs-3
+# @iftek/react-chartjs-3
 
 React wrapper for [Chart.js 3](http://www.chartjs.org/docs/#getting-started)
 
 - Fork from [react-chartjs-2](https://github.com/reactchartjs/react-chartjs-2)
 - Merge [#599 3.x Migration](https://github.com/reactchartjs/react-chartjs-2/pull/599) from react-chartjs-2
-- Bump dependency [Chart.js](https://github.com/chartjs/Chart.js) version to 3.0.0-rc.3  
+- Bump dependency [Chart.js](https://github.com/chartjs/Chart.js) version to 3.0.2
+- Implement v3 function [getElementsAtEventForMode](https://github.com/chartjs/Chart.js/blob/master/docs/developers/api.md#getelementsateventformodee-mode-options-usefinalposition)  
 
 Open for PRs and contributions!
 ## Demo & Examples
@@ -39,13 +40,13 @@ Then open [`localhost:6006`](http://localhost:6006) in a browser.
 ## Installation via NPM
 
 ```bash
-npm install --save react-chartjs-2 chart.js
+npm install --save @iftek/react-chartjs-3 chart.js
 ```
 
 ## Installation via YARN
 
 ```bash
-yarn add react-chartjs-2 chart.js
+yarn add @iftek/react-chartjs-3 chart.js
 ```
 
 
@@ -54,7 +55,7 @@ yarn add react-chartjs-2 chart.js
 Check example/src/components/* for usage.
 
 ```js
-import { Doughnut } from 'react-chartjs-2';
+import { Doughnut } from '@iftek/react-chartjs-3';
 
 <Doughnut data={...} />
 ```
@@ -68,10 +69,7 @@ import { Doughnut } from 'react-chartjs-2';
 * legend: PropTypes.object,
 * options: PropTypes.object,
 * redraw: PropTypes.bool,
-* getDatasetAtEvent: PropTypes.func,
-* getElementAtEvent: PropTypes.func,
-* getElementsAtEvent: PropTypes.func
-* onElementsClick: PropTypes.func, // alias for getElementsAtEvent (backward compatibility)
+* getElementsAtEventForMode: PropTypes.func
 
 ### Custom size
 In order for Chart.js to obey the custom size you need to set `maintainAspectRatio` to false, example:
@@ -132,7 +130,7 @@ render() {
 Chart.js defaults can be set by importing the `defaults` object:
 
 ```javascript
-import { defaults } from 'react-chartjs-2';
+import { defaults } from '@iftek/react-chartjs-3';
 
 // Disable animating charts by default.
 defaults.global.animation = false;
@@ -141,7 +139,7 @@ defaults.global.animation = false;
 If you want to bulk set properties, try using the [lodash.merge](https://lodash.com/docs/#merge) function. This function will do a deep recursive merge preserving previously set values that you don't want to update.
 
 ```js
-import { defaults } from 'react-chartjs-2';
+import { defaults } from '@iftek/react-chartjs-3';
 import merge from 'lodash.merge';
 // or
 // import { merge } from 'lodash';
@@ -161,7 +159,7 @@ merge(defaults, {
 You can access the internal Chart.js object to register plugins or extend charts like this:
 
 ```JavaScript
-import { Chart } from 'react-chartjs-2';
+import { Chart } from '@iftek/react-chartjs-3';
 
 componentWillMount() {
   Chart.pluginService.register({
@@ -178,29 +176,16 @@ If you're using Chart.js 2.6 and below, add the `showLines: false` property to y
 
 ### Events
 
-#### onElementsClick || getElementsAtEvent (function)
+#### getElementsAtEventForMode (function)
 
-A function to be called when mouse clicked on chart elememts, will return all element at that point as an array. [Check](https://github.com/chartjs/Chart.js/blob/master/docs/docs/developers/api.md#getelementsatevente)
+A function to be called when mouse clicked on chart elements, will return all element at that point as an array. [Check](https://github.com/chartjs/Chart.js/blob/master/docs/developers/api.md#getelementsateventformodee-mode-options-usefinalposition)
 
 ```js
 {
-  onElementsClick: (elems) => {},
-  getElementsAtEvent: (elems) => {},
+  getElementsAtEventForMode: (elems) => {},
   // `elems` is an array of chartElements
 }
-
 ```
-#### getElementAtEvent (function)
-
-Calling getElementAtEvent(event) on your Chart instance passing an argument of an event, or jQuery event, will return the single element at the event position. If there are multiple items within range, only the first is returned [Check](https://github.com/chartjs/Chart.js/blob/master/docs/docs/developers/api.md#getelementatevente)
-
-```js
-{
-  getElementAtEvent: (elems) => {},
-  // => returns the first element at the event point.
-}
-```
-
 #### getDatasetAtEvent (function)
 
 Looks for the element under the event point, then returns all elements from that dataset. This is used internally for 'dataset' mode highlighting [Check](https://github.com/chartjs/Chart.js/blob/master/docs/docs/developers/api.md#getdatasetatevente)

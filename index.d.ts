@@ -17,12 +17,9 @@ export interface ChartComponentProps {
   id?: string;
   data: ChartData<chartjs.ChartData>;
   type?: chartjs.ChartType;
-  getDatasetAtEvent?(e: any): void;
-  getElementAtEvent?(e: any): void;
-  getElementsAtEvent?(e: any): void;
+  getElementsAtEventForMode?(e: any): void;
   height?: number;
   legend?: chartjs.ChartLegendOptions;
-  onElementsClick?(e: any): void; // alias for getElementsAtEvent (backward compatibility)
   options?: chartjs.ChartOptions;
   plugins?: object[];
   redraw?: boolean;

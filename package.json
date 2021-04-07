@@ -39,7 +39,7 @@
     "brfs": "^2.0.2",
     "canvas": "^2.6.1",
     "chai": "^4.2.0",
-    "chart.js": "3.0.0-rc.3",
+    "chart.js": "3.0.2",
     "cross-env": "^7.0.2",
     "css-loader": "^3.6.0",
     "debug": "^4.1.1",

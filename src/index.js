@@ -59,12 +59,8 @@ class ChartComponent extends React.Component {
       PropTypes.object,
       PropTypes.func
     ]).isRequired,
-    getDatasetAtEvent: PropTypes.func,
-    getElementAtEvent: PropTypes.func,
-    getElementsAtEvent: PropTypes.func,
     height: PropTypes.number,
     legend: PropTypes.object,
-    onElementsClick: PropTypes.func,
     options: PropTypes.object,
     plugins: PropTypes.arrayOf(PropTypes.object),
     redraw: PropTypes.bool,
@@ -79,7 +75,8 @@ class ChartComponent extends React.Component {
       }
     },
     width: PropTypes.number,
-    datasetKeyProvider: PropTypes.func
+    datasetKeyProvider: PropTypes.func,
+    getElementsAtEventForMode: PropTypes.func
   }
 
   static defaultProps = {
@@ -316,16 +313,10 @@ class ChartComponent extends React.Component {
     const instance = this.chartInstance;
 
     const {
-      getDatasetAtEvent,
-      getElementAtEvent,
-      getElementsAtEvent,
-      onElementsClick
+      getElementsAtEventForMode,
     } = this.props;
-
-    getDatasetAtEvent && getDatasetAtEvent(instance.getDatasetAtEvent(event), event);
-    getElementAtEvent && getElementAtEvent(instance.getElementAtEvent(event), event);
-    getElementsAtEvent && getElementsAtEvent(instance.getElementsAtEvent(event), event);
-    onElementsClick && onElementsClick(instance.getElementsAtEvent(event), event); // Backward compatibility
+    
+    getElementsAtEventForMode && getElementsAtEventForMode(instance.getElementsAtEventForMode(event, 'nearest', { intersect: true }, true), event);
   }
 
   ref = (element) => {
