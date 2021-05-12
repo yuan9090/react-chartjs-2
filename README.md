@@ -14,53 +14,105 @@ React wrapper for [Chart.js 3](http://www.chartjs.org/docs/#getting-started)
 Open for PRs and contributions!
 ## Demo & Examples
 
-Live demo: [reactchartjs.github.io/react-chartjs-2](https://reactchartjs.github.io/react-chartjs-2/)
-
-To build the examples locally, run:
-
 ```bash
-npm install
-npm start
+npm install --save react-chartjs-2 chart.js
+
+# or
+
+yarn add react-chartjs-2 chart.js
 ```
 
-Then open [`localhost:8000`](http://localhost:8000) in a browser.
+###### We recommend using `chart.js ^3.0.0`
 
-## Demo & Examples via React Storybook
+### Usage
 
-We have to build the package, then you can run storybook.
+```jsx
+import { Doughnut } from 'react-chartjs-2';
 
-```bash
-npm run build
-npm run storybook
+<Doughnut data={...} />
 ```
 
-Then open [`localhost:6006`](http://localhost:6006) in a browser.
+## Examples
 
+Live: [reactchartjs.github.io/react-chartjs-2](https://reactchartjs.github.io/react-chartjs-2/#/)
 
-## Installation via NPM
+See [these examples](example) for more information
 
 ```bash
 npm install --save @iftek/react-chartjs-3 chart.js
 ```
 
-## Installation via YARN
+### Chart props
 
 ```bash
 yarn add @iftek/react-chartjs-3 chart.js
 ```
 
+#### id
 
-## Usage
+Type `string`
+Default: `undefined`
 
-Check example/src/components/* for usage.
+ID attribute applied to the rendered canvas
 
 ```js
 import { Doughnut } from '@iftek/react-chartjs-3';
 
-<Doughnut data={...} />
+Type `string`
+Default: `undefined`
+
+class attribute applied to the rendered canvas
+
+#### height
+
+Type: `number`
+Default: `150`
+
+Height attribute applied to the rendered canvas
+
+#### width
+
+Type: `number`
+Default: `300`
+
+Width attribute applied to the rendered canvas
+
+#### redraw
+
+Type: `boolean`
+Default: `false`
+
+If true, will tear down and redraw chart on all updates
+
+#### type
+
+Type: `'line' | 'bar' | 'horizontalBar' | 'radar' | 'doughnut' | 'polarArea' | 'bubble' | 'pie' | 'scatter'`
+
+Chart.js chart type (required only on ChartComponent)
+
+#### data (required)
+
+Type: `Chart.ChartData | (canvas: HTMLCanvasElement | null) => Chart.ChartData`
+
+The data object that is passed into the Chart.js chart ([more info](https://www.chartjs.org/docs/latest/getting-started/)).
+
+This can also be a function, that receives a canvas element and returns the data object.
+
+```tsx
+const data = canvas => {
+    const ctx = canvas.getContext('2d');
+    const g = ctx.createLinearGradient(...);
+
+    return {
+        datasets: [{
+            backgroundColor: g,
+            // ...the rest
+        }],
+    };
+}
 ```
 
-### Properties
+#### options
 
 * data: (PropTypes.object | PropTypes.func).isRequired,
 * width: PropTypes.number,
@@ -71,69 +123,100 @@ import { Doughnut } from '@iftek/react-chartjs-3';
 * redraw: PropTypes.bool,
 * getElementsAtEventForMode: PropTypes.func
 
-### Custom size
-In order for Chart.js to obey the custom size you need to set `maintainAspectRatio` to false, example:
+The options object that is passed into the Chart.js chart ([more info](https://www.chartjs.org/docs/latest/general/options.html))
 
-```js
+### fallbackContent
+
+Type: `React.ReactNode`
+
+A fallback for when the canvas cannot be rendered. Can be used for accessible chart descriptions ([more info](https://www.chartjs.org/docs/latest/general/accessibility.html))
+
+#### plugins
+
+Type: `Chart.PluginServiceRegistrationOptions[]`
+
+The plugins array that is passed into the Chart.js chart ([more info](https://www.chartjs.org/docs/latest/developers/plugins.html))
+
+#### getDatasetAtEvent
+
+Type: `(dataset: Array<{}>, event: React.MouseEvent<HTMLCanvasElement>) => void`
+Default: `undefined`
+
+Proxy for Chart.js `getDatasetAtEvent`. Calls with dataset and triggering event
+
+#### getElementAtEvent
+
+Type: `(element: [{}], event: React.MouseEvent<HTMLCanvasElement>) => void`
+Default: `undefined`
+
+Proxy for Chart.js `getElementAtEvent`. Calls with single element array and triggering event
+
+#### getElementsAtEvent
+
+Type: `(elements: Array<{}>, event: React.MouseEvent<HTMLCanvasElement>) => void`
+Default: `undefined`
+
+Proxy for Chart.js `getElementsAtEvent`. Calls with element array and triggering event
+
+## FAQ
+
+### Why doesn't my chart maintain it's width/height?
+
+In order for Chart.js to obey the custom size you need to set `maintainAspectRatio` to false
+
+```tsx
 <Bar
-  data={data}
-  width={100}
-  height={50}
-  options={{ maintainAspectRatio: false }}
+	data={data}
+	width={100}
+	height={50}
+	options={{ maintainAspectRatio: false }}
 />
 ```
 
-### Chart.js instance
-Chart.js instance can be accessed by placing a ref to the element as:
+### How do I access my chart's instance?
 
-```js
-class MyComponent extends React.Component {
-  constructor(props) {
-    super(props);
-    this.chartReference = React.createRef();
-  }
+The Chart.js instance can be accessed by placing a ref to the element as:
 
-  componentDidMount() {
-    console.log(this.chartReference); // returns a Chart.js instance reference
-  }
+```tsx
+const App => {
+  const ref = useRef();
 
-  render() {
-    return (<Doughnut ref={this.chartReference} data={data} options={options} />)
-  }
-}
+  return <Doughnut ref={ref} data={data} options={options} />;
+};
 ```
 
-### Getting context for data generation
-Canvas node and hence context, that can be used to create CanvasGradient background,
-is passed as argument to data if given as function:
+### How do I acess the canvas context?
 
+The canvas node and hence context can be accessed within the data function.
 This approach is useful when you want to keep your components pure.
 
-```js
+```tsx
 render() {
   const data = (canvas) => {
-    const ctx = canvas.getContext("2d")
+    const ctx = canvas.getContext('2d')
     const gradient = ctx.createLinearGradient(0,0,100,0);
-    ...
+
     return {
-      ...
       backgroundColor: gradient
-      ...
+      // ...the rest
     }
   }
 
-  return (<Line data={data} />)
+  return <Line data={data} />;
 }
 ```
 
-### Chart.js Defaults
+## Additional Information
+
+### Defaults
+
 Chart.js defaults can be set by importing the `defaults` object:
 
 ```javascript
 import { defaults } from '@iftek/react-chartjs-3';
 
 // Disable animating charts by default.
-defaults.global.animation = false;
+defaults.animation = false;
 ```
 
 If you want to bulk set properties, try using the [lodash.merge](https://lodash.com/docs/#merge) function. This function will do a deep recursive merge preserving previously set values that you don't want to update.
@@ -141,20 +224,16 @@ If you want to bulk set properties, try using the [lodash.merge](https://lodash.
 ```js
 import { defaults } from '@iftek/react-chartjs-3';
 import merge from 'lodash.merge';
-// or
-// import { merge } from 'lodash';
 
 merge(defaults, {
-  global: {
-    animation: false,
-    line: {
-      borderColor: '#F85F73',
-     },
-  },
+	animation: false,
+  line: {
+    borderColor: '#F85F73',
+  }
 });
-```
+``` -->
 
-### Chart.js object
+<!-- ### Chart.js object
 
 You can access the internal Chart.js object to register plugins or extend charts like this:
 
@@ -162,13 +241,13 @@ You can access the internal Chart.js object to register plugins or extend charts
 import { Chart } from '@iftek/react-chartjs-3';
 
 componentWillMount() {
-  Chart.pluginService.register({
+  Chart.register({
     afterDraw: function (chart, easing) {
       // Plugin code.
     }
   });
 }
-```
+````
 
 ### Scatter Charts
 
@@ -204,15 +283,11 @@ You will find that any event which causes the chart to re-render, such as hover 
 1. Add a `label` property on each dataset. By default, this library uses the `label` property as the key to distinguish datasets.
 2. Specify a different property to be used as a key by passing a `datasetKeyProvider` prop to your chart component, which would return a unique string value for each dataset.
 
-## Development (`src`, `lib` and the build process)
+## Development
 
-**NOTE:** The source code for the component is in `src`. A transpiled CommonJS version (generated with Babel) is available in `lib` for use with node.js, browserify and webpack. A UMD bundle is also built to `dist`, which can be included without the need for any build system.
-
-To build, watch and serve the examples (which will also watch the component source), run `npm start`. If you just want to watch changes to `src` and rebuild `lib`, run `npm run watch` (this is useful if you are working with `npm link`).
-
+**NOTE:** The source code for the component is in `src`. A transpiled CommonJS version (generated with Babel) is available in `dist` for use with node.js, browserify and webpack. A UMD bundle is also built to `dist`, which can be included without the need for any build system.
 
 ## License
 
 [MIT Licensed](/LICENSE.md)
 Copyright (c) 2021 Iftek
-
